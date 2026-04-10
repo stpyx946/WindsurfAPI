@@ -8,6 +8,7 @@ import {
   getAccountList, getAccountCount, addAccountByKey, addAccountByToken,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   isAuthenticated, probeAccount, ensureLsForAccount,
+  refreshCredits, refreshAllCredits,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -156,6 +157,19 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     } catch (err) {
       return json(res, 500, { error: err.message });
     }
+  }
+
+  // POST /accounts/refresh-credits — refresh every active account's balance
+  if (subpath === '/accounts/refresh-credits' && method === 'POST') {
+    const results = await refreshAllCredits();
+    return json(res, 200, { success: true, results });
+  }
+
+  // POST /accounts/:id/refresh-credits — single-account refresh
+  const creditRefresh = subpath.match(/^\/accounts\/([^/]+)\/refresh-credits$/);
+  if (creditRefresh && method === 'POST') {
+    const r = await refreshCredits(creditRefresh[1]);
+    return json(res, r.ok ? 200 : 400, r);
   }
 
   // PATCH /accounts/:id

@@ -46,6 +46,7 @@ function saveAccounts() {
       apiServerUrl: a.apiServerUrl, method: a.method,
       status: a.status, addedAt: a.addedAt,
       tier: a.tier, capabilities: a.capabilities, lastProbed: a.lastProbed,
+      credits: a.credits || null,
     }));
     writeFileSync(ACCOUNTS_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
@@ -71,6 +72,7 @@ function loadAccounts() {
         tier: a.tier || 'unknown',
         capabilities: a.capabilities || {},
         lastProbed: a.lastProbed || 0,
+        credits: a.credits || null,
       });
     }
     if (data.length > 0) log.info(`Loaded ${data.length} account(s) from disk`);
@@ -112,6 +114,7 @@ export function addAccountByKey(apiKey, label = '') {
     capabilities: {},
     lastProbed: 0,
   };
+  account.credits = null;
   accounts.push(account);
   saveAccounts();
   log.info(`Account added: ${account.id} (${account.email}) [api_key]`);
@@ -383,8 +386,56 @@ export function getAccountList() {
       rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
       rpmUsed,
       rpmLimit,
+      credits: a.credits || null,
     };
   });
+}
+
+/**
+ * Fetch live credit balance + plan info from server.codeium.com and stash it
+ * on the account. Used by manual refresh and by the 15-minute background loop.
+ * Errors are returned in-band so the dashboard can show them without throwing.
+ */
+export async function refreshCredits(id) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return { ok: false, error: 'Account not found' };
+  try {
+    const { getUserStatus } = await import('./windsurf-api.js');
+    const proxy = getEffectiveProxy(account.id) || null;
+    const status = await getUserStatus(account.apiKey, proxy);
+    // Drop the huge raw payload before persisting — keep it only in memory for
+    // downstream callers (e.g. model catalog cache) to inspect once.
+    const { raw, ...persist } = status;
+    account.credits = persist;
+    // Tier hint: if the plan info is explicit, prefer it over capability probing.
+    if (status.planName && /pro|teams|enterprise/i.test(status.planName)) {
+      if (account.tier !== 'pro') account.tier = 'pro';
+    } else if (/free/i.test(status.planName || '')) {
+      if (account.tier === 'unknown') account.tier = 'free';
+    }
+    saveAccounts();
+    // Surface the raw response once so the caller can decide whether to mine
+    // the bundled model catalog from it.
+    return { ok: true, credits: persist, raw };
+  } catch (e) {
+    const msg = e.message || String(e);
+    log.warn(`refreshCredits ${id} failed: ${msg}`);
+    // Stash the error on the account so the dashboard can show "last refresh
+    // failed" without losing the previously successful snapshot.
+    if (account.credits) account.credits.lastError = msg;
+    else account.credits = { lastError: msg, fetchedAt: Date.now() };
+    return { ok: false, error: msg };
+  }
+}
+
+export async function refreshAllCredits() {
+  const results = [];
+  for (const a of accounts) {
+    if (a.status !== 'active') continue;
+    const r = await refreshCredits(a.id);
+    results.push({ id: a.id, email: a.email, ok: r.ok, error: r.error });
+  }
+  return results;
 }
 
 /**
@@ -526,6 +577,14 @@ export async function initAuth() {
       catch (e) { log.warn(`Scheduled probe ${a.id} failed: ${e.message}`); }
     }
   }, REPROBE_INTERVAL).unref?.();
+
+  // Periodic credit refresh (every 15 min). First run is fire-and-forget so
+  // startup isn't blocked by cloud round-trips.
+  const CREDIT_INTERVAL = 15 * 60 * 1000;
+  refreshAllCredits().catch(e => log.warn(`Initial credit refresh: ${e.message}`));
+  setInterval(() => {
+    refreshAllCredits().catch(e => log.warn(`Scheduled credit refresh: ${e.message}`));
+  }, CREDIT_INTERVAL).unref?.();
 
   // Warm up an LS instance for each account's configured proxy so the first
   // chat request doesn't pay the spawn cost.

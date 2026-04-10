@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Windsurf API 控制台</title>
+<title>WindsurfAPI bydwgx1337 控制台</title>
 <style>
 :root {
   --bg: #09090b;
@@ -868,7 +868,7 @@ tbody tr:hover td { background: var(--surface-2); }
   <div class="brand">
     <div class="brand-logo">W</div>
     <div>
-      <div class="brand-name">Windsurf API</div>
+      <div class="brand-name">WindsurfAPI <span style="font-size:10px;opacity:.6;vertical-align:top;margin-left:2px">bydwgx1337</span></div>
       <div class="brand-sub">管理控制台</div>
     </div>
   </div>
@@ -1057,10 +1057,16 @@ tbody tr:hover td { background: var(--surface-2); }
         <h1 class="page-title">账号管理</h1>
         <div class="page-subtitle">维护账号池，探测各账号订阅层级与可用模型</div>
       </div>
-      <button class="btn btn-outline" onclick="App.probeAll()">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        全部探测
-      </button>
+      <div class="btn-group">
+        <button class="btn btn-outline" onclick="App.refreshAllCredits()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
+          刷新余额
+        </button>
+        <button class="btn btn-outline" onclick="App.probeAll()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          全部探测
+        </button>
+      </div>
     </div>
 
     <div class="section">
@@ -1106,7 +1112,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th>ID</th><th>标签</th><th>层级</th><th>RPM</th><th>可用模型</th><th>状态</th><th>错误</th><th>最后使用</th><th>Key</th><th>操作</th></tr></thead>
+            <thead><tr><th>ID</th><th>标签</th><th>层级</th><th>RPM</th><th>余额</th><th>可用模型</th><th>状态</th><th>错误</th><th>最后使用</th><th>Key</th><th>操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1780,12 +1786,50 @@ const App = {
             </div>
            </div>`
         : `<span class="text-xs text-dim">-</span>`;
+
+      // Credit / quota cell — collapses the legacy credit contract and the
+      // newer daily/weekly percent contract into a single progress bar.
+      const cr = a.credits || null;
+      let creditCell;
+      if (!cr) {
+        creditCell = `<span class="text-xs text-dim">尚未获取</span>`;
+      } else if (cr.lastError && cr.percent == null && !cr.prompt?.limit) {
+        creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">获取失败</span>`;
+      } else {
+        const pct = cr.percent != null ? Math.max(0, Math.min(100, cr.percent)) : null;
+        const pctStr = pct != null ? pct.toFixed(0) + '%' : '-';
+        const pctColor = pct == null ? 'var(--text-dim)'
+          : pct <= 10 ? 'var(--error)'
+          : pct <= 30 ? 'var(--warn, #f59e0b)'
+          : 'var(--success, #10b981)';
+        const planName = cr.planName || '-';
+        const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm ago' : '-';
+        const tipLines = [
+          `Plan: ${planName}`,
+          cr.dailyPercent != null ? `Daily:  ${cr.dailyPercent.toFixed(1)}% left` : '',
+          cr.weeklyPercent != null ? `Weekly: ${cr.weeklyPercent.toFixed(1)}% left` : '',
+          cr.prompt?.limit ? `Prompt: ${(cr.prompt.used || 0).toFixed(0)}/${cr.prompt.limit.toFixed(0)}` : '',
+          cr.flex?.limit ? `Flex:   ${(cr.flex.used || 0).toFixed(0)}/${cr.flex.limit.toFixed(0)}` : '',
+          cr.dailyResetAt ? `Daily reset: ${new Date(cr.dailyResetAt * 1000).toLocaleString()}` : '',
+          `Updated: ${fetchedAgo}`,
+          cr.lastError ? `Last error: ${cr.lastError}` : '',
+        ].filter(Boolean).join('\n');
+        creditCell = `<div style="min-width:100px" title="${this.esc(tipLines)}">
+            <div class="text-xs" style="display:flex;justify-content:space-between;margin-bottom:2px">
+              <span>${this.esc(planName.slice(0, 10))}</span><span style="color:${pctColor}">${pctStr}</span>
+            </div>
+            <div style="height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden">
+              <div style="height:100%;width:${pct != null ? pct : 0}%;background:${pctColor};transition:width .3s"></div>
+            </div>
+          </div>`;
+      }
       return `
       <tr>
         <td><code>${a.id}</code></td>
         <td>${this.esc(a.email)}</td>
         <td><span class="tier ${tier}">${tierLabel[tier] || tier}</span></td>
         <td>${rpmCell}</td>
+        <td>${creditCell}</td>
         <td>${capsHtml}</td>
         <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
@@ -1796,6 +1840,7 @@ const App = {
         <td class="nowrap">
           <div class="btn-group">
             <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${a.id}')" title="探测能力">探测</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${a.id}')" title="刷新余额">余额</button>
             ${a.status === 'active'
               ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${a.id}','disabled')">停用</button>`
               : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${a.id}','active')">启用</button>`}
@@ -1804,7 +1849,34 @@ const App = {
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="10">暂无账号，请先添加</td></tr>';
+    }).join('') || '<tr class="empty-row"><td colspan="11">暂无账号，请先添加</td></tr>';
+  },
+
+  async refreshCredits(id) {
+    try {
+      const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {});
+      if (r.ok) {
+        this.toast('余额已刷新');
+        this.loadAccounts();
+      } else {
+        this.toast(r.error || '刷新失败', 'error');
+      }
+    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
+  },
+
+  async refreshAllCredits() {
+    this.toast('正在刷新所有账号余额...', 'info');
+    try {
+      const r = await this.api('POST', '/accounts/refresh-credits', {});
+      if (r.success) {
+        const okCount = (r.results || []).filter(x => x.ok).length;
+        const failCount = (r.results || []).length - okCount;
+        this.toast(`余额刷新完成：${okCount} 成功 / ${failCount} 失败`);
+        this.loadAccounts();
+      } else {
+        this.toast(r.error || '刷新失败', 'error');
+      }
+    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
   },
 
   async probeAll() {

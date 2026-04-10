@@ -57,7 +57,13 @@ async function route(req, res) {
   if (method === 'OPTIONS') return json(res, 204, '');
   if (path === '/health') {
     const counts = getAccountCount();
-    return json(res, 200, { status: 'ok', accounts: counts });
+    return json(res, 200, {
+      status: 'ok',
+      provider: 'WindsurfAPI bydwgx1337',
+      version: '1.2.0',
+      uptime: Math.round(process.uptime()),
+      accounts: counts,
+    });
   }
 
   // ─── Dashboard ─────────────────────────────────────────

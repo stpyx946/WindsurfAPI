@@ -7,8 +7,21 @@ import { config, log } from './config.js';
 import { existsSync } from 'fs';
 import { execSync } from 'child_process';
 
+export const BRAND = 'WindsurfAPI bydwgx1337';
+export const VERSION = '1.2.0';
+
 async function main() {
-  console.log('\n  Windsurf API - OpenAI-compatible proxy\n');
+  const banner = `
+   _    _ _           _                   __    _    ____ ___
+  | |  | (_)         | |                 / _|  / \\  |  _ \\_ _|
+  | |  | |_ _ __   __| |___ _   _ _ __ _| |_  / _ \\ | |_) | |
+  | |/\\| | | '_ \\ / _\` / __| | | | '__|_   _|/ ___ \\|  __/| |
+  \\  /\\  / | | | | (_| \\__ \\ |_| | |    |_| /_/   \\_\\_|  |___|
+   \\/  \\/|_|_| |_|\\__,_|___/\\__,_|_|
+                                          ${BRAND} v${VERSION}
+`;
+  console.log(banner);
+  console.log(`  OpenAI-compatible proxy for Windsurf — by dwgx1337\n`);
 
   // Start language server binary
   const binaryPath = config.lsBinaryPath;
