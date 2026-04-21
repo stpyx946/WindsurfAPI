@@ -8,7 +8,8 @@
  * canceled.
  */
 
-import { spawn, execSync } from 'child_process';
+import { spawn } from 'child_process';
+import { mkdirSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
@@ -124,7 +125,7 @@ export async function ensureLs(proxy = null) {
     }
 
     const dataDir = `/opt/windsurf/data/${key}`;
-    try { execSync(`mkdir -p ${dataDir}/db`, { stdio: 'ignore' }); } catch {}
+    try { mkdirSync(`${dataDir}/db`, { recursive: true }); } catch (e) { log.warn(`mkdirSync ${dataDir}/db: ${e.message}`); }
 
     const args = [
       `--api_server_url=${_apiServerUrl}`,
