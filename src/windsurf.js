@@ -286,7 +286,11 @@ export function buildUpdateWorkspaceTrustRequest(apiKey, _ignored, trusted = tru
  * Field 1: metadata
  */
 export function buildStartCascadeRequest(apiKey, sessionId) {
-  return writeMessageField(1, buildMetadata(apiKey, undefined, sessionId));
+  return Buffer.concat([
+    writeMessageField(1, buildMetadata(apiKey, undefined, sessionId)),
+    writeVarintField(4, 1),  // source = CORTEX_TRAJECTORY_SOURCE_CASCADE_CLIENT
+    writeVarintField(5, 1),  // trajectory_type = CORTEX_TRAJECTORY_TYPE_USER_MAINLINE
+  ]);
 }
 
 /**
@@ -481,17 +485,30 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     throw new Error('buildCascadeConfig: at least one of modelUid or modelEnum must be provided');
   }
 
+  // max_output_tokens (field 6) — real IDE sends 16384/32768.
+  // Missing this causes truncated long responses.
+  plannerParts.push(writeVarintField(6, 32768));
+
+  // code_changes_section (field 11) — suppress IDE-specific "apply changes" boilerplate
+  if (!toolPreamble) {
+    const emptySection = Buffer.concat([writeVarintField(1, 1), writeStringField(2, '')]);
+    plannerParts.push(writeMessageField(11, emptySection));
+  }
+
   const plannerConfig = Buffer.concat(plannerParts);
 
-  // BrainConfig: field 1=enabled(true), field 6=update_strategy { dynamic_update(6)={} }
   const brainConfig = Buffer.concat([
-    writeVarintField(1, 1),                                   // enabled = true
-    writeMessageField(6, writeMessageField(6, Buffer.alloc(0))), // update_strategy.dynamic_update = {}
+    writeVarintField(1, 1),
+    writeMessageField(6, writeMessageField(6, Buffer.alloc(0))),
   ]);
 
-  // CascadeConfig: field 1=planner_config, field 7=brain_config
+  // memory_config (field 5): {enabled=false} — prevent LS injecting user's
+  // stored Cascade memories into API responses
+  const memoryConfig = Buffer.concat([writeBoolField(1, false)]);
+
   return Buffer.concat([
     writeMessageField(1, plannerConfig),
+    writeMessageField(5, memoryConfig),
     writeMessageField(7, brainConfig),
   ]);
 }
