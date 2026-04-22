@@ -274,11 +274,19 @@ export async function handleChatCompletions(body) {
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
-      // First attempt pins to the account that owns the cached cascade.
       acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
       if (!acct) {
-        log.info('Chat: cascade reuse skipped — owning account not available, falling back to fresh cascade');
-        reuseEntry = null;
+        // Owning account busy — wait up to 5s for it instead of immediately
+        // giving up. Dropping reuse means falling back to text-blob history
+        // which loses context on most models.
+        for (let w = 0; w < 10 && !acct; w++) {
+          await new Promise(r => setTimeout(r, 500));
+          acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
+        }
+        if (!acct) {
+          log.info('Chat: cascade reuse skipped — owning account not available after 5s wait');
+          reuseEntry = null;
+        }
       }
     }
     if (!acct) {
@@ -687,8 +695,14 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           if (reuseEntry && attempt === 0) {
             acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
             if (!acct) {
-              log.info('Chat: cascade reuse skipped — owning account not available');
-              reuseEntry = null;
+              for (let w = 0; w < 10 && !acct && !abortController.signal.aborted; w++) {
+                await new Promise(r => setTimeout(r, 500));
+                acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
+              }
+              if (!acct) {
+                log.info('Chat: cascade reuse skipped — owning account not available after 5s wait');
+                reuseEntry = null;
+              }
             }
           }
           if (!acct) {
