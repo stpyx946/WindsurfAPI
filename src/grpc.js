@@ -136,6 +136,8 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
       ':path': path,
       'content-type': 'application/grpc',
       'te': 'trailers',
+      'grpc-accept-encoding': 'identity,gzip,deflate',
+      'user-agent': 'grpc-node/1.108.2',
       'x-codeium-csrf-token': csrfToken,
     });
 
@@ -209,6 +211,8 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     ':path': path,
     'content-type': 'application/grpc',
     'te': 'trailers',
+    'grpc-accept-encoding': 'identity,gzip,deflate',
+    'user-agent': 'grpc-node/1.108.2',
     'x-codeium-csrf-token': csrfToken,
   });
 

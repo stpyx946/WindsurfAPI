@@ -328,7 +328,7 @@ export class WindsurfClient {
       let lastGrowthAt = Date.now();
       let lastStepCount = 0;
       const maxWait = 180_000;
-      const pollInterval = 250;
+      const pollInterval = 500;
       const IDLE_GRACE_MS = 8_000;     // minimum time before idle-break allowed
       // 25s no progress on any signal = genuine stall. Was 15s + text-only,
       // which misfired on long thinking phases and returned tiny "Let me…"

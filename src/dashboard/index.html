@@ -1572,8 +1572,18 @@ window._firebaseOAuth = async function(provider) {
         <div class="section-desc" style="margin-bottom:10px">
           每个厂商的模板可编辑，<code>{model}</code> 占位符会被替换成请求的模型名（例如 <code>claude-opus-4.6</code>）。
         </div>
+        <div style="margin-bottom:10px"><input type="text" class="input" placeholder="搜索提供商..." id="identity-search" oninput="App.filterIdentityPrompts(this.value)" style="max-width:280px"></div>
         <div id="identity-prompts-editor" style="display:grid;gap:14px"></div>
       </div>
+    </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div>
+          <div class="section-title">系统提示词</div>
+          <div class="section-desc">工具注入、对话模式等内置提示词模板。修改后立即生效，点"重置"恢复默认。</div>
+        </div>
+      </div>
+      <div class="section-body" id="system-prompts-editor" style="display:grid;gap:14px"></div>
     </div>
   </section>
 </main>
@@ -3117,31 +3127,57 @@ const App = {
     // Identity prompts editor
     const ip = await this.api('GET', '/identity-prompts');
     this._identityDefaults = ip.defaults || {};
-    const holder = document.getElementById('identity-prompts-editor');
-    if (holder) {
-      const prompts = ip.prompts || {};
-      holder.innerHTML = Object.entries(prompts).map(([provider, text]) => {
-        const label = this.PROVIDER_LABELS[provider] || provider;
-        const isDefault = text === this._identityDefaults[provider];
-        return `
-          <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--surface)">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-              <div style="display:flex;align-items:center;gap:8px">
-                <code style="color:var(--accent);font-weight:600">${provider}</code>
-                <span class="text-sm text-muted">${label}</span>
-                ${isDefault ? '' : '<span class="text-xs" style="background:var(--accent);color:#fff;padding:2px 6px;border-radius:3px">已自定义</span>'}
-              </div>
-              <div class="btn-group">
-                <button class="btn btn-ghost btn-xs" onclick="App.resetIdentityPrompt('${provider}')" ${isDefault ? 'disabled' : ''}>恢复默认</button>
-                <button class="btn btn-primary btn-xs" onclick="App.saveIdentityPrompt('${provider}')">保存</button>
-              </div>
+    this._identityPrompts = ip.prompts || {};
+    this.renderIdentityPrompts('');
+
+    // System prompts editor
+    const sp = await this.api('GET', '/system-prompts');
+    const spHolder = document.getElementById('system-prompts-editor');
+    if (spHolder) {
+      const labels = {toolReinforcement:'工具调用格式指引',communicationWithTools:'有工具时的通信指令',communicationNoTools:'无工具时的通信指令'};
+      spHolder.innerHTML = Object.entries(sp.prompts || {}).map(([key, text]) => `
+        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--surface)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div><code style="color:var(--accent);font-weight:600">${key}</code> <span class="text-sm text-muted">${labels[key]||key}</span></div>
+            <div class="btn-group">
+              <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${key}')">重置</button>
+              <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${key}')">保存</button>
             </div>
-            <textarea id="id-prompt-${provider}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
           </div>
-        `;
-      }).join('');
+          <textarea id="sp-${key}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
+        </div>
+      `).join('');
     }
   },
+
+  renderIdentityPrompts(filter) {
+    const holder = document.getElementById('identity-prompts-editor');
+    if (!holder) return;
+    const prompts = this._identityPrompts || {};
+    const f = (filter || '').toLowerCase();
+    holder.innerHTML = Object.entries(prompts).filter(([p]) => !f || p.includes(f) || (this.PROVIDER_LABELS[p]||'').toLowerCase().includes(f)).map(([provider, text]) => {
+      const label = this.PROVIDER_LABELS[provider] || provider;
+      const isDefault = text === this._identityDefaults[provider];
+      return `
+        <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--surface)">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+            <div style="display:flex;align-items:center;gap:8px">
+              <code style="color:var(--accent);font-weight:600">${provider}</code>
+              <span class="text-sm text-muted">${label}</span>
+              ${isDefault ? '' : '<span class="text-xs" style="background:var(--accent);color:#fff;padding:2px 6px;border-radius:3px">已自定义</span>'}
+            </div>
+            <div class="btn-group">
+              <button class="btn btn-ghost btn-xs" onclick="App.resetIdentityPrompt('${provider}')" ${isDefault ? 'disabled' : ''}>恢复默认</button>
+              <button class="btn btn-primary btn-xs" onclick="App.saveIdentityPrompt('${provider}')">保存</button>
+            </div>
+          </div>
+          <textarea id="id-prompt-${provider}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
+        </div>
+      `;
+    }).join('') || '<div class="text-muted text-sm">无匹配</div>';
+  },
+
+  filterIdentityPrompts(v) { this.renderIdentityPrompts(v); },
 
   async saveIdentityPrompt(provider) {
     const ta = document.getElementById(`id-prompt-${provider}`);
@@ -3162,6 +3198,21 @@ const App = {
     if (!ok) return;
     await this.api('DELETE', `/identity-prompts/${provider}`);
     this.toast(`${provider} 已恢复默认`, 'success');
+    this.loadExperimental();
+  },
+
+  async saveSystemPrompt(key) {
+    const ta = document.getElementById(`sp-${key}`);
+    if (!ta) return;
+    await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
+    this.toast(`${key} 已保存`, 'success');
+  },
+
+  async resetSystemPrompt(key) {
+    const ok = await this.confirm('重置', `确定将 ${key} 恢复为默认？`, { okText: '重置' });
+    if (!ok) return;
+    await this.api('DELETE', `/system-prompts/${key}`);
+    this.toast(`${key} 已重置`, 'success');
     this.loadExperimental();
   },
 

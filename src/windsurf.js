@@ -62,6 +62,7 @@ import {
   writeVarintField, writeStringField, writeMessageField, writeBytesField,
   writeBoolField, parseFields, getField, getAllFields,
 } from './proto.js';
+import { getSystemPrompts } from './runtime-config.js';
 
 // ─── Enums ─────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ function encodeTimestamp() {
 
 // ─── Metadata ──────────────────────────────────────────────
 
-export function buildMetadata(apiKey, version = '1.9600.41', sessionId = null) {
+export function buildMetadata(apiKey, version = '1.108.2', sessionId = null) {
   return Buffer.concat([
     writeStringField(1, 'windsurf'),          // ide_name
     writeStringField(2, version),             // extension_version
@@ -94,7 +95,7 @@ export function buildMetadata(apiKey, version = '1.9600.41', sessionId = null) {
     writeStringField(5, 'linux'),             // os
     writeStringField(7, version),             // ide_version
     writeStringField(8, 'x86_64'),            // hardware
-    writeVarintField(9, Date.now()),           // request_id
+    writeVarintField(9, Math.floor(Math.random() * 2**48)),  // request_id
     writeStringField(10, sessionId || randomUUID()), // session_id
     writeStringField(12, 'windsurf'),          // extension_name
   ]);
@@ -379,11 +380,8 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     // ── Client provided OpenAI tools[] ──
     // Primary delivery: additional_instructions_section (field 12, OVERRIDE).
     // This section is always rendered, even in NO_TOOL planner mode.
-    const reinforcement =
-      '\n\nThe functions listed above are available and callable. ' +
-      'When the user\'s request can be answered by calling a function, ' +
-      'emit a <tool_call> block as described. ' +
-      'Use this exact format: <tool_call>{"name":"...","arguments":{...}}</tool_call>';
+    const sp = getSystemPrompts();
+    const reinforcement = '\n\n' + sp.toolReinforcement;
     const additionalSection = Buffer.concat([
       writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
       writeStringField(2, toolPreamble + reinforcement),
@@ -407,9 +405,7 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     const toolCommOverride = Buffer.concat([
       writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
       writeStringField(2,
-        'You are accessed via API. ' +
-        'Respond in the same language as the user. ' +
-        'Use the functions above when relevant.'),
+        sp.communicationWithTools),
     ]);
     convParts.push(writeMessageField(13, toolCommOverride));
   } else {
@@ -448,12 +444,10 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
     convParts.push(writeMessageField(12, noToolAdditional));
 
     // field 13 (communication_section): minimal — no identity manipulation.
+    const spNoTools = getSystemPrompts();
     const communicationOverride = Buffer.concat([
-      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
-      writeStringField(2,
-        'You are accessed via API. ' +
-        'Answer directly. ' +
-        'Respond in the same language as the user.'),
+      writeVarintField(1, 1),
+      writeStringField(2, spNoTools.communicationNoTools),
     ]);
     convParts.push(writeMessageField(13, communicationOverride));
   }
