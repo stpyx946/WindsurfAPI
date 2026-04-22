@@ -342,9 +342,28 @@ export class ToolCallStreamParser {
     }
     if (this.inToolResult) {
       this.inToolResult = false;
-      return { text: '', toolCalls: [] }; // discard incomplete tool_result
+      return { text: '', toolCalls: [] };
     }
-    return { text: remaining, toolCalls: [] };
+    // Fallback: detect Cascade-native tool_code format that some models emit
+    // instead of our <tool_call> XML. Parse {"tool_code": "funcname(args)"} or
+    // {"tool_code": "funcname(\"arg\")"} into a standard tool call.
+    const toolCalls = [];
+    const cleaned = remaining.replace(/\{"tool_code"\s*:\s*"([^"]+?)\(([^]*?)\)"\s*\}/g, (_match, name, rawArgs) => {
+      try {
+        let args = rawArgs.replace(/\\"/g, '"').trim();
+        if (args.startsWith('"') && args.endsWith('"')) args = `{"input":${args}}`;
+        else if (!args.startsWith('{')) args = `{"input":"${args}"}`;
+        const parsed = safeParseJson(args) || { input: args };
+        toolCalls.push({
+          id: `call_tc_${this._totalSeen}_${Date.now().toString(36)}`,
+          name,
+          argumentsJson: JSON.stringify(parsed),
+        });
+        this._totalSeen++;
+      } catch {}
+      return '';
+    });
+    return { text: toolCalls.length ? cleaned.trim() : remaining, toolCalls };
   }
 }
 
