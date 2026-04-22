@@ -249,12 +249,12 @@ export class WindsurfClient {
         const lines = [];
         for (let i = 0; i < convo.length - 1; i++) {
           const m = convo[i];
-          const label = m.role === 'user' ? 'User' : 'Assistant';
-          lines.push(`${label}: ${contentToString(m.content)}`);
+          const tag = m.role === 'user' ? 'human' : 'assistant';
+          lines.push(`<${tag}>\n${contentToString(m.content)}\n</${tag}>`);
         }
         const latest = convo[convo.length - 1];
         const extracted = await extractImages(latest?.content ?? '');
-        text = `[Conversation so far]\n${lines.join('\n\n')}\n\n[Current user message]\n${extracted.text}`;
+        text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${extracted.text}\n</human>`;
         images = extracted.images;
       }
       if (sysText) text = sysText + '\n\n' + text;
