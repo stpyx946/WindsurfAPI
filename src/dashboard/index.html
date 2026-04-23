@@ -2154,12 +2154,12 @@ const App = {
     const status = document.getElementById('oauth-status');
     const label = provider === 'google' ? 'Google' : 'GitHub';
     if (btn) btn.disabled = true;
-    status.textContent = `正在通过 ${label} 登录...`;
+    status.textContent = I18n.t('oauth.status.loggingIn', { label });
     status.style.color = 'var(--text-muted)';
     try {
-      if (!window._firebaseOAuth) throw new Error('Firebase SDK 加载失败 请刷新页面重试');
+      if (!window._firebaseOAuth) throw new Error(I18n.t('error.firebaseLoadFailed'));
       const cred = await window._firebaseOAuth(provider);
-      status.textContent = `${label} 认证成功 正在注册 Codeium...`;
+      status.textContent = I18n.t('oauth.status.codeiumRegistering', { label });
       const r = await this.api('POST', '/oauth-login', {
         idToken: cred.idToken,
         refreshToken: cred.refreshToken,
@@ -2169,14 +2169,14 @@ const App = {
       });
       if (r.error) throw new Error(r.error);
       status.style.color = '#22c55e';
-      status.textContent = `登录成功 ${r.email || label} 已加入账号池`;
+      status.textContent = I18n.t('oauth.status.loginSuccess', { email: r.email || label });
       this.toast(I18n.t('toast.loginSuccess', { label }), 'success');
       this.loadAccounts();
-      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: '直连', status: 'success', method: label };
+      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: I18n.t('proxy.direct'), status: 'success', method: label };
       this.pushLoginHistory(entry);
     } catch (err) {
       status.style.color = '#ef4444';
-      status.textContent = `${label} 登录失败: ${err.message}`;
+      status.textContent = I18n.t('oauth.status.loginFailed', { label, error: err.message });
       this.toast(I18n.t('toast.loginFailed', { label, error: err.message }), 'error');
     } finally {
       if (btn) btn.disabled = false;
@@ -2219,12 +2219,12 @@ const App = {
     if (!r.isAuthFail) return '';
     return `
       <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
-        <div style="font-weight:600;margin-bottom:8px">换个方式试试</div>
+        <div style="font-weight:600;margin-bottom:8px">${I18n.t('oauth.tryAnotherWay')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">Google 登录</button>
-          <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">GitHub 登录</button>
-          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">复制 Auth Token</a>
-          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">去账号管理粘贴 Token</button>
+          <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">${I18n.t('oauth.google')}</button>
+          <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">${I18n.t('oauth.github')}</button>
+          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">${I18n.t('oauth.copyAuthToken')}</a>
+          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">${I18n.t('oauth.pasteToken')}</button>
         </div>
       </div>`;
   },
@@ -2454,8 +2454,8 @@ const App = {
           <div class="section">
             <div class="section-header">
               <div>
-                <div class="section-title">语言服务器池</div>
-                <div class="section-desc">${instances.length} 个 LS 实例 · 每个独立代理对应一个进程</div>
+                <div class="section-title">${I18n.t('section.lsPool.sectionTitle')}</div>
+                <div class="section-desc">${I18n.t('section.lsPool.sectionDesc', { count: instances.length })}</div>
               </div>
             </div>
             <div class="section-body">
@@ -2464,10 +2464,10 @@ const App = {
                   <div class="ls-inst">
                     <div class="ls-key">
                       <span class="ls-dot ${i.ready ? '' : 'pending'}"></span>
-                      ${this.esc(i.key === 'default' ? '默认实例' : i.key.replace(/^px_/, ''))}
+                      ${this.esc(i.key === 'default' ? I18n.t('section.lsPool.defaultInstance') : i.key.replace(/^px_/, ''))}
                     </div>
-                    <div class="ls-meta">端口 ${i.port} · PID ${i.pid || '-'}</div>
-                    <div class="ls-meta">${this.esc(i.proxy || '无代理')}</div>
+                    <div class="ls-meta">${I18n.t('section.lsPool.port')} ${i.port} · PID ${i.pid || '-'}</div>
+                    <div class="ls-meta">${this.esc(i.proxy || I18n.t('section.lsPool.noProxy'))}</div>
                   </div>
                 `).join('')}
               </div>
@@ -2478,7 +2478,7 @@ const App = {
       }
     }
     const tbody = document.querySelector('#accounts-table tbody');
-    const tierLabel = { pro: 'PRO', free: 'FREE', expired: '已过期', unknown: '未知' };
+    const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
@@ -2510,7 +2510,7 @@ const App = {
       }
       const tierTooltip = usTipLines.length
         ? usTipLines.join('\n')
-        : '点击手动修改层级（探测异常时用）';
+        : I18n.t('status.clickToEditTier');
 
       // Compact summary: avail/total + 编辑 button. Clicking opens modal.
       const tierModels = a.tierModels || [];
@@ -2523,7 +2523,7 @@ const App = {
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
            </button>`
         : `<span class="text-xs text-dim">-</span>`;
-      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">限流中</span>` : '';
+      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : '';
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
       const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
@@ -2544,9 +2544,9 @@ const App = {
       const cr = a.credits || null;
       let creditCell;
       if (!cr) {
-        creditCell = `<span class="text-xs text-dim">尚未获取</span>`;
+        creditCell = `<span class="text-xs text-dim">${I18n.t('status.notFetched')}</span>`;
       } else if (cr.lastError && cr.percent == null && !cr.prompt?.limit) {
-        creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">获取失败</span>`;
+        creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">${I18n.t('status.fetchFailed')}</span>`;
       } else {
         const planName = cr.planName || '-';
         const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm ago' : '-';
@@ -2573,8 +2573,8 @@ const App = {
         ].filter(Boolean).join('\n');
         creditCell = `<div style="min-width:120px" title="${this.esc(tipLines)}">
             <div class="text-xs" style="margin-bottom:2px"><b>${this.esc(planName.slice(0, 12))}</b> <span style="color:var(--text-dim)">${fetchedAgo}</span></div>
-            ${bar('日', cr.dailyPercent)}
-            ${bar('周', cr.weeklyPercent)}
+            ${bar(I18n.t('creditsBar.daily'), cr.dailyPercent)}
+            ${bar(I18n.t('creditsBar.weekly'), cr.weeklyPercent)}
             ${bar('P', promptPct)}
           </div>`;
       }
@@ -2616,66 +2616,66 @@ const App = {
     try {
       const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {});
       if (r.ok) {
-        this.toast('余额已刷新');
+        this.toast(I18n.t('toast.credits.refreshed'));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '刷新失败', 'error');
+        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
       }
-    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
 
   async refreshAllCredits() {
-    this.toast('正在刷新所有账号余额...', 'info');
+    this.toast(I18n.t('toast.credits.refreshing'), 'info');
     try {
       const r = await this.api('POST', '/accounts/refresh-credits', {});
       if (r.success) {
         const okCount = (r.results || []).filter(x => x.ok).length;
         const failCount = (r.results || []).length - okCount;
-        this.toast(`余额刷新完成：${okCount} 成功 / ${failCount} 失败`);
+        this.toast(I18n.t('toast.credits.allRefreshed', { ok: okCount, fail: failCount }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '刷新失败', 'error');
+        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
       }
-    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
 
   async probeAll() {
-    this.toast('全部探测中，依账号数量约需 1-3 分钟...', 'info');
+    this.toast(I18n.t('toast.probe.allDoing'), 'info');
     try {
       const r = await this.api('POST', '/accounts/probe-all', {});
       if (r.success) {
-        const tierLabel = { pro: 'Pro', free: 'Free', expired: '已过期', unknown: '未知' };
-        const summary = (r.results || []).map(x => `${x.email}: ${tierLabel[x.tier] || x.tier || x.error}`).join('；');
-        this.toast('探测完成：' + summary);
+        const tierLabel = { pro: 'Pro', free: 'Free', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+        const summary = (r.results || []).map(x => `${x.email}: ${tierLabel[x.tier] || x.tier || x.error}`).join('; ');
+        this.toast(I18n.t('toast.probeAllComplete', { summary }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '探测失败', 'error');
+        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
       }
-    } catch (e) { this.toast('探测失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
 
   async probeAccount(id) {
-    this.toast('探测中，约需 10-30 秒...', 'info');
+    this.toast(I18n.t('toast.probe.doing'), 'info');
     try {
       const r = await this.api('POST', `/accounts/${id}/probe`, {});
       if (r.success) {
-        const tierLabel = { pro: 'Pro', free: 'Free', expired: '已过期', unknown: '未知' };
-        this.toast(`探测完成：${tierLabel[r.tier] || r.tier}`);
+        const tierLabel = { pro: 'Pro', free: 'Free', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+        this.toast(I18n.t('toast.probeComplete', { tier: tierLabel[r.tier] || r.tier }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '探测失败', 'error');
+        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
       }
-    } catch (e) { this.toast('探测失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
 
   async openBlockedModal(id) {
     try {
       const d = await this.api('GET', '/accounts', null);
       const acct = (d.accounts || []).find(a => a.id === id);
-      if (!acct) return this.toast('账号不存在', 'error');
+      if (!acct) return this.toast(I18n.t('error.accountNotFound'), 'error');
       const tierModels = acct.tierModels || [];
       const blocked = new Set(acct.blockedModels || []);
-      if (!tierModels.length) return this.toast('该账号层级无可用模型', 'info');
+      if (!tierModels.length) return this.toast(I18n.t('toast.noTierModels'), 'info');
       const providerOf = (m) => {
         if (m.startsWith('claude')) return 'anthropic';
         if (m.startsWith('gpt') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
@@ -3415,19 +3415,19 @@ const App = {
     const errored = accounts.filter(a => a.status === 'error' || a.errorCount > 0);
     document.getElementById('ban-cards').innerHTML = `
       <div class="card ${errored.length > 0 ? 'error' : 'success'}">
-        <div class="card-header"><div class="card-title">异常账号</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.abnormalAccounts.title')}</div></div>
         <div class="card-value">${errored.length}</div>
-        <div class="card-sub">共 ${accounts.length} 个账号</div>
+        <div class="card-sub">${I18n.t('card.abnormalAccounts.subtitle', { count: accounts.length })}</div>
       </div>
       <div class="card warn">
-        <div class="card-header"><div class="card-title">已停用</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.disabled.title')}</div></div>
         <div class="card-value">${accounts.filter(a => a.status === 'error').length}</div>
-        <div class="card-sub">自动错误停用</div>
+        <div class="card-sub">${I18n.t('card.disabled.subtitle')}</div>
       </div>
       <div class="card info">
-        <div class="card-header"><div class="card-title">限流中</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.rateLimit.title')}</div></div>
         <div class="card-value">${accounts.filter(a => a.rateLimited).length}</div>
-        <div class="card-sub">暂时不参与调度</div>
+        <div class="card-sub">${I18n.t('card.rateLimit.subtitle')}</div>
       </div>
     `;
     const tbody = document.querySelector('#ban-table tbody');

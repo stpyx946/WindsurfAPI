@@ -122,17 +122,30 @@
     "notGitRepo": "非 git 部署 — 一键更新不可用",
     "notGitRepoHint": "如果你是通过 git clone 部署的，请确保 .git 目录随 WindsurfAPI 源码一起上传",
     "workingDirDirty": "工作区有本地修改",
-    "workingDirDirtyHint": "以下文件已被修改但未提交：<br>{{files}}<br>继续将用远程版本覆盖这些修改。"
+    "workingDirDirtyHint": "以下文件已被修改但未提交：<br>{{files}}<br>继续将用远程版本覆盖这些修改。",
+    "notFetched": "尚未获取",
+    "fetchFailed": "获取失败",
+    "clickToEditTier": "点击手动修改层级（探测异常时用）"
   },
 
   "tier": {
     "pro": "PRO",
     "free": "FREE",
     "expired": "已过期",
-    "unknown": "未知"
+    "unknown": "未知",
+    "expiredLabel": "已过期"
+  },
+
+  "creditsBar": {
+    "daily": "日",
+    "weekly": "周",
+    "monthly": "月"
   },
 
   "section": {
+    "banStatus": {
+      "title": "健康状态"
+    },
     "lsStatus": {
       "title": "Language Server",
       "desc": "语言服务器实例状态"
@@ -190,6 +203,8 @@
       "hint": "默认关闭。开启后对当前对话池立即生效。"
     },
     "identityPrompt": {
+      "title": "模型身份提示词",
+      "desc": "在每个请求开头注入模型身份系统提示词。",
       "enable": "启用模型身份注入",
       "hint": "默认开启；关闭后下面的模板不起作用",
       "templateHint": "每个厂商的模板可编辑，{{model}} 占位符会被替换成请求的模型名（例如 claude-opus-4.6）。"
@@ -204,7 +219,12 @@
     },
     "lsPool": {
       "title": "语言服务器池",
-      "desc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程"
+      "desc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程",
+      "sectionTitle": "语言服务器池",
+      "sectionDesc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程",
+      "port": "端口",
+      "defaultInstance": "默认实例",
+      "noProxy": "无代理"
     },
     "modelStats": {
       "title": "模型使用统计",
@@ -325,6 +345,7 @@
       "error": "错误",
       "lastUsed": "最后使用",
       "key": "Key",
+      "accountId": "账号 ID",
       "account": "账号",
       "requests": "请求",
       "success": "成功",
@@ -339,6 +360,9 @@
     "empty": {
       "loginHistory": "暂无登录记录",
       "accounts": "暂无账号，请先添加",
+      "accountNotFound": "账号不存在",
+      "probeFailed": "探测失败",
+      "noValidAccounts": "暂无可用账号可用于路由",
       "accountsProxy": "暂无账号",
       "modelStats": "暂无模型统计数据",
       "accountStats": "暂无账号统计数据",
@@ -373,6 +397,19 @@
     },
     "banStats": {
       "title": "健康概览"
+    },
+    "abnormalAccounts": {
+      "title": "异常账号",
+      "subtitle": "共 {{count}} 个账号"
+    },
+    "disabled": {
+      "title": "已停用",
+      "subtitle": "自动错误停用"
+    },
+    "rateLimit": {
+      "title": "限流中",
+      "badge": "限流中",
+      "subtitle": "暂时不参与调度"
     },
     "stats": {
       "title": "总请求",
@@ -416,17 +453,19 @@
   },
 
   "range": {
-    "6h": "近 6h",
-    "24h": "近 24h",
-    "72h": "近 72h"
+    "6h": "近 6小时",
+    "24h": "近 24小时",
+    "72h": "近 72小时"
   },
 
   "credits": {
     "contributors": "核心贡献者",
-    "cta": "想加入这份名单？",
-    "ctaDesc": "欢迎到 GitHub 提 issue 或 pull request — 不管是修 bug、加模型、改 UI 还是发现安全问题，都会被记录在这里。",
-    "openIssue": "提 issue",
-    "openPR": "提 PR"
+    "cta": {
+      "title": "想加入这份名单？",
+      "desc": "欢迎到 GitHub 提 issue 或 pull request — 不管是修 bug、加模型、改 UI 还是发现安全问题，都会被记录在这里。",
+      "issue": "提 issue",
+      "pr": "提 PR"
+    }
   },
 
   "experimental": {
@@ -508,13 +547,20 @@
   },
 
   "oauth": {
+    "tryAnotherWay": "换个方式试试",
     "google": "Google 登录",
     "github": "GitHub 登录",
+    "copyAuthToken": "复制 Auth Token",
+    "pasteToken": "去账号管理粘贴 Token",
     "status": {
       "loading": "正在通过 {{provider}} 登录...",
       "success": "登录成功 {{email}} 已加入账号池",
       "codeium": "{{provider}} 认证成功 正在注册 Codeium...",
-      "firebaseError": "Firebase SDK 加载失败 请刷新页面重试"
+      "firebaseError": "Firebase SDK 加载失败 请刷新页面重试",
+      "loggingIn": "正在通过 {{label}} 登录...",
+      "codeiumRegistering": "{{label}} 认证成功 正在注册 Codeium...",
+      "loginSuccess": "登录成功 {{email}} 已加入账号池",
+      "loginFailed": "{{label}} 登录失败: {{error}}"
     }
   },
 
@@ -558,13 +604,16 @@
       "doing": "探测中，约需 10-30 秒...",
       "complete": "探测完成：{{result}}",
       "allDoing": "全部探测中，依账号数量约需 1-3 分钟...",
-      "allComplete": "探测完成：{{summary}}"
+      "allComplete": "探测完成：{{summary}}",
+      "probeAllComplete": "探测完成：{{summary}}",
+      "probeComplete": "探测完成：{{tier}}"
     },
     "credits": {
       "refreshed": "余额已刷新",
       "refreshFailed": "刷新失败",
       "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败",
-      "refreshing": "正在刷新所有账号余额..."
+      "refreshing": "正在刷新所有账号余额...",
+      "refreshingAll": "正在刷新所有账号余额..."
     },
     "ls": {
       "restarting": "Language Server 重启中..."
@@ -591,6 +640,7 @@
     "experimentalEnabled": "已启用实验性功能",
     "experimentalDisabled": "已关闭实验性功能",
     "toggleFailed": "切换失败：{{error}}",
+    "noTierModels": "该账号层级无可用模型",
     "loginSuccess": "{{label}} 登录成功",
     "loginFailed": "{{label}} 登录失败：{{error}}",
     "loginSuccessAdded": "登录成功，账号已加入账号池",
@@ -651,6 +701,7 @@
     "clipboardNotSupported": "当前环境不支持自动读取剪贴板，请手动粘贴",
     "clipboardEmpty": "剪贴板为空",
     "clipboardReadFailed": "读取剪贴板失败",
+    "firebaseLoadFailed": "Firebase SDK 加载失败 请刷新页面重试",
     "ERR_EMAIL_PASSWORD_REQUIRED": "email 和 password 为必填",
     "ERR_HOST_PORT_REQUIRED": "缺少 host 或 port",
     "ERR_UNCOMMITTED_CHANGES": "工作区有未提交的修改（SFTP 部署或手动改过代码）。确定要覆盖本地修改用远程最新版本吗？",

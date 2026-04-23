@@ -122,14 +122,24 @@
     "notGitRepo": "Not a git repository",
     "notGitRepoHint": "Ensure .git directory is present for one-click updates",
     "workingDirDirty": "Working directory has local changes",
-    "workingDirDirtyHint": "The following files have local changes:<br>{{files}}<br>Continue will overwrite with remote version."
+    "workingDirDirtyHint": "The following files have local changes:<br>{{files}}<br>Continue will overwrite with remote version.",
+    "notFetched": "Not fetched",
+    "fetchFailed": "Fetch failed",
+    "clickToEditTier": "Click to manually edit tier (use when probe fails)"
   },
 
   "tier": {
     "pro": "PRO",
     "free": "FREE",
     "expired": "Expired",
-    "unknown": "Unknown"
+    "unknown": "Unknown",
+    "expiredLabel": "Expired"
+  },
+
+  "creditsBar": {
+    "daily": "D",
+    "weekly": "W",
+    "monthly": "M"
   },
 
   "section": {
@@ -209,7 +219,12 @@
     },
     "lsPool": {
       "title": "Language Server Pool",
-      "desc": "{{count}} LS instances · one process per dedicated proxy"
+      "desc": "{{count}} LS instances · one process per dedicated proxy",
+      "sectionTitle": "Language Server Pool",
+      "sectionDesc": "Dedicated Language Server instances per proxy",
+      "port": "Port",
+      "defaultInstance": "Default Instance",
+      "noProxy": "No proxy"
     },
     "modelStats": {
       "title": "Model Usage Statistics",
@@ -350,7 +365,10 @@
       "accountStats": "No account statistics available",
       "banList": "No abnormal accounts",
       "models": "No matching models",
-      "credits": "Loading..."
+      "credits": "Loading...",
+      "accountNotFound": "Account not found",
+      "noValidAccounts": "No valid accounts available for routing",
+      "probeFailed": "Probe failed"
     }
   },
 
@@ -379,6 +397,19 @@
     },
     "banStats": {
       "title": "Health Overview"
+    },
+    "abnormalAccounts": {
+      "title": "Abnormal Accounts",
+      "subtitle": "Total {{count}} accounts"
+    },
+    "disabled": {
+      "title": "Disabled",
+      "subtitle": "Auto-disabled due to errors"
+    },
+    "rateLimit": {
+      "title": "Rate Limited",
+      "badge": "Rate Limited",
+      "subtitle": "Temporarily excluded from scheduling"
     },
     "stats": {
       "title": "Total Requests",
@@ -516,13 +547,20 @@
   },
 
   "oauth": {
+    "tryAnotherWay": "Try Another Way",
     "google": "Google Login",
     "github": "GitHub Login",
+    "copyAuthToken": "Copy Auth Token",
+    "pasteToken": "Paste Token in Account Management",
     "status": {
       "loading": "Logging in via {{provider}}...",
       "success": "Login successful! {{email}} added to pool",
       "codeium": "{{provider}} auth successful, registering with Codeium...",
-      "firebaseError": "Firebase SDK failed to load, please refresh and retry"
+      "firebaseError": "Firebase SDK failed to load, please refresh and retry",
+      "loggingIn": "Logging in via {{label}}...",
+      "codeiumRegistering": "{{label}} auth success, registering Codeium...",
+      "loginSuccess": "Login successful {{email}} added to pool",
+      "loginFailed": "{{label}} login failed: {{error}}"
     }
   },
 
@@ -566,13 +604,16 @@
       "doing": "Probing, takes about 10-30 seconds...",
       "complete": "Probe complete: {{result}}",
       "allDoing": "Probing all accounts, takes 1-3 minutes depending on count...",
-      "allComplete": "Probe complete: {{summary}}"
+      "allComplete": "Probe complete: {{summary}}",
+      "probeAllComplete": "Probe complete: {{summary}}",
+      "probeComplete": "Probe complete: {{tier}}"
     },
     "credits": {
       "refreshed": "Credits refreshed",
       "refreshFailed": "Refresh failed",
       "allRefreshed": "All account credits refreshed: {{ok}} success / {{fail}} failed",
-      "refreshing": "Refreshing all account credits..."
+      "refreshing": "Refreshing all account credits...",
+      "refreshingAll": "Refreshing all account credits..."
     },
     "ls": {
       "restarting": "Language Server restarting..."
@@ -599,6 +640,7 @@
     "experimentalEnabled": "Experimental feature enabled",
     "experimentalDisabled": "Experimental feature disabled",
     "toggleFailed": "Toggle failed: {{error}}",
+    "noTierModels": "No models available for this account tier",
     "loginSuccess": "{{label}} login successful",
     "loginFailed": "{{label}} login failed: {{error}}",
     "loginSuccessAdded": "Login successful, account added to pool",
@@ -659,6 +701,7 @@
     "clipboardNotSupported": "Current environment doesn't support clipboard auto-read, please paste manually",
     "clipboardEmpty": "Clipboard is empty",
     "clipboardReadFailed": "Failed to read clipboard",
+    "firebaseLoadFailed": "Firebase SDK failed to load, please refresh and retry",
     "ERR_EMAIL_PASSWORD_REQUIRED": "Email and password are required",
     "ERR_HOST_PORT_REQUIRED": "Host and port are required",
     "ERR_UNCOMMITTED_CHANGES": "Working directory has uncommitted changes. Force overwrite?",
