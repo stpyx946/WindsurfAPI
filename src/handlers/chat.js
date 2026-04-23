@@ -249,7 +249,7 @@ export async function handleChatCompletions(body) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble);
+    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId);
   }
 
   // ── Local response cache (exact body match) ─────────────
@@ -491,10 +491,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     allText = sanitizeText(allText);
     allThinking = sanitizeText(allThinking);
     if (toolCalls.length) {
-      toolCalls = toolCalls.map(tc => ({
-        ...tc,
-        argumentsJson: sanitizeText(tc.argumentsJson || ''),
-      }));
+      toolCalls = toolCalls.map(tc => sanitizeToolCall(tc));
     }
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
@@ -600,7 +597,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
   }
 }
 
-function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble) {
+function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId) {
   return {
     status: 200,
     stream: true,
