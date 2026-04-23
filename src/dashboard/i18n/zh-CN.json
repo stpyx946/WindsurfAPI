@@ -60,7 +60,10 @@
   "button": {
     "cancel": "取消",
     "confirm": "确认",
-    "forceOverride": "强制覆盖并更新"
+    "forceOverride": "强制覆盖并更新",
+    "save": "保存",
+    "restart": "重启",
+    "updateAndRestart": "更新并重启"
   },
 
   "action": {
@@ -109,6 +112,8 @@
     "rateLimited": "限速中",
     "loading": "加载中…",
     "testing": "测试中…",
+    "saving": "保存中…",
+    "updateAndRestartHint": "更新并重启服务",
     "proxySuccess": "✓ 连通成功 出口 IP {{ip}} · 耗时 {{latency}}ms",
     "proxyFailed": "✗ 失败: {{error}} · {{latency}}ms",
     "checkingUpdate": "正在检查更新…",
@@ -679,7 +684,21 @@
     "enterProxyHost": "请输入代理主机",
     "statsReset": "统计已重置",
     "enterKeyOrToken": "请输入 Key 或 Token",
-    "addFailed": "添加失败"
+    "addFailed": "添加失败",
+    "probe": {
+      "doing": "探测中，约需 10-30 秒...",
+      "probeComplete": "探测完成：{{tier}}",
+      "allDoing": "探测所有账号中，约需 1-3 分钟（视数量而定）...",
+      "probeAllComplete": "探测完成：{{summary}}"
+    },
+    "probeComplete": "探测完成：{{tier}}",
+    "probeAllComplete": "探测完成：{{summary}}",
+    "credits": {
+      "refreshed": "余额已刷新",
+      "refreshFailed": "刷新余额失败",
+      "refreshing": "正在刷新余额...",
+      "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败"
+    }
   },
 
   "log": {
@@ -724,6 +743,8 @@
     "updateFailed": "更新失败",
     "apiError": "API 错误",
     "loadFailed": "加载失败",
+    "probeFailed": "探测失败",
+    "accountNotFound": "账号未找到",
     "openFailed": "打开失败",
     "saveFailed": "保存失败",
     "deleteFailed": "删除失败",

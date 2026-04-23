@@ -60,7 +60,10 @@
   "button": {
     "cancel": "Cancel",
     "confirm": "Confirm",
-    "forceOverride": "Force Overwrite & Update"
+    "forceOverride": "Force Overwrite & Update",
+    "save": "Save",
+    "restart": "Restart",
+    "updateAndRestart": "Update and Restart"
   },
 
   "action": {
@@ -108,7 +111,9 @@
     "unknown": "Unknown",
     "rateLimited": "Rate Limited",
     "loading": "Loading...",
+    "saving": "Saving...",
     "testing": "Testing...",
+    "updateAndRestartHint": "Update and restart the service",
     "proxySuccess": "✓ Connected. Egress IP {{ip}} · {{latency}}ms",
     "proxyFailed": "✗ Failed: {{error}} · {{latency}}ms",
     "checkingUpdate": "Checking for updates...",
@@ -679,7 +684,21 @@
     "enterProxyHost": "Please enter proxy host",
     "statsReset": "Statistics reset",
     "enterKeyOrToken": "Please enter Key or Token",
-    "addFailed": "Add failed"
+    "addFailed": "Add failed",
+    "probe": {
+      "doing": "Probing, takes about 10-30 seconds...",
+      "probeComplete": "Probe complete: {{tier}}",
+      "allDoing": "Probing all accounts, takes 1-3 minutes depending on count...",
+      "probeAllComplete": "Probe complete: {{summary}}"
+    },
+    "probeComplete": "Probe complete: {{tier}}",
+    "probeAllComplete": "Probe complete: {{summary}}",
+    "credits": {
+      "refreshed": "Credits refreshed",
+      "refreshFailed": "Failed to refresh credits",
+      "refreshing": "Refreshing credits...",
+      "allRefreshed": "All account credits refreshed: {{ok}} success / {{fail}} failed"
+    }
   },
 
   "log": {
@@ -724,6 +743,8 @@
     "updateFailed": "Update failed",
     "apiError": "API error",
     "loadFailed": "Failed to load",
+    "probeFailed": "Probe failed",
+    "accountNotFound": "Account not found",
     "openFailed": "Failed to open",
     "saveFailed": "Save failed",
     "deleteFailed": "Delete failed",
