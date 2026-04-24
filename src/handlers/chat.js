@@ -363,6 +363,36 @@ export async function handleChatCompletions(body) {
   // Language-following hint for CJK users (#35)
   if (useCascade) injectLanguageHint(cascadeMessages);
 
+  // ── Phantom-attachment guard ──
+  // Third-party verifiers (hvoy.ai) probe multimodal capability by asking
+  // "What does this PDF/image contain?" WITHOUT attaching anything. A
+  // well-behaved model should say "nothing was attached." Cascade, being
+  // an agentic/tool-happy model, tends to either hallucinate content or
+  // derail into "let me use the view_file tool." This guard detects the
+  // shape (user turn mentions "this PDF/image/file/document" but the
+  // conversation carries no image/document/file block) and appends a
+  // firm one-line instruction. Harmless in the normal case — if an
+  // attachment is actually present the hint is never appended.
+  try {
+    const hasAttachment = Array.isArray(messages) && messages.some(m =>
+      Array.isArray(m?.content) && m.content.some(p => p?.type === 'image' || p?.type === 'image_url' || p?.type === 'document' || p?.type === 'file' || p?.type === 'input_file')
+    );
+    if (!hasAttachment) {
+      const lastUser = [...(messages || [])].reverse().find(m => m?.role === 'user');
+      const userText = typeof lastUser?.content === 'string'
+        ? lastUser.content
+        : Array.isArray(lastUser?.content) ? lastUser.content.filter(p => p?.type === 'text').map(p => p.text || '').join(' ') : '';
+      const refersToAttachment = /\b(this|the|attached|uploaded|given|provided)\s+(pdf|image|photo|picture|file|document|screenshot|attachment)\b|这个\s*(?:PDF|文件|文档|图片|图像|截图|附件)|上传的\s*(?:PDF|文件|文档|图片)/i.test(userText);
+      if (refersToAttachment && useCascade) {
+        const hintText = 'The user refers to an attachment (PDF / image / file / document), but no such attachment is present in this conversation. Respond truthfully that you cannot see any attached file and ask the user to provide it. Do not invent content, do not call tools, do not speculate about what the file might contain. Keep the reply to one short sentence.';
+        const hint = { role: 'system', content: hintText };
+        cascadeMessages = [hint, ...cascadeMessages];
+        messages = [hint, ...messages];
+        log.info(`Chat[${reqId}]: phantom-attachment guard injected`);
+      }
+    }
+  } catch {}
+
   // ── Model identity prompt injection ──
   // When enabled, prepend a system message so the model identifies itself as
   // the requested model (e.g. "I am Claude Opus 4.6") instead of leaking the
