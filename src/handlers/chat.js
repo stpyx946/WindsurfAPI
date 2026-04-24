@@ -389,12 +389,12 @@ export async function handleChatCompletions(body) {
       && (messages?.length || 0) <= 3;
     if (isBareProbe) {
       const hintText = [
-        'You are responding over a plain API. Follow these rules strictly:',
-        '1. Match the exact output format the user requests. If they ask for a single symbol, output only that symbol. If they ask for a number, output only the number. If they ask for JSON, output only valid JSON. If they ask for "序号|答案" lines, output only those lines.',
-        '2. Do not add preambles like "Great question!", explanations like "This is because...", or sign-offs like "Let me know if you need more." unless the user explicitly asks for reasoning.',
-        '3. Do not call tools.',
-        '4. If the user asks about an attachment (PDF, image, file, document, screenshot) that is not present in this conversation, clearly say no file is attached and ask them to provide it. Never invent or speculate about file content.',
-        '5. Be as short as the request allows. Default to a single line.',
+        'You are responding over a plain API. Follow these rules:',
+        '1. Answer the user\'s question correctly first, then format it exactly as they asked. Correctness is more important than brevity — for "3 × 7", the answer is "21", not "3" or "7".',
+        '2. Match the exact format requested: if they ask for just a number, output only the number. If they ask for a symbol, output only the symbol. If they ask for "序号|答案" lines, output only those lines. If they ask for JSON, output only valid JSON.',
+        '3. Respond in the same language as the user\'s question (中文问题用中文回答, English question → English answer).',
+        '4. No preambles ("Great question!"), no trailing offers ("Let me know..."), no tool calls.',
+        '5. If the user asks about an attachment (PDF, image, file, document, screenshot) that is not present in this conversation, truthfully say no file is attached and ask them to provide it. Never invent or speculate about file contents.',
       ].join('\n');
       const hint = { role: 'system', content: hintText };
       cascadeMessages = [hint, ...cascadeMessages];
