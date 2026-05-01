@@ -41,6 +41,9 @@ export const MODELS = {
   'claude-opus-4-7-medium-thinking': { name: 'claude-opus-4-7-medium-thinking', provider: 'anthropic', enumValue: 0, modelUid: 'claude-opus-4-7-medium-thinking', credit: 10 },
   'claude-opus-4-7-high-thinking':  { name: 'claude-opus-4-7-high-thinking',  provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-high-thinking', credit: 12 },
   'claude-opus-4-7-xhigh-thinking': { name: 'claude-opus-4-7-xhigh-thinking', provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-xhigh-thinking', credit: 16 },
+  // `max` reasoning tier appeared in GetCascadeModelConfigs after the 4.7 launch — sits
+  // above xhigh in the effort ladder. No -thinking sibling in cloud catalog yet.
+  'claude-opus-4-7-max':            { name: 'claude-opus-4-7-max',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-max', credit: 16 },
 
   // ── GPT ─────────────────────────────────────────────────
   'gpt-4o':                         { name: 'gpt-4o',                         provider: 'openai', enumValue: 109, modelUid: 'MODEL_CHAT_GPT_4O_2024_08_06', credit: 1 },
@@ -108,6 +111,29 @@ export const MODELS = {
   'gpt-5.4-mini-medium':            { name: 'gpt-5.4-mini-medium',            provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-medium', credit: 1.5 },
   'gpt-5.4-mini-high':              { name: 'gpt-5.4-mini-high',              provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-high', credit: 4.5 },
   'gpt-5.4-mini-xhigh':             { name: 'gpt-5.4-mini-xhigh',             provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-xhigh', credit: 12 },
+
+  // GPT-5.5 — Windsurf catalog 2026-04-30. Same effort ladder as 5.2/5.4 (none/low/medium/high/xhigh)
+  // with priority (=fast) lane equivalents. Bare `gpt-5.5` defaults to medium.
+  'gpt-5.5':                        { name: 'gpt-5.5',                        provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-medium', credit: 2 },
+  'gpt-5.5-none':                   { name: 'gpt-5.5-none',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-none', credit: 1 },
+  'gpt-5.5-low':                    { name: 'gpt-5.5-low',                    provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-low', credit: 1 },
+  'gpt-5.5-medium':                 { name: 'gpt-5.5-medium',                 provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-medium', credit: 2 },
+  'gpt-5.5-high':                   { name: 'gpt-5.5-high',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-high', credit: 4 },
+  'gpt-5.5-xhigh':                  { name: 'gpt-5.5-xhigh',                  provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-xhigh', credit: 8 },
+  'gpt-5.5-none-fast':              { name: 'gpt-5.5-none-fast',              provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-none-priority', credit: 2 },
+  'gpt-5.5-low-fast':               { name: 'gpt-5.5-low-fast',               provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-low-priority', credit: 2 },
+  'gpt-5.5-medium-fast':            { name: 'gpt-5.5-medium-fast',            provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-medium-priority', credit: 4 },
+  'gpt-5.5-high-fast':              { name: 'gpt-5.5-high-fast',              provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-high-priority', credit: 8 },
+  'gpt-5.5-xhigh-fast':             { name: 'gpt-5.5-xhigh-fast',             provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-5-xhigh-priority', credit: 16 },
+
+  // GPT-5.3 Codex — already had bare `gpt-5.3-codex` (legacy alias), now expose tier variants.
+  'gpt-5.3-codex-low':              { name: 'gpt-5.3-codex-low',              provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-low', credit: 0.5 },
+  'gpt-5.3-codex-high':             { name: 'gpt-5.3-codex-high',             provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-high', credit: 2 },
+  'gpt-5.3-codex-xhigh':            { name: 'gpt-5.3-codex-xhigh',            provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-xhigh', credit: 4 },
+  'gpt-5.3-codex-low-fast':         { name: 'gpt-5.3-codex-low-fast',         provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-low-priority', credit: 1 },
+  'gpt-5.3-codex-medium-fast':      { name: 'gpt-5.3-codex-medium-fast',      provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-medium-priority', credit: 2 },
+  'gpt-5.3-codex-high-fast':        { name: 'gpt-5.3-codex-high-fast',        provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-high-priority', credit: 4 },
+  'gpt-5.3-codex-xhigh-fast':       { name: 'gpt-5.3-codex-xhigh-fast',       provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-xhigh-priority', credit: 6 },
 
   // GPT-OSS
   'gpt-oss-120b':                   { name: 'gpt-oss-120b',                   provider: 'openai', enumValue: 0,   modelUid: 'MODEL_GPT_OSS_120B', credit: 0.25 },
@@ -221,6 +247,32 @@ _lookup.set('gpt-5-4-mini-low', 'gpt-5.4-mini-low');
 _lookup.set('gpt-5-4-mini-medium', 'gpt-5.4-mini-medium');
 _lookup.set('gpt-5-4-mini-high', 'gpt-5.4-mini-high');
 _lookup.set('gpt-5-4-mini-xhigh', 'gpt-5.4-mini-xhigh');
+// gpt-5.5 cloud-format aliases (cloud sends `gpt-5-5-*`, OpenAI-style is `gpt-5.5-*`)
+_lookup.set('gpt-5-5', 'gpt-5.5');
+_lookup.set('gpt-5-5-none', 'gpt-5.5-none');
+_lookup.set('gpt-5-5-low', 'gpt-5.5-low');
+_lookup.set('gpt-5-5-medium', 'gpt-5.5-medium');
+_lookup.set('gpt-5-5-high', 'gpt-5.5-high');
+_lookup.set('gpt-5-5-xhigh', 'gpt-5.5-xhigh');
+_lookup.set('gpt-5-5-none-priority', 'gpt-5.5-none-fast');
+_lookup.set('gpt-5-5-low-priority', 'gpt-5.5-low-fast');
+_lookup.set('gpt-5-5-medium-priority', 'gpt-5.5-medium-fast');
+_lookup.set('gpt-5-5-high-priority', 'gpt-5.5-high-fast');
+_lookup.set('gpt-5-5-xhigh-priority', 'gpt-5.5-xhigh-fast');
+// gpt-5.3-codex tier aliases
+_lookup.set('gpt-5-3-codex-low', 'gpt-5.3-codex-low');
+_lookup.set('gpt-5-3-codex-medium', 'gpt-5.3-codex');
+_lookup.set('gpt-5-3-codex-high', 'gpt-5.3-codex-high');
+_lookup.set('gpt-5-3-codex-xhigh', 'gpt-5.3-codex-xhigh');
+_lookup.set('gpt-5-3-codex-low-priority', 'gpt-5.3-codex-low-fast');
+_lookup.set('gpt-5-3-codex-medium-priority', 'gpt-5.3-codex-medium-fast');
+_lookup.set('gpt-5-3-codex-high-priority', 'gpt-5.3-codex-high-fast');
+_lookup.set('gpt-5-3-codex-xhigh-priority', 'gpt-5.3-codex-xhigh-fast');
+// Cloud-format aliases for existing dotted names
+_lookup.set('swe-1-6', 'swe-1.6');
+_lookup.set('swe-1-6-fast', 'swe-1.6-fast');
+_lookup.set('minimax-m2-5', 'minimax-m2.5');
+_lookup.set('kimi-k2-5', 'kimi-k2.5');
 
 // Anthropic official dated names — Cursor / Claude Code / Anthropic SDK
 // all send these verbatim. Map each to our short key so the same client
@@ -257,6 +309,7 @@ const ANTHROPIC_DATED = {
   'claude-opus-4.7-medium-thinking': 'claude-opus-4-7-medium-thinking',
   'claude-opus-4.7-high-thinking':   'claude-opus-4-7-high-thinking',
   'claude-opus-4.7-xhigh-thinking':  'claude-opus-4-7-xhigh-thinking',
+  'claude-opus-4.7-max':             'claude-opus-4-7-max',
 };
 for (const [k, v] of Object.entries(ANTHROPIC_DATED)) _lookup.set(k, v);
 
@@ -271,6 +324,9 @@ const OPENAI_DATED = {
   'gpt-4.1-nano-2025-04-14': 'gpt-4.1-nano',
   'gpt-5-2025-08-07': 'gpt-5',
   'gpt-5-pro-2025-10-06': 'gpt-5-high',
+  // GPT-5.5 — bare aliases default to medium tier (matches gpt-5.2 / gpt-5.4 pattern).
+  'gpt-5-5':    'gpt-5.5-medium',
+  'gpt-5.5':    'gpt-5.5-medium',
 };
 for (const [k, v] of Object.entries(OPENAI_DATED)) _lookup.set(k, v);
 

@@ -43,6 +43,41 @@ describe('v2.0.29 model catalog correctness', () => {
     assert.equal(getModelInfo('adaptive')?.credit, 1);
   });
 
+  // GPT-5.5 + Opus 4.7 max showed up in the live GetCascadeModelConfigs response
+  // on 2026-04-30. They were exposed implicitly through mergeCloudModels with
+  // ugly hyphenated names; the explicit catalog entries make the dotted aliases
+  // (gpt-5.5-medium, claude-opus-4.7-max) work and pin curated credit values.
+  it('exposes gpt-5.5 ladder with cloud-format aliases', () => {
+    for (const tier of ['none', 'low', 'medium', 'high', 'xhigh']) {
+      assert.ok(getModelInfo(`gpt-5.5-${tier}`), `gpt-5.5-${tier} missing`);
+      // cloud sends `gpt-5-5-${tier}`, we should resolve it back
+      assert.equal(resolveModel(`gpt-5-5-${tier}`), `gpt-5.5-${tier}`);
+      // priority lane (=fast)
+      assert.equal(
+        resolveModel(`gpt-5-5-${tier}-priority`),
+        `gpt-5.5-${tier}-fast`,
+      );
+    }
+    assert.equal(resolveModel('gpt-5.5'), 'gpt-5.5-medium');
+    assert.equal(resolveModel('gpt-5-5'), 'gpt-5.5-medium');
+    assert.equal(getModelInfo('gpt-5.5-medium')?.modelUid, 'gpt-5-5-medium');
+  });
+
+  it('exposes claude-opus-4-7-max with dotted alias', () => {
+    assert.ok(getModelInfo('claude-opus-4-7-max'));
+    assert.equal(resolveModel('claude-opus-4.7-max'), 'claude-opus-4-7-max');
+    assert.equal(getModelInfo('claude-opus-4-7-max')?.modelUid, 'claude-opus-4-7-max');
+  });
+
+  it('exposes gpt-5.3-codex tier ladder (low/high/xhigh + priority lane)', () => {
+    assert.ok(getModelInfo('gpt-5.3-codex-low'));
+    assert.ok(getModelInfo('gpt-5.3-codex-high'));
+    assert.ok(getModelInfo('gpt-5.3-codex-xhigh'));
+    assert.equal(resolveModel('gpt-5-3-codex-low'), 'gpt-5.3-codex-low');
+    assert.equal(resolveModel('gpt-5-3-codex-medium'), 'gpt-5.3-codex'); // bare = legacy alias
+    assert.equal(resolveModel('gpt-5-3-codex-high-priority'), 'gpt-5.3-codex-high-fast');
+  });
+
   it('mergeCloudModels should skip already-known model UIDs (dedupe path)', () => {
     const before = Object.keys(MODELS).length;
     const dynamicUid = 'NEW_MODEL_4_7_TEST';
