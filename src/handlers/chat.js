@@ -2058,13 +2058,21 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // JSON, OpenAI native function_call, natural-language "I'll call X")
         // vs simply ignored the prompt and answered conversationally. Used to
         // diagnose "tool_use never appears" reports — issue #109 sub2api E2E.
-        if (toolCalls.length === 0 && allText) {
+        // v2.0.72 fix: GLM-4.7 / GLM-5.1 sometimes emit narration in
+        // CortexStepPlannerResponse.thinking instead of .response, so
+        // allText is empty while allThinking carries the actual model
+        // output. Combine both for marker detection / NLU recovery so
+        // we see narrate-style tool intents either way. Promotion to
+        // allText (line ~2155 below) happens after this; we use the
+        // combined source proactively.
+        const narrativeSource = (allText && allText.trim()) ? allText : allThinking;
+        if (toolCalls.length === 0 && narrativeSource) {
           const markers = [];
-          if (/<tool_call/i.test(allText)) markers.push('xml_tag');
-          if (/```\s*(?:json|tool_call)/i.test(allText)) markers.push('fenced_json');
-          if (/"function"\s*:|"tool_calls"\s*:|"function_call"\s*:/.test(allText)) markers.push('openai_native');
-          if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(allText)) markers.push('bare_json');
-          if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(allText)) markers.push('natural_lang');
+          if (/<tool_call/i.test(narrativeSource)) markers.push('xml_tag');
+          if (/```\s*(?:json|tool_call)/i.test(narrativeSource)) markers.push('fenced_json');
+          if (/"function"\s*:|"tool_calls"\s*:|"function_call"\s*:/.test(narrativeSource)) markers.push('openai_native');
+          if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(narrativeSource)) markers.push('bare_json');
+          if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(narrativeSource)) markers.push('natural_lang');
           log.info(`Chat[non-stream]: emulateTools=true but parser found 0 tool_calls (model=${modelKey} provider=${provider}); markers=${markers.join(',') || 'none'}; head="${rawTextHead}"`);
           // v2.0.72 (#115 #120) — NLU intent recovery. GPT/GLM/Kimi
           // narrate "I'll call X with Y" instead of emitting the
@@ -2073,7 +2081,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           // fabricate detection.
           if (markers.length === 0 && Array.isArray(tools) && tools.length > 0) {
             const lastUser = latestRealUserText(messages) || '';
-            const recovered = extractIntentFromNarrative(allText, tools, { lastUserText: lastUser });
+            const recovered = extractIntentFromNarrative(narrativeSource, tools, { lastUserText: lastUser });
             if (recovered.length) {
               const recoveredCalls = recovered.map((r, i) => ({
                 id: `nlu_${i}_${Date.now().toString(36)}`,
@@ -2085,6 +2093,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
                 log.info(`Chat[non-stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) (head="${rawTextHead}")`);
                 toolCalls = filtered;
                 allText = '';
+                allThinking = '';
               }
             }
           }
@@ -2095,7 +2104,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           // output as a real tool result.
           if (markers.length === 0 && toolCalls.length === 0) {
             const lastUser = latestRealUserText(messages) || '';
-            const fab = detectFabricatedToolResult(allText, { lastUserText: lastUser });
+            const fab = detectFabricatedToolResult(narrativeSource, { lastUserText: lastUser });
             if (fab) {
               log.warn(`Chat[non-stream]: fabricate detected — model=${modelKey} pattern=${fab.matchedPattern} sample="${fab.sample}"`);
               if (process.env.WINDSURFAPI_FABRICATE_REJECT === '1') {
@@ -2751,14 +2760,19 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // Diagnostic: same as nonStreamResponse but for the SSE path —
               // surface why no tool_calls came out when emulation was active.
               // See nonStreamResponse for marker rationale (#109 sub2api E2E).
-              if (emulateTools && collectedToolCalls.length === 0 && accText) {
-                const head = accText.slice(0, 240).replace(/\s+/g, ' ');
+              // v2.0.72 fix: see non-stream comment — combine accText +
+              // accThinking for marker / NLU detection so models that
+              // route narrate output through reasoning_content (GLM-4.7,
+              // some Claude models in thinking mode) don't slip past.
+              const accNarrative = (accText && accText.trim()) ? accText : accThinking;
+              if (emulateTools && collectedToolCalls.length === 0 && accNarrative) {
+                const head = accNarrative.slice(0, 240).replace(/\s+/g, ' ');
                 const markers = [];
-                if (/<tool_call/i.test(accText)) markers.push('xml_tag');
-                if (/```\s*(?:json|tool_call)/i.test(accText)) markers.push('fenced_json');
-                if (/"function"\s*:|"tool_calls"\s*:|"function_call"\s*:/.test(accText)) markers.push('openai_native');
-                if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(accText)) markers.push('bare_json');
-                if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(accText)) markers.push('natural_lang');
+                if (/<tool_call/i.test(accNarrative)) markers.push('xml_tag');
+                if (/```\s*(?:json|tool_call)/i.test(accNarrative)) markers.push('fenced_json');
+                if (/"function"\s*:|"tool_calls"\s*:|"function_call"\s*:/.test(accNarrative)) markers.push('openai_native');
+                if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(accNarrative)) markers.push('bare_json');
+                if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(accNarrative)) markers.push('natural_lang');
                 log.info(`Chat[stream]: emulateTools=true but parser found 0 tool_calls (model=${modelKey} provider=${provider}); markers=${markers.join(',') || 'none'}; head="${head}"`);
                 // v2.0.72 (#115 #120) — NLU intent recovery on stream
                 // tail. If model narrate-d a tool intent without
@@ -2766,7 +2780,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 // tool_call delta so client agent loop doesn't break.
                 if (markers.length === 0 && declaredTools.length > 0) {
                   const lastUser = latestRealUserText(messages) || '';
-                  const recovered = extractIntentFromNarrative(accText, declaredTools, { lastUserText: lastUser });
+                  const recovered = extractIntentFromNarrative(accNarrative, declaredTools, { lastUserText: lastUser });
                   if (recovered.length) {
                     const recoveredCalls = recovered.map((r, i) => ({
                       id: `nlu_${i}_${Date.now().toString(36)}`,
@@ -2789,7 +2803,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 // (only if NLU didn't recover anything).
                 if (markers.length === 0 && collectedToolCalls.length === 0) {
                   const lastUser = latestRealUserText(messages) || '';
-                  const fab = detectFabricatedToolResult(accText, { lastUserText: lastUser });
+                  const fab = detectFabricatedToolResult(accNarrative, { lastUserText: lastUser });
                   if (fab) {
                     log.warn(`Chat[stream]: fabricate detected — model=${modelKey} pattern=${fab.matchedPattern} sample="${fab.sample}"`);
                   }
