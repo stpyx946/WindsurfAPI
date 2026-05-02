@@ -938,6 +938,7 @@ function cachedUsage(messages, completionText) {
 export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
   const modelKey = opts.modelKey || null;
   const provider = opts.provider || null;
+  const route = opts.route || null;
   const softBytes = opts.softBytes ?? parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
   const hardBytes = opts.hardBytes ?? parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
   const tiers = [
@@ -946,7 +947,7 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
     { tier: 'skinny', build: buildSkinnyToolPreambleForProto },
     { tier: 'names-only', build: buildCompactToolPreambleForProto },
   ];
-  const full = tiers[0].build(tools || [], toolChoice, callerEnv, modelKey, provider);
+  const full = tiers[0].build(tools || [], toolChoice, callerEnv, modelKey, provider, route);
   if (!full) {
     return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, tier: 'empty', softBytes, hardBytes };
   }
@@ -957,7 +958,7 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
   // names-only and let the hard-cap check decide whether to reject.
   let chosen = { tier: 'full', preamble: full, bytes: fullBytes };
   for (const t of tiers) {
-    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv, modelKey, provider);
+    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv, modelKey, provider, route);
     const bytes = Buffer.byteLength(text, 'utf8');
     chosen = { tier: t.tier, preamble: text, bytes };
     if (bytes <= softBytes) break;
@@ -1229,6 +1230,9 @@ export async function handleChatCompletions(body, context = {}) {
     const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv, {
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
+      // v2.0.62 (#115) — pass route so GPT-family + Codex/Responses
+      // route picks the gpt_native dialect (bare-JSON anti-refusal).
+      route: body.__route || 'chat',
     });
     preambleTier = budget.tier;
     if (budget.compacted) {
@@ -1282,6 +1286,7 @@ export async function handleChatCompletions(body, context = {}) {
       injectUserPreamble: !disableUserToolFallback,
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
+      route: body.__route || 'chat',
     })
     : [...messages];
 
@@ -1413,6 +1418,7 @@ export async function handleChatCompletions(body, context = {}) {
       wantThinking,
       fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
       tools,
+      route: body.__route || 'chat',
     });
   }
 
@@ -1739,6 +1745,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         const parsed = parseToolCallsFromText(allText, {
           modelKey,
           provider,
+          // v2.0.62 (#115) — route lets the parser pick the gpt_native
+          // dialect when responses.js routed here for a GPT-family model.
+          route: body.__route || 'chat',
         });
         allText = parsed.text;
         // v2.0.55 audit M2: drop tool_calls whose name isn't in the
@@ -2100,6 +2109,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         parseToolCode: emulateTools,
         modelKey,
         provider,
+        route: deps?.route || 'chat',
       }) : null;
       const collectedToolCalls = [];
 
@@ -2214,6 +2224,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 parseToolCode: emulateTools,
                 modelKey,
                 provider,
+                route: deps?.route || 'chat',
               });
             }
             pathStreamText = new PathSanitizeStream();

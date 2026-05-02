@@ -74,9 +74,9 @@ const WORKSPACE_STUB_OVERRIDE = 'Any `<workspace_information>` or `<workspace_la
  * This version is for user-message injection (legacy fallback).
  * Prefer buildToolPreambleForProto() for system-prompt-level injection.
  */
-export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, provider = null) {
+export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, provider = null, route = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
-  const dialect = pickToolDialect(modelKey, provider);
+  const dialect = pickToolDialect(modelKey, provider, route);
   const names = [];
   for (const t of tools) {
     if (t?.type !== 'function' || !t.function?.name) continue;
@@ -150,11 +150,33 @@ Rules:
 3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
 4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
 5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.`,
+    // v2.0.62 (#115) — GPT family doesn't reliably emit <tool_call> XML
+    // markup. Their training expects native function-calling JSON. We
+    // give them a bare-JSON protocol that matches their natural output
+    // shape, plus very explicit anti-refusal language because GPT-5.x in
+    // particular tends to say "please paste the file" instead of calling
+    // the function. Codex CLI (Responses API) caller path opts into this
+    // dialect via pickToolDialect(_, _, route='responses') below.
+    gpt_native: `You have access to the following functions. They are real, callable tools — the caller will execute them and return results in the next turn.
+
+To call a function, output ONE valid JSON object on a single line — starting with "{" and ending with "}". NO markdown code fence. NO prose before or after. NO leading commentary.
+
+Use this exact shape:
+{"function_call":{"name":"<function_name>","arguments":{<param>:<value>,...}}}
+
+Rules:
+1. Output ONLY the JSON object. NO \`\`\`json fence. NO "Here you go:" prefix. NO trailing explanation.
+2. "arguments" must be a JSON object whose keys match the function's parameter schema.
+3. The functions ARE available. DO NOT respond with "I cannot read files", "I don't have direct access", "please paste the file", or any similar refusal — those phrases are forbidden. Call the function instead.
+4. After emitting one function_call JSON object, STOP generating immediately. The caller will run the function and feed the result back as a "tool" message.
+5. To call MULTIPLE functions in parallel, emit MULTIPLE JSON objects, one per line. Each line stands on its own.
+6. If — and only if — the user is plainly chatting (e.g. "hello", "thanks") and no function is relevant, respond with plain text. Never mix plain text with JSON in the same response.
+7. The function-call result will arrive as a normal user/tool turn; you can call additional functions on subsequent turns until the task is done.`,
   };
   return headers[dialect] || headers.openai_json_xml;
 }
 
-export function pickToolDialect(modelKey, provider) {
+export function pickToolDialect(modelKey, provider, route = null) {
   const normalizedProvider = String(provider || '').toLowerCase();
   const normalizedModelKey = String(modelKey || '').toLowerCase();
   if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) return 'glm47';
@@ -171,6 +193,19 @@ export function pickToolDialect(modelKey, provider) {
       return 'kimi_k2';
     }
     return 'openai_json_xml';
+  }
+  // v2.0.62 (#115) — GPT family + Codex/Responses route uses bare-JSON
+  // dialect. GPT-5.x routinely refuses the <tool_call> XML protocol on
+  // OpenAI-spec tools, responding "please paste the file" instead. The
+  // bare-JSON dialect matches their training (function_call objects are
+  // their native output shape). Limited to route='responses' so existing
+  // /v1/chat/completions clients aren't surprised by the new prompt.
+  // Override with WINDSURFAPI_FORCE_GPT_NATIVE_DIALECT=1 to enable for
+  // every route.
+  const isGpt = normalizedProvider === 'openai' || /^(?:gpt-|o3|o4)/i.test(normalizedModelKey);
+  if (isGpt) {
+    const forceAll = process.env.WINDSURFAPI_FORCE_GPT_NATIVE_DIALECT === '1';
+    if (forceAll || route === 'responses') return 'gpt_native';
   }
   return 'openai_json_xml';
 }
@@ -192,6 +227,14 @@ function formatAssistantToolCallForDialect(name, parsedArgs, dialect, _id) {
   if (dialect === 'kimi_k2') {
     const argsJson = JSON.stringify(parsedArgs ?? {});
     return `<|tool_calls_section_begin|><|tool_call_begin|>${name}:0<|tool_call_argument_begin|>${argsJson}<|tool_call_end|><|tool_calls_section_end|>`;
+  }
+  if (dialect === 'gpt_native') {
+    // v2.0.62 (#115) — GPT history serializer matches the bare-JSON
+    // protocol the model is asked to emit so the next turn's "show me
+    // your last assistant turn" sees its own format. Without this, the
+    // model is asked to emit `{"function_call":{...}}` but its history
+    // shows `<tool_call>{...}</tool_call>` — drift causes refusals.
+    return JSON.stringify({ function_call: { name, arguments: parsedArgs ?? {} } });
   }
   return `<tool_call>${JSON.stringify({ name, arguments: parsedArgs })}</tool_call>`;
 }
@@ -280,10 +323,10 @@ function resolveToolChoice(tc) {
  * X, not /tmp/windsurf-workspace" in a way that survives Cascade's
  * authoritative workspace prior. (#54 follow-up.)
  */
-export function buildToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
+export function buildToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
-  const dialect = pickToolDialect(modelKey, provider);
+  const dialect = pickToolDialect(modelKey, provider, route);
   const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
 
   const lines = [];
@@ -399,10 +442,10 @@ function paramSignature(parameters) {
  * Schema-compact preamble: same shape as full, but strips schema docs and
  * minifies JSON. Saves ~40-60% with no loss of tool-call correctness.
  */
-export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
+export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
-  const dialect = pickToolDialect(modelKey, provider);
+  const dialect = pickToolDialect(modelKey, provider, route);
   const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
@@ -444,10 +487,10 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
  * stop before names-only — keeps enough for the model to know which
  * params each tool needs without paying the schema serialization cost.
  */
-export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
+export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
-  const dialect = pickToolDialect(modelKey, provider);
+  const dialect = pickToolDialect(modelKey, provider, route);
   const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
@@ -493,10 +536,10 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, 
  * because the alternative is the request failing with panel_state_missing
  * retries until the proxy gives up.
  */
-export function buildCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null) {
+export function buildCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
-  const dialect = pickToolDialect(modelKey, provider);
+  const dialect = pickToolDialect(modelKey, provider, route);
   const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
   const names = [];
   for (const t of tools) {
@@ -593,7 +636,8 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
   const injectUserPreamble = options.injectUserPreamble !== false;
   const modelKey = options.modelKey || null;
   const provider = options.provider || null;
-  const dialect = pickToolDialect(modelKey, provider);
+  const route = options.route || null;
+  const dialect = pickToolDialect(modelKey, provider, route);
   const out = [];
 
   for (const m of messages) {
@@ -819,6 +863,23 @@ function parseNonOpenAIDialectBuffer(dialect, body, startSeen) {
     return { text: keep.join(''), toolCalls: calls };
   }
 
+  if (dialect === 'gpt_native') {
+    // v2.0.62 (#115) — gpt_native dialect output is a top-level JSON
+    // object (or one per line for parallel calls). Reuse the salvage
+    // pass which already understands {"function_call":{...}} /
+    // {"name":...,"arguments":...} / {"tool_calls":[...]} shapes.
+    const salvaged = salvageToolCallsFromText(body);
+    if (salvaged.toolCalls.length) {
+      const calls = salvaged.toolCalls.map((tc, idx) => ({
+        id: tc.id || `call_${startSeen + idx}_${Date.now().toString(36)}`,
+        name: tc.name,
+        argumentsJson: tc.argumentsJson,
+      }));
+      return { text: salvaged.text, toolCalls: calls };
+    }
+    return { text: body, toolCalls: [] };
+  }
+
   return { text: body, toolCalls: [] };
 }
 
@@ -832,7 +893,7 @@ export class ToolCallStreamParser {
     this._totalSeen = 0;
     this.parseToolCode = options.parseToolCode !== false;
     this.parseBareJson = options.parseBareJson !== false;
-    this.dialect = options.dialect || pickToolDialect(options.modelKey, options.provider);
+    this.dialect = options.dialect || pickToolDialect(options.modelKey, options.provider, options.route || null);
   }
 
   _findClosingBrace() {
@@ -909,9 +970,15 @@ export class ToolCallStreamParser {
       // Stream text up to the first tool-tag sentinel so plain prose
       // turns don't sit silent until end-of-stream. Hold back enough tail
       // to detect a partial open tag split across chunks.
+      // v2.0.62 (#115) — gpt_native uses bare-JSON sentinels because
+      // the dialect's output is `{"function_call":{...}}` etc., no
+      // wrapper tag. The salvage pass at flush time then identifies
+      // and extracts the structured calls.
       const sentinels = this.dialect === 'glm47'
         ? ['<tool_call>']
-        : ['<|tool_calls_section_begin|>'];
+        : this.dialect === 'gpt_native'
+          ? ['{"function_call"', '{"tool_calls"', '{"tool_call"', '{"function"', '{"name"', '{ "function_call"', '{ "tool_calls"', '{ "name"']
+          : ['<|tool_calls_section_begin|>'];
       let earliest = -1;
       for (const s of sentinels) {
         const idx = this.buffer.indexOf(s);
