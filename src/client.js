@@ -165,15 +165,23 @@ function cascadeHistoryBudget(modelUid) {
 
 const CASCADE_TIMEOUTS = {
   // Absolute upper bound. The real "is the cascade alive" gate is
-  // warmStallMs (25s of no progress → exit). 180s used to be the cap and
+  // warmStallMs (45s of no progress → exit). 180s used to be the cap and
   // bit slow-streaming long outputs (issue #59 4.6 hit this at 15349
   // chars/180s = ~85 chars/s) — Claude Code then kicked off an awkward
   // continuation request. 600s gives long outputs room to finish; the
-  // warm stall still exits stuck cascades within 25s of true silence.
+  // warm stall still exits stuck cascades.
   maxWaitMs:        positiveIntEnv('CASCADE_MAX_WAIT_MS', 600_000),
   pollIntervalMs:   positiveIntEnv('CASCADE_POLL_INTERVAL_MS', 500),
   coldStallBaseMs:  positiveIntEnv('CASCADE_COLD_STALL_BASE_MS', 30_000),
-  warmStallMs:      positiveIntEnv('CASCADE_WARM_STALL_MS', 25_000),
+  // v2.0.74 (#122 zhangzhang-bit): bumped 25s → 45s. zhangzhang reported
+  // a real-world cascade that finishes around 30s consistently getting
+  // killed at 25s and looping forever. 25s was tuned for a flat
+  // single-shot text reply; modern Claude Code workflows go silent for
+  // 30-40s mid-tool-execution while the cascade waits on a slow shell
+  // command (curl / git clone / npm install). 45s gives those room
+  // without giving stuck cascades free time — the cold stall (30s with
+  // ZERO output) still bails fast.
+  warmStallMs:      positiveIntEnv('CASCADE_WARM_STALL_MS', 45_000),
   // v2.0.69 (#57 123cek follow-up): thinking-mode requests sometimes
   // pause emission for >25s mid-reasoning even though the planner is
   // actively working — Claude 4.5/4.6/4.7 -thinking variants do this on
@@ -181,8 +189,18 @@ const CASCADE_TIMEOUTS = {
   // cascades at 25s of silence, surfacing as "思考 200 多秒之后会中断".
   // Once we've seen ANY thinking emission this turn, fall back to a
   // longer ceiling (default 120s) so deep-think windows survive natural
-  // pauses. Text-mode requests (no thinking) keep the strict 25s.
+  // pauses. Text-mode requests (no thinking) keep the strict 45s.
   warmStallThinkingMs: positiveIntEnv('CASCADE_WARM_STALL_THINKING_MS', 120_000),
+  // v2.0.74 (#122) — third tier for "we already emitted a tool call,
+  // now we're waiting on the IDE tool to finish executing". Cascade
+  // built-in tools (run_command pulling a repo, view_file on a huge
+  // file, propose_code thinking through a refactor) can legitimately
+  // sit at the same step status for 60-150s. Keep this >warmStallMs
+  // and >coldStallMs so the tool-active path always wins when both
+  // apply. Engaged once toolCallCount > 0 — that means the model
+  // already decided what to do and the LS is now executing on its
+  // behalf, so silence isn't a stall.
+  warmStallToolActiveMs: positiveIntEnv('CASCADE_WARM_STALL_TOOL_ACTIVE_MS', 180_000),
   idleGraceMs:      positiveIntEnv('CASCADE_IDLE_GRACE_MS', 8_000),
   stallRetryMinText: positiveIntEnv('CASCADE_STALL_RETRY_MIN_TEXT', 300),
 };
@@ -190,6 +208,21 @@ const CASCADE_TIMEOUTS = {
 export function shouldColdStall({ elapsed, coldStallMs, sawActive, sawText, totalThinking, toolCallCount }) {
   return elapsed > coldStallMs && sawActive && !sawText && (totalThinking || 0) === 0 && (toolCallCount || 0) === 0;
 }
+
+// v2.0.74 (#122). Three-tier ceiling picker for warm-stall detection.
+// Exported so the regression test can assert that:
+//   - tool-active beats thinking beats text-only
+//   - text-only baseline is the 45s value, not the historical 25s
+//   - env overrides flow through (CASCADE_WARM_STALL_*).
+// `timeouts` defaults to live CASCADE_TIMEOUTS so production callers
+// don't have to thread it; tests inject their own.
+export function pickWarmStallCeiling({ totalThinking = 0, toolCallCount = 0 } = {}, timeouts = CASCADE_TIMEOUTS) {
+  if ((toolCallCount || 0) > 0) return timeouts.warmStallToolActiveMs;
+  if ((totalThinking || 0) > 0) return timeouts.warmStallThinkingMs;
+  return timeouts.warmStallMs;
+}
+
+export const __TEST_CASCADE_TIMEOUTS = CASCADE_TIMEOUTS;
 
 // ── Fake workspace scaffold ────────────────────────────────
 // A real Windsurf IDE always has a workspace directory that the LS scans
@@ -899,20 +932,28 @@ export class WindsurfClient {
 
         // Warm stall: text stopped growing while planner is active.
         // Placed AFTER the step loop so lastGrowthAt is current-poll fresh.
-        // v2.0.69 (#57 follow-up): thinking-mode turns get a longer
-        // ceiling (warmStallThinkingMs, default 120s) once we've seen
-        // any thinking emit this turn — Claude 4.x -thinking variants
-        // legitimately go silent for 30-90s mid-reasoning on hard
-        // problems and the old 25s ceiling killed them.
-        const effectiveWarmStallMs = totalThinking > 0
-          ? CASCADE_TIMEOUTS.warmStallThinkingMs
-          : NO_GROWTH_STALL_MS;
+        // Three tiers, biggest wins:
+        //   - tool-active (180s default) — model already emitted at
+        //     least one tool_call; the LS is now executing it (curl,
+        //     git clone, viewing a 5MB file) and trajectory is silent
+        //     by design until the tool finishes. Killing here causes
+        //     the loop zhangzhang-bit reported in #122 (v2.0.70 25s
+        //     cut, 30s would have succeeded).
+        //   - thinking (120s default) — v2.0.69 #57 fix. Reasoning
+        //     models go silent for 30-90s mid-think on hard problems.
+        //   - text-only (45s default, was 25s pre-v2.0.74) — short
+        //     ceiling for the bare turn case where neither thinking
+        //     nor tool calls fired.
+        const effectiveWarmStallMs = pickWarmStallCeiling({
+          totalThinking,
+          toolCallCount: seenToolCallIds.size,
+        });
         if (sawText && lastStatus !== 1 && (Date.now() - lastGrowthAt) > effectiveWarmStallMs) {
-          const diag = { msSinceGrowth: Date.now() - lastGrowthAt, textLen: totalYielded, thinkingLen: totalThinking, stepCount: yieldedByStep.size, toolCalls: seenToolCallIds.size, lastStatus };
+          const diag = { msSinceGrowth: Date.now() - lastGrowthAt, textLen: totalYielded, thinkingLen: totalThinking, stepCount: yieldedByStep.size, toolCalls: seenToolCallIds.size, lastStatus, ceilingMs: effectiveWarmStallMs };
           if (totalYielded < STALL_RETRY_MIN_TEXT) {
             log.warn('Cascade warm stall (short, retrying on next account)', diag);
             endReason = 'stall_warm_retry';
-            const err = new Error('Cascade planner stalled after preamble — no progress for 25s');
+            const err = new Error(`Cascade planner stalled after preamble — no progress for ${Math.round(effectiveWarmStallMs / 1000)}s`);
             err.isModelError = true;
             err.kind = 'transient_stall';
             throw err;

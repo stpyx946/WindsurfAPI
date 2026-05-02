@@ -106,7 +106,9 @@ function stripMetaTags(s) {
 // hash. Plain prose drift remains in the hash so genuine prompt edits
 // still create a fresh cascade.
 function normalizeSystemPromptForHash(s) {
-  return String(s || '')
+  let out = String(s || '');
+  // ─── temporal / identifier tokens ────────────────────────────
+  out = out
     // ISO 8601 timestamps (with or without ms / tz)
     .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/g, '<ts>')
     // "Today's date is YYYY-MM-DD" / "Today is YYYY-MM-DD" / etc.
@@ -120,7 +122,71 @@ function normalizeSystemPromptForHash(s) {
     // "Current time:" / "Time:" lines
     .replace(/^[ \t]*[-•]?\s*(?:Current\s+(?:date|time)|Time)\s*[:：][^\n]*/gim, '$&'.replace(/[^:：]+$/, ' <time>'))
     // Session ID lines (Claude Code 2.x emits these)
-    .replace(/^[ \t]*[-•]?\s*(?:Session\s*ID|sessionId|session_id)\s*[:：][^\n]*/gim, '<sessionid>');
+    .replace(/^[ \t]*[-•]?\s*(?:Session\s*ID|sessionId|session_id)\s*[:：][^\n]*/gim, '<sessionid>')
+    // Epoch timestamps in seconds (10 digits) or ms (13 digits) when
+    // bare (not part of a longer number). Claude Code's status line and
+    // some MCP servers emit these. 1700000000 (2023-11) to 2099999999
+    // (2036) covers the realistic range without hitting other 10-digit
+    // numbers like phone numbers or IDs.
+    .replace(/(?<![\d.])(?:1[7-9]|20)\d{8}(?:\d{3})?(?![\d.])/g, '<epoch>');
+
+  // ─── git status / recent commits block (Claude Code 2.x) ─────
+  //
+  // v2.0.74 (#116 zhangzhang-bit). Claude Code prepends a `gitStatus:`
+  // block to the system prompt:
+  //
+  //     gitStatus: This is the git status at the start of the conversation.
+  //
+  //     Current branch: master
+  //     Main branch (you will usually use this for PRs): master
+  //     Git user: dwgx
+  //     Status:
+  //     M src/foo.js
+  //     ?? newfile.txt
+  //
+  //     Recent commits:
+  //     abc1234 release: 2.0.73 — ...
+  //     def5678 release: 2.0.72 — ...
+  //
+  // The body shifts every time the user commits or touches a file but
+  // the labels are invariant. zhangzhang-bit's #116 log shows
+  // 26892-byte system prompts hashing differently across 30 turns —
+  // commit-hash diffs in this block keep total length stable while
+  // changing content, so length-based detection misses it.
+  //
+  // Strategy: collapse the body of `Status:`, `Recent commits:`, and
+  // `Recent files:` to a stable placeholder. Headings + Branch / Main
+  // branch / Git user keep their literal values (those rarely move
+  // and meaningfully separate caches when they do). Lookahead anchors
+  // the body extent at the next labelled heading or a blank line; if
+  // the block runs to end-of-input, $(?![\s\S]) catches that too
+  // since plain `$` under /m only matches end-of-line in JS.
+  const NEXT_HEADING = '(?:Status|Recent commits|Recent files|gitStatus|Current branch|Main branch|Git user)\\s*:';
+  const blockEnd = `(?=^[ \\t]*${NEXT_HEADING}|^\\s*$|$(?![\\s\\S]))`;
+  out = out.replace(
+    new RegExp(`^([ \\t]*Status\\s*:)[ \\t]*\\n[\\s\\S]*?${blockEnd}`, 'gim'),
+    '$1\n<git-status>\n',
+  );
+  out = out.replace(
+    new RegExp(`^([ \\t]*Recent commits\\s*:)[ \\t]*\\n[\\s\\S]*?${blockEnd}`, 'gim'),
+    '$1\n<recent-commits>\n',
+  );
+  out = out.replace(
+    new RegExp(`^([ \\t]*Recent files\\s*:)[ \\t]*\\n[\\s\\S]*?${blockEnd}`, 'gim'),
+    '$1\n<recent-files>\n',
+  );
+
+  // ─── git short hashes ────────────────────────────────────────
+  // After Recent commits is folded above we still want to catch stray
+  // short hashes that callers paste inline ("see commit abc1234"). 7-12
+  // hex chars with word boundaries; require at least one digit AND at
+  // least one a-f letter so we skip both ordinary words like deadbeef
+  // (no digits) and bare integers like 1234567890 (no hex letters).
+  // Skip if wrapped in quotes (likely a literal string the user is
+  // asking about — preserving it lets distinct queries hash distinctly).
+  out = out.replace(/(?<![`'"\w])(?=[a-f0-9]*\d)(?=[a-f0-9]*[a-f])[a-f0-9]{7,12}(?![`'"\w])/gi, '<gitsha>');
+
+  return out;
 }
 
 // Stable JSON: recursively sort object keys so {b:1,a:2} and {a:2,b:1}
