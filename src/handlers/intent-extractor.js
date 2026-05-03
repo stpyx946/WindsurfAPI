@@ -297,13 +297,18 @@ function userPromptLooksActionable(lastUserText) {
 
 /**
  * Detect whether the model's narrative looks like it INTENDED to call
- * a tool (mentions a declared tool name, mentions a verb, user prompt
- * is actionable) but never produced a usable extraction. Used to gate
- * the retry-with-correction loop in chat.js — we only burn an extra
+ * a tool but never produced a usable extraction. Used to gate the
+ * retry-with-correction loop in chat.js — we only burn an extra
  * cascade round-trip when there's clear tool intent we couldn't
  * recover.
  *
- * Returns the matching tool name on hit, null otherwise.
+ * Returns one of:
+ *   - the matched declared tool name (when the model named it inline)
+ *   - the FIRST declared tool name (when the narrative shows clear
+ *     action intent + user actionable prompt + an action verb,
+ *     even if the model didn't name a specific tool — GLM-5.1 will
+ *     say "Let me list the files" without saying "Bash")
+ *   - null when there's no usable signal
  *
  * v2.0.82 (#125 — proper translator layer beyond NLU).
  */
@@ -315,13 +320,21 @@ export function detectToolIntentInNarrative(text, tools, opts = {}) {
   const { names } = indexTools(tools);
   if (!names.size) return null;
   // Verb forms (English + Chinese) that signal "I'm about to call X".
-  const verbPattern = /\b(?:call|invoke|run|use|execute|exec|trigger|fire|going to|will|let me|i'?ll|i'?m going)\b|(?:调用|使用|运行|执行|触发|启动|让我|我会|我将|准备|打算|想要|需要)/i;
+  const verbPattern = /\b(?:call|invoke|run|use|execute|exec|trigger|fire|going to|will|let me|i'?ll|i'?m going|need to|should)\b|(?:调用|使用|运行|执行|触发|启动|让我|我会|我将|准备|打算|想要|需要|应该)/i;
   if (!verbPattern.test(text)) return null;
-  // Find the first declared tool name mentioned in text.
+  // Action keywords (file ops, search, read, etc.) — these stand in
+  // for "the model is talking about USING tools generically".
+  const actionVerbPattern = /\b(?:list|show|read|cat|grep|find|search|view|fetch|get|create|write|edit|run|execute|check|inspect|examine|analyz|browse|explore)\b|(?:列出|展示|读取|查看|查找|搜索|获取|拉取|下载|创建|写入|编辑|运行|执行|检查|检视|分析|浏览|探索|看一下|看看)/i;
+  // Pass 1: specific tool name in narrative (most precise).
   for (const fn of names) {
     const fnRe = new RegExp(`\\b${escapeRe(fn)}\\b|\\\`${escapeRe(fn)}\\\``);
     if (fnRe.test(text)) return fn;
   }
+  // Pass 2: action keyword present (model said "let me list..." but
+  // didn't name the tool). Return the first declared tool — caller's
+  // correction prompt will name it explicitly so the retry knows
+  // which tool to emit.
+  if (actionVerbPattern.test(text)) return [...names][0];
   return null;
 }
 

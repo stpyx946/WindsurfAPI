@@ -160,12 +160,22 @@ describe('detectToolIntentInNarrative — gates the v2.0.82 retry loop', () => {
     assert.equal(r, 'shell_exec');
   });
 
-  it('returns null when no tool name in narrative', () => {
+  it('returns null when no tool name AND no action verb in narrative', () => {
     const r = detectToolIntentInNarrative(
       "I'll just answer directly.",
       [SHELL], { lastUserText: 'list things' },
     );
     assert.equal(r, null);
+  });
+
+  it('falls back to first tool when narrative has action verb but no explicit name (#125 GLM-5.1)', () => {
+    // GLM-5.1 actually emitted "Let me list the files in the workspace."
+    // without saying "Bash" — Pass 2 detection still triggers retry.
+    const r = detectToolIntentInNarrative(
+      "Let me list the files in the workspace.",
+      [BASH], { lastUserText: '看看本地有哪些文件' },
+    );
+    assert.equal(r, 'Bash');
   });
 
   it('returns null when user prompt is not actionable', () => {
