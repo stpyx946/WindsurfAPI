@@ -327,7 +327,9 @@ swe-1.5 / 1.5-fast / 1.6 / 1.6-fast · arena-fast · arena-smart
 
 </details>
 
-> **Free accounts** can only use `gemini-2.5-flash` (`gpt-4o-mini` is deprecated upstream). Others require Windsurf Pro.
+> **Free-account entitlements** typically include `gemini-2.5-flash`, `glm-4.7` / `glm-5` / `5.1`, `kimi-k2` / `k2.5` / `k2-6`, `qwen-3` and similar open-source models; Claude family, GPT family, and Opus / thinking variants require Pro. Each account's exact list shows up in the dashboard.
+>
+> **Tool-calling reliability (measured v2.0.82+):** Claude family is the most reliable (their training covered prompt-level tool protocols); GLM-4.7 / Kimi-K2.5 work for most cases via NLU fallback + optional retry-with-correction; GLM-5.1 is unreliable on the cascade backend (it often returns empty responses, no narration to recover from); GPT family is also limited because the cascade upstream doesn't carry `tools[]` schema. For Claude Code / Cline / Codex doing local tool calls, prefer `claude-haiku-4.5` or `claude-sonnet-4.6`.
 
 ### Language-Following for CJK Users
 
@@ -381,7 +383,13 @@ A: This has been fixed. Cold stall detection is now adaptive to input length, wi
 A: Yes. `export ANTHROPIC_BASE_URL=http://YOUR_API` + `export ANTHROPIC_API_KEY=YOUR_KEY`. `/v1/messages` supports the full suite: system, tools, tool_use, tool_result, stream, and multi-turn, all tested and working.
 
 **Q: What models can free accounts use?**
-A: Only `gemini-2.5-flash` (since `gpt-4o-mini` was deprecated upstream). All others require Pro.
+A: Mostly `gemini-2.5-flash`, `glm-4.7` / `5` / `5.1`, `kimi-k2` / `k2.5` / `k2-6`, `qwen-3` (open-source series). Claude family, GPT family, and Opus / Max / -thinking variants need Pro entitlement. The dashboard shows each account's entitled list, and `model_not_entitled` error responses include an `available_in_pool` field with the names you can switch to.
+
+**Q: Are tool calls reliable on free accounts?**
+A: Depends on the model. Claude family is rock-solid (also free-account-entitled when available). GLM-4.7 / Kimi-K2.5 work in most cases via NLU recovery + `WINDSURFAPI_NLU_RETRY=1` retry-with-correction. GLM-5.1 is unreliable on the cascade backend (frequent empty responses) — proxy can't fix this. GPT family is similarly limited by the cascade protocol layer not passing `tools[]` schema. **For Claude Code / Cline / Codex doing local file/shell ops prefer `claude-haiku-4.5` or `claude-sonnet-4.6`.**
+
+**Q: 31 trial accounts go unavailable after a few hundred calls**
+A: Likely the model is a weekly-quota variant — `claude-opus-4-7-max` / `gpt-5.5-xhigh` / `claude-sonnet-4-7-thinking` etc. cap at 5 calls per week per account, so 31 accounts × 5 ≈ 150 calls hit the wall fast. Switch to `claude-sonnet-4.6` / `claude-haiku-4.5` (daily quotas are much wider). Verify with `docker logs windsurfapi-windsurf-api-1 | grep rate_limit` — the per-account cooldown reason is in the log.
 
 ## Contributors
 
