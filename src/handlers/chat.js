@@ -2079,7 +2079,15 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           // <tool_call> markup. Try to extract tool_call(s) from
           // natural-language narrative before falling back to
           // fabricate detection.
-          if (markers.length === 0 && Array.isArray(tools) && tools.length > 0) {
+          //
+          // v2.0.76 (#120 follow-up): widened to also fire when markers
+          // were DETECTED but parsing produced 0 tool_calls. v2.0.75
+          // probe caught GLM-4.7 emitting `markers=bare_json` (a JSON
+          // sigil in thinking text) where the parser couldn't lift a
+          // call but the surrounding narrative held everything NLU
+          // needs. Restricting NLU to markers=none meant those cases
+          // got 0 tool_calls back.
+          if (Array.isArray(tools) && tools.length > 0) {
             const lastUser = latestRealUserText(messages) || '';
             const recovered = extractIntentFromNarrative(narrativeSource, tools, { lastUserText: lastUser });
             if (recovered.length) {
@@ -2090,7 +2098,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
               }));
               const filtered = filterToolCallsByAllowlist(recoveredCalls, tools);
               if (filtered.length) {
-                log.info(`Chat[non-stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) (head="${rawTextHead}")`);
+                log.info(`Chat[non-stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) (markers=${markers.join(',') || 'none'} head="${rawTextHead}")`);
                 toolCalls = filtered;
                 allText = '';
                 allThinking = '';
@@ -2778,7 +2786,11 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 // tail. If model narrate-d a tool intent without
                 // emitting <tool_call> markup, extract + emit as
                 // tool_call delta so client agent loop doesn't break.
-                if (markers.length === 0 && declaredTools.length > 0) {
+                //
+                // v2.0.76 (#120 follow-up): widened to fire even when
+                // markers were detected but parser produced 0 calls
+                // (mirrors the non-stream path).
+                if (declaredTools.length > 0) {
                   const lastUser = latestRealUserText(messages) || '';
                   const recovered = extractIntentFromNarrative(accNarrative, declaredTools, { lastUserText: lastUser });
                   if (recovered.length) {
@@ -2795,7 +2807,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                       emitToolCallDelta(tc, idx);
                     }
                     if (filtered.length) {
-                      log.info(`Chat[stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) mid-stream`);
+                      log.info(`Chat[stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) mid-stream (markers=${markers.join(',') || 'none'})`);
                     }
                   }
                 }
