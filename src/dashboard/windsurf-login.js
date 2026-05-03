@@ -76,31 +76,48 @@ async function oneTimeTokenDualPath(body, fingerprint, proxy, preferredHost = nu
     ? [[WINDSURF_ONE_TIME_TOKEN_URL, 'legacy'], [WINDSURF_ONE_TIME_TOKEN_URL_NEW, 'new']]
     : [[WINDSURF_ONE_TIME_TOKEN_URL_NEW, 'new'], [WINDSURF_ONE_TIME_TOKEN_URL, 'legacy']];
   let lastErr;
+  let firstRes = null;
+  let firstLabel = null;
   for (const [url, label] of orderedHosts) {
     try {
       const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
-      // 4xx response from the preferred host is meaningful — don't
-      // bother trying the other host if the token is genuinely
-      // invalid. We only fall through on 5xx / network errors.
-      if (res.status >= 400 && res.status < 500 && label === orderedHosts[0][1]) {
-        // Persist preferred-host 4xx so caller can surface a useful error
-        // instead of secretly trying the other host (which would yield
-        // a different but equally unhelpful error).
-        return { res, label };
-      }
-      if (res.status >= 400 && res.status < 500) {
-        // Cross-host 4xx — keep looping just in case but record the err.
-        lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
-        continue;
-      }
       if (res.status >= 200 && res.status < 300 && res.data?.authToken) {
         return { res, label };
+      }
+      // v2.0.61: 4xx from the preferred host is meaningful — used to
+      // return immediately so caller saw the real auth error.
+      //
+      // v2.0.79 (audit M-3): widened to keep trying the other host
+      // ONLY when the preferred host returned an "invalid token"
+      // 401 — that signal is exactly the cross-host symmetry failure
+      // we want to fall through. Other 4xx codes (400 bad request,
+      // 403 forbidden, 410 gone) still short-circuit because they're
+      // genuine permanent errors and trying the other host won't help.
+      if (res.status >= 400 && res.status < 500) {
+        const blob = JSON.stringify(res.data || '').toLowerCase();
+        const isInvalidToken = res.status === 401 && /invalid\s*token|unauthenticated/i.test(blob);
+        if (label === orderedHosts[0][1] && !isInvalidToken) {
+          return { res, label };
+        }
+        // Either non-preferred 4xx OR preferred-but-invalid-token: keep
+        // the response around in case the other host also fails — we
+        // surface the FIRST 4xx (preferred host) so the caller sees the
+        // primary auth error not whatever the fallback produced.
+        if (firstRes === null) {
+          firstRes = res;
+          firstLabel = label;
+        }
+        lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
+        continue;
       }
       lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
     } catch (e) {
       lastErr = new Error(`OneTimeToken ${label}: ${e.message}`);
     }
   }
+  // Both hosts failed — return the preferred-host 4xx if we have one
+  // (more useful to the caller than the fallback's error).
+  if (firstRes) return { res: firstRes, label: firstLabel };
   throw lastErr || new Error('OneTimeToken: both endpoints failed');
 }
 

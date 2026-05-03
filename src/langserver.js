@@ -40,13 +40,31 @@ let _apiServerUrl = DEFAULT_API_URL;
 //   ipwo:        username_sid_xxxxxxx
 //   lunaproxy:   user-zone-residential-session-xxx
 //   smartproxy:  spxxxxx-session-xxx-stickyXX
-//   bright data: brd-customer-xxx-zone-xxx-session-xxx
-//   oxylabs:     customer-xxxxx-cc-xxx-sessid-xxx
+//   bright data: brd-customer-xxx-zone-xxx[-session-xxx]
+//   oxylabs:     customer-xxxxx-cc-xxx[-sessid-xxx]
 // Match any of these and segregate LS automatically. Falls back to
 // host:port when the username doesn't fit the pattern (avoids
 // LS-per-account memory blow up for static-IP proxies that intentionally
 // share an egress).
-const STICKY_USER_RE = /(?:[_-](?:sid|session|sessid|sticky|sess)|[+]ws_)/i;
+//
+// v2.0.79 (audit M-1) — original regex only caught usernames that
+// contained an explicit session token (`_sid_`, `-session-`, `+ws_`).
+// Bright Data and Oxylabs username schemas don't always include the
+// session token (some plans use a stable username + rotating egress
+// per-request, but the upstream still treats the username itself as
+// the routing fingerprint). Those usernames look like:
+//   brd-customer-hl_abc123-zone-residential
+//   customer-myuser-cc-US-country-US
+// They'd hash to the same proxyKey as a static-IP shared username
+// (because there's no `session` token), so the LS pool would lump
+// every account behind that proxy onto one shared LS instance, which
+// is what wnfilm and 0a00 reported in #118 — "30 minute rate-limit
+// even though I have 31 trial accounts behind it". Widen the regex
+// to also catch `brd-customer-` prefix and `customer-...-cc-` /
+// `customer-...-zone-` patterns. Static-IP proxies whose username is
+// a bare login (no provider-specific markers) still skip
+// segregation, so memory stays bounded.
+const STICKY_USER_RE = /(?:[_-](?:sid|session|sessid|sticky|sess)|[+]ws_|^brd-customer-|customer-[^-]+-(?:cc|zone|country|state|city)-|-zone-[a-z]+|-cc-[a-z]{2})/i;
 function isStickyUsername(u) {
   if (typeof u !== 'string' || u.length < 4) return false;
   return STICKY_USER_RE.test(u);

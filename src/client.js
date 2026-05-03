@@ -7,7 +7,7 @@
  */
 
 import https from 'https';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { log } from './config.js';
@@ -216,8 +216,26 @@ export function shouldColdStall({ elapsed, coldStallMs, sawActive, sawText, tota
 //   - env overrides flow through (CASCADE_WARM_STALL_*).
 // `timeouts` defaults to live CASCADE_TIMEOUTS so production callers
 // don't have to thread it; tests inject their own.
-export function pickWarmStallCeiling({ totalThinking = 0, toolCallCount = 0 } = {}, timeouts = CASCADE_TIMEOUTS) {
-  if ((toolCallCount || 0) > 0) return timeouts.warmStallToolActiveMs;
+//
+// v2.0.79 (audit M-2): the tool-active 180s ceiling previously stayed
+// engaged for the rest of the turn once any tool call was emitted.
+// That meant a 200ms `view_file` followed by silence cost 180s of
+// account quota before the stall triggered, even though the LS was
+// no longer doing anything. Now the 180s ceiling only applies while
+// progress is RECENT — if the trajectory has been silent for longer
+// than `toolActiveGraceMs` (default 60s) since the last tool/step/
+// text update, fall back to the thinking-tier ceiling so quota burn
+// is bounded. Caller passes `msSinceGrowth` (always available in
+// the warm-stall check site).
+export function pickWarmStallCeiling({ totalThinking = 0, toolCallCount = 0, msSinceGrowth = 0, hasActiveStep = null } = {}, timeouts = CASCADE_TIMEOUTS) {
+  const TOOL_ACTIVE_GRACE_MS = positiveIntEnv('CASCADE_TOOL_ACTIVE_GRACE_MS', 60_000);
+  const toolActive = (toolCallCount || 0) > 0;
+  // If the caller can tell us a step is currently ACTIVE (status=1),
+  // trust that signal — tool is genuinely running, full 180s applies.
+  // Otherwise fall back to the time-since-progress heuristic.
+  const inToolWindow = hasActiveStep === true
+    || (toolActive && (msSinceGrowth || 0) < TOOL_ACTIVE_GRACE_MS);
+  if (inToolWindow) return timeouts.warmStallToolActiveMs;
   if ((totalThinking || 0) > 0) return timeouts.warmStallThinkingMs;
   return timeouts.warmStallMs;
 }
@@ -406,7 +424,15 @@ export class WindsurfClient {
     if (lsEntry.workspaceInit) return lsEntry.workspaceInit;
 
     const sessionId = lsEntry.sessionId;
-    const wsId = this.apiKey.slice(0, 8).replace(/[^a-z0-9]/gi, 'x');
+    // v2.0.79 (audit L-2): previous derivation `apiKey.slice(0,8).replace(...)`
+    // had ≤40 bits of effective entropy and could collide for two
+    // accounts whose first 8 key chars differed only by symbols (both
+    // map to `xxxxxxxx`). Two colliding accounts would share a
+    // workspace dir, causing one's `package.json` to be read by the
+    // other and `ensureWorkspaceDir()` to skip re-init. Use a sha256
+    // prefix so collision space rises to 64 bits, well below the
+    // birthday bound for any realistic account count.
+    const wsId = createHash('sha256').update(this.apiKey || '').digest('hex').slice(0, 16);
     const workspacePath = `/home/user/projects/workspace-${wsId}`;
     const workspaceUri = `file://${workspacePath}`;
 
@@ -944,12 +970,22 @@ export class WindsurfClient {
         //   - text-only (45s default, was 25s pre-v2.0.74) — short
         //     ceiling for the bare turn case where neither thinking
         //     nor tool calls fired.
+        // v2.0.79 (audit M-2): pass msSinceGrowth + hasActiveStep so
+        // the 180s tool-active ceiling only applies when the LS still
+        // has work to do. Once the trajectory has been silent past
+        // the grace window AND no step is ACTIVE, fall back to a
+        // shorter ceiling so a stuck cascade with a completed tool
+        // doesn't burn 180s of account quota per attempt.
+        const msSinceGrowth = Date.now() - lastGrowthAt;
+        const hasActiveStep = Array.isArray(steps) && steps.some((s) => s && s.status === 1);
         const effectiveWarmStallMs = pickWarmStallCeiling({
           totalThinking,
           toolCallCount: seenToolCallIds.size,
+          msSinceGrowth,
+          hasActiveStep,
         });
-        if (sawText && lastStatus !== 1 && (Date.now() - lastGrowthAt) > effectiveWarmStallMs) {
-          const diag = { msSinceGrowth: Date.now() - lastGrowthAt, textLen: totalYielded, thinkingLen: totalThinking, stepCount: yieldedByStep.size, toolCalls: seenToolCallIds.size, lastStatus, ceilingMs: effectiveWarmStallMs };
+        if (sawText && lastStatus !== 1 && msSinceGrowth > effectiveWarmStallMs) {
+          const diag = { msSinceGrowth, textLen: totalYielded, thinkingLen: totalThinking, stepCount: yieldedByStep.size, toolCalls: seenToolCallIds.size, lastStatus, ceilingMs: effectiveWarmStallMs, hasActiveStep };
           if (totalYielded < STALL_RETRY_MIN_TEXT) {
             log.warn('Cascade warm stall (short, retrying on next account)', diag);
             endReason = 'stall_warm_retry';
