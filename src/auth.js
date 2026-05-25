@@ -630,6 +630,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   // account so the cascade_id from the previous turn is still valid.
   // Falls through to normal selection if the bound account is unavailable.
   if (callerKey && isStickyEnabled()) {
+    log.info('[sticky] CHECK callerKey=%s model=%s enabled=%s', (callerKey || '(none)').slice(0, 50), modelKey || '(none)', isStickyEnabled());
     const bound = getStickyBinding(callerKey, modelKey);
     if (bound) {
       const acct = accounts.find(a => a.id === bound.accountId && a.status === 'active' && a.apiKey === bound.apiKey);
@@ -657,6 +658,8 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
       // falls through to normal selection instead of looping.
       clearStickyBinding(callerKey, modelKey);
     }
+  } else {
+    log.info('[sticky] SKIP-CHECK callerKey=%s enabled=%s', (callerKey ? callerKey.slice(0, 30) : String(callerKey)), isStickyEnabled());
   }
 
   const candidates = [];
