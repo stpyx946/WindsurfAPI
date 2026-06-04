@@ -4,7 +4,7 @@
  * correct identity (not "Cascade") and passes basic knowledge checks.
  * Waits on rate limits automatically.
  *
- * Usage: node scripts/model-identity-test.js [--base-url http://...] [--api-key sk-...]
+ * Usage: API_KEY=... node scripts/model-identity-test.js [--base-url http://...] [--api-key ...]
  */
 
 import http from 'http';
@@ -21,7 +21,11 @@ const args = process.argv.slice(2);
 function getArg(name, fb) { const i = args.indexOf(`--${name}`); return i !== -1 && args[i+1] ? args[i+1] : fb; }
 
 const BASE = getArg('base-url', 'http://localhost:8996');
-const KEY = getArg('api-key', 'sk-yebainb666sblzhsqjcnmb----12312312');
+const KEY = getArg('api-key', process.env.API_KEY || '');
+if (!KEY) {
+  console.error('Missing API key. Pass --api-key or set API_KEY.');
+  process.exit(2);
+}
 
 const MODELS = [
   'gemini-2.5-flash', 'gemini-3.0-flash', 'gpt-4o', 'gpt-5',
