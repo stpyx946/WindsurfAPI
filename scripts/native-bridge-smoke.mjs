@@ -5,6 +5,8 @@ const apiKey = process.env.API_KEY || process.env.WINDSURFAPI_API_KEY || '';
 const model = process.env.MODEL || process.env.WINDSURFAPI_SMOKE_MODEL || 'claude-sonnet-4.6';
 const marker = `NATIVE_BRIDGE_SMOKE_${Date.now().toString(36)}`;
 const streamEnabled = process.env.NATIVE_BRIDGE_SMOKE_STREAM !== '0';
+const nonStreamEnabled = process.env.NATIVE_BRIDGE_SMOKE_NON_STREAM !== '0';
+const requestTimeoutMs = Math.max(5_000, Number(process.env.NATIVE_BRIDGE_SMOKE_TIMEOUT_MS || 120_000));
 const requestedScenarios = String(process.env.NATIVE_BRIDGE_SMOKE_TOOLS || 'Bash')
   .split(',')
   .map(s => s.trim())
@@ -102,17 +104,57 @@ function requestBody(scenario, stream) {
   return body;
 }
 
-async function post(body) {
-  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
-    method: 'POST',
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  return { status: res.status, text };
+async function post(body, { streamEarlyTool = false, expectedTool = '' } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let settledByEarlyTool = false;
+  let accumulated = '';
+  let res;
+  try {
+    res = await fetch(`${baseUrl}/v1/chat/completions`, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!streamEarlyTool || !res.body) {
+      const text = await res.text();
+      return { status: res.status, text, earlyTool: false };
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    const streamCalls = [];
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value, { stream: true });
+      accumulated += chunk;
+      assertNoNativeXml(accumulated, 'stream');
+      streamCalls.splice(0, streamCalls.length, ...collectStreamToolCalls(accumulated));
+      const names = namesFromCalls(streamCalls);
+      if (names.length && (!expectedTool || names.includes(expectedTool))) {
+        settledByEarlyTool = true;
+        await reader.cancel().catch(() => {});
+        controller.abort();
+        break;
+      }
+    }
+    accumulated += decoder.decode();
+    return { status: res.status, text: accumulated, earlyTool: settledByEarlyTool };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      if (settledByEarlyTool) return { status: res?.status || 0, text: accumulated, earlyTool: true };
+      throw new Error(`request timed out after ${requestTimeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function assertNoNativeXml(text, label) {
@@ -163,11 +205,14 @@ async function runNonStream(name, scenario) {
 }
 
 async function runStream(name, scenario) {
-  const res = await post(requestBody(scenario, true));
+  const res = await post(requestBody(scenario, true), {
+    streamEarlyTool: true,
+    expectedTool: scenario.choice || '',
+  });
   if (res.status !== 200) throw new Error(`${name} stream HTTP ${res.status}: ${res.text.slice(0, 800)}`);
   assertNoNativeXml(res.text, `${name} stream`);
   const calls = collectStreamToolCalls(res.text);
-  return { toolCalls: calls.length, names: assertExpectedTool(calls, name, scenario.choice || '') };
+  return { toolCalls: calls.length, names: assertExpectedTool(calls, name, scenario.choice || ''), earlyTool: res.earlyTool };
 }
 
 const selected = expandScenarios(requestedScenarios);
@@ -179,7 +224,8 @@ if (!selected.length) {
 const results = {};
 for (const name of selected) {
   const scenario = SCENARIOS[name];
-  results[name] = { nonStream: await runNonStream(name, scenario) };
+  results[name] = {};
+  if (nonStreamEnabled) results[name].nonStream = await runNonStream(name, scenario);
   if (streamEnabled) results[name].stream = await runStream(name, scenario);
 }
 
@@ -188,6 +234,7 @@ console.log(JSON.stringify({
   baseUrl,
   model,
   marker,
+  timeoutMs: requestTimeoutMs,
   scenarios: selected,
   results,
 }, null, 2));
