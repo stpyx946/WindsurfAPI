@@ -1024,7 +1024,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // every LS pool entry so requests pick up the new binary on next call.
   // Body: { url?: string } — optional override (e.g. desktop-extracted
   // binary URL); falls back to `install-ls.sh` auto-discovery (our
-  // release → Exafunction).
+  // release → Windsurf desktop LS release → Exafunction).
   if (subpath === '/langserver/update' && method === 'POST') {
     const { spawn } = await import('node:child_process');
     const { fileURLToPath } = await import('node:url');

@@ -120,7 +120,7 @@ docker compose logs -f
 cd ~/WindsurfAPI && bash update.sh
 ```
 
-`update.sh` 做了：`git pull` → 停 PM2 → kill 3003 端口残留 → 重启 → 健康检查。
+`update.sh` 做了：`git pull` → 通过 `install-ls.sh` 更新 LS binary → 停 PM2 → kill 3003 端口残留 → 重启 → 健康检查。
 
 如果你用的是我们的公网实例（`skiapi.dev` 之类），不用管，我们已经推过了。
 
@@ -434,6 +434,8 @@ A: 八成是用了周限模型 — `claude-opus-4-7-max` / `gpt-5.5-xhigh` / `cl
   Dashboard UI 大扫除：统一组件风格、优化卡片布局和响应式适配。
 - [@The-five-stooges](https://github.com/The-five-stooges) — [PR #188](https://github.com/dwgx/WindsurfAPI/pull/188)
   Sticky session 流式路径修复 + body.user 多用户隔离机制 + stickyNoFallback / stickyBindByUserOnly 双开关。
+- [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
+  `update.sh` 通过 `install-ls.sh` 更新 LS binary，统一 WindsurfAPI / Windsurf 桌面 LS / Exafunction 下载链，并修复 macOS `grep -P` 兼容性。
 
 想加入这份名单？欢迎提 [issue](https://github.com/dwgx/WindsurfAPI/issues) 或 [pull request](https://github.com/dwgx/WindsurfAPI/pulls)。Dashboard 左侧有"致谢"面板 能看到同样的信息。
 

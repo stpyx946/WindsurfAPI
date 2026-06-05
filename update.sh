@@ -29,25 +29,38 @@ echo ""
 echo "=== [2/5] Update LS binary ==="
 LS_PATH="${LS_BINARY_PATH:-/opt/windsurf/language_server_linux_x64}"
 if [ -f .env ]; then
-  _lp="$(grep -oP '(?<=LS_BINARY_PATH=).+' .env 2>/dev/null | head -1)"
+  _lp="$(awk '
+    /^[[:space:]]*(export[[:space:]]+)?LS_BINARY_PATH[[:space:]]*=/ {
+      sub(/^[[:space:]]*(export[[:space:]]+)?LS_BINARY_PATH[[:space:]]*=[[:space:]]*/, "")
+      if (substr($0, 1, 1) != "\"" && substr($0, 1, 1) != "'\''") {
+        sub(/[[:space:]]+#.*/, "")
+      }
+      sub(/[[:space:]]*$/, "")
+      if ((substr($0, 1, 1) == "\"" && substr($0, length($0), 1) == "\"") ||
+          (substr($0, 1, 1) == "'\''" && substr($0, length($0), 1) == "'\''")) {
+        $0 = substr($0, 2, length($0) - 2)
+      }
+      print $0
+      exit
+    }
+  ' .env 2>/dev/null || true)"
   [ -n "$_lp" ] && LS_PATH="$_lp"
 fi
-RELEASE_URL="https://github.com/dwgx/WindsurfAPI/releases/latest/download/language_server_linux_x64"
-if [ -f "$LS_PATH" ]; then
-  LOCAL_SIZE=$(stat --format=%s "$LS_PATH" 2>/dev/null || stat -f%z "$LS_PATH" 2>/dev/null || echo 0)
-  REMOTE_SIZE=$(curl -sI -L "$RELEASE_URL" 2>/dev/null | grep -i content-length | tail -1 | tr -dc '0-9')
-  if [ -n "$REMOTE_SIZE" ] && [ "$REMOTE_SIZE" -gt 0 ] && [ "$LOCAL_SIZE" != "$REMOTE_SIZE" ]; then
-    echo "    LS binary size changed ($LOCAL_SIZE → $REMOTE_SIZE), downloading..."
-    curl -fL --progress-bar -o "$LS_PATH.tmp" "$RELEASE_URL" && mv -f "$LS_PATH.tmp" "$LS_PATH" && chmod +x "$LS_PATH"
-    echo "    LS binary updated"
-  else
-    echo "    LS binary up to date (${LOCAL_SIZE} bytes)"
-  fi
+if [ ! -f install-ls.sh ]; then
+  echo "    ! install-ls.sh not found; cannot update LS binary"
+  exit 1
+fi
+echo "    Updating via install-ls.sh -> $LS_PATH"
+if LS_INSTALL_PATH="$LS_PATH" bash install-ls.sh; then
+  echo "    LS binary update finished"
 else
-  echo "    LS binary not found, downloading..."
-  mkdir -p "$(dirname "$LS_PATH")"
-  curl -fL --progress-bar -o "$LS_PATH" "$RELEASE_URL" && chmod +x "$LS_PATH"
-  echo "    LS binary installed"
+  _ls_rc=$?
+  if [ -s "$LS_PATH" ]; then
+    echo "    ! LS binary update failed (exit $_ls_rc); keeping existing binary at $LS_PATH"
+  else
+    echo "    ! LS binary update failed and no existing binary exists at $LS_PATH"
+    exit "$_ls_rc"
+  fi
 fi
 
 echo ""

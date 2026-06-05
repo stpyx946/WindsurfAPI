@@ -2,7 +2,7 @@
 # Install / update the Windsurf language server binary.
 #
 # Usage:
-#   ./install-ls.sh                        # auto: our release → Exafunction fallback
+#   ./install-ls.sh                        # auto: our release → Windsurf desktop LS release → Exafunction fallback
 #   ./install-ls.sh /path/to/local.bin     # install a local file
 #   ./install-ls.sh --file /path/to.bin    # same as above
 #   ./install-ls.sh --url <direct-url>     # install from a custom URL
@@ -72,7 +72,8 @@ elif [[ $# -ge 2 && "$1" == "--url" ]]; then
   log "Downloading from: $url"
   curl -fL --progress-bar -o "$TMP_TARGET" "$url"
 else
-  # Try our own GitHub release first (newer than Exafunction)
+  # Try our own GitHub release first, then the desktop-extracted LS release,
+  # then the older Exafunction/codeium release as a last resort.
   our_url="${OUR_RELEASE}/${ASSET}"
   log "Trying WindsurfAPI release: $our_url"
   if curl -fL --progress-bar -o "$TMP_TARGET" "$our_url" 2>/dev/null; then

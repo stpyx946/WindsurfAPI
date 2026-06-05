@@ -251,6 +251,15 @@
       "mergedAt": "2026-06-02",
       "title": "fix: sticky session binding breaks on streaming path + multi-user isolation with body.user",
       "summary": "修复 sticky session 在流式路径的两个关键问题：① waitForAccount 在流式 retry 路径缺少 callerKey 参数，导致 sticky 绑定在流式请求中不生效；② 新增 body.user 多用户隔离机制，允许不同用户在共享 API key 下保持独立的 session 绑定。配套添加了 stickyNoFallback 开关（绑定账号失败时不回退到其他账号）、stickyBindByUserOnly 开关（忽略模型维度按 user 绑定）、以及 Dashboard 配置面板。320 行新增，涉及 sticky-session / auth / chat / messages / runtime-config / dashboard 六个子系统。"
+    },
+    {
+      "login": "andya1lan",
+      "pr": 192,
+      "weight": "B+",
+      "weightLabel": "升级脚本 LS 下载链修复 + macOS 兼容性",
+      "mergedAt": "2026-06-05",
+      "title": "fix(update): install LS via install-ls sources",
+      "summary": "PR #192 把 update.sh 的 LS binary 更新路径从旧的硬编码 WindsurfAPI release URL 收敛到 install-ls.sh：WindsurfAPI release → Windsurf 桌面 LS release → Exafunction fallback。这样一键更新、Dashboard LS 更新、手动 install-ls.sh 三条路径使用同一套下载链和 atomic rename 行为，避免旧 release asset 漂移和 live binary file-busy 问题。同时把 update.sh 读取 .env 里的 LS_BINARY_PATH 从 GNU-only grep -P 改成 awk，macOS BSD grep 环境也能跑。"
     }
   ]
 }

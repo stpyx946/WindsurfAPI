@@ -122,7 +122,7 @@ To pull the latest fixes after deployment, just run one command:
 cd ~/WindsurfAPI && bash update.sh
 ```
 
-`update.sh` does: `git pull` → stops PM2 → kills any residual process on port 3003 → restarts → health check.
+`update.sh` does: `git pull` → updates the LS binary via `install-ls.sh` → stops PM2 → kills any residual process on port 3003 → restarts → health check.
 
 If you are using our public instances (`skiapi.dev`, etc.), you don't need to do anything; we've already pushed the updates.
 
@@ -443,6 +443,8 @@ Huge thanks to the following folks who sent pull requests or systematically audi
   Dashboard UI overhaul: unified component styles, improved card layouts and responsive design.
 - [@The-five-stooges](https://github.com/The-five-stooges) — [PR #188](https://github.com/dwgx/WindsurfAPI/pull/188)
   Sticky session streaming-path fix + body.user multi-user isolation + stickyNoFallback / stickyBindByUserOnly toggles.
+- [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
+  Routed `update.sh` LS binary updates through `install-ls.sh`, aligned the WindsurfAPI / Windsurf desktop LS / Exafunction source chain, and fixed macOS `grep -P` compatibility.
 
 Want to be on this list? Open an [issue](https://github.com/dwgx/WindsurfAPI/issues) or a [pull request](https://github.com/dwgx/WindsurfAPI/pulls). The dashboard has a Credits panel on the left that shows the same info.
 

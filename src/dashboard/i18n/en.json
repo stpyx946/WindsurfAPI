@@ -655,7 +655,7 @@
     "restartTitle": "Restart Language Server",
     "restartDesc": "In-progress requests will fail. Continue?",
     "updateLsTitle": "Update LS Binary",
-    "updateLsDesc": "Download the latest language_server from the WindsurfAPI / Exafunction GitHub release and restart the LS pool. In-flight requests will fail once.",
+    "updateLsDesc": "Download the latest language_server from the WindsurfAPI / Windsurf desktop LS / Exafunction GitHub release and restart the LS pool. In-flight requests will fail once.",
     "updateLsButton": "Update",
     "restoreDefaultDesc": "restore to default?",
     "clearPoolDesc": "All active Cascade sessions will be cleared. Continue?"
