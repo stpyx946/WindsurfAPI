@@ -1,7 +1,7 @@
 // Logger must be imported first to patch log functions before other modules use them
 import './dashboard/logger.js';
 import { initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
-import { configureLanguageServer, startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer, cleanupOrphanLanguageServers } from './langserver.js';
+import { configureLanguageServer, startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer, cleanupOrphanLanguageServers, shouldPrewarmDefaultLs } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
@@ -110,7 +110,7 @@ async function main() {
       apiServerUrl: config.codeiumApiUrl,
     };
     configureLanguageServer(lsConfig);
-    if (process.env.LS_PREWARM_DEFAULT !== '0') {
+    if (shouldPrewarmDefaultLs()) {
       await startLanguageServer(lsConfig);
 
     try {
@@ -124,7 +124,7 @@ async function main() {
       log.error('Run: bash install-ls.sh (now uses Windsurf desktop LS, not stale Exafunction)');
     }
     } else {
-      log.info('LS default prewarm disabled (LS_PREWARM_DEFAULT=0); LS starts lazily on first request');
+      log.info('LS default prewarm disabled (LS_PREWARM_DEFAULT=0 or LS_MAX_INSTANCES=1); LS starts lazily on first request');
     }
   } else {
     log.warn(`Language server binary not found at ${binaryPath}`);

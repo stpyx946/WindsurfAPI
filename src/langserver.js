@@ -137,6 +137,7 @@ const AUTO_RESTART_BASE_DELAY_MS = (() => {
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
+const _maintenanceUses = new Map();
 // In-flight Promise map so two concurrent ensureLs(proxy) calls for the
 // same key share one spawn + readiness wait. Without this, both callers
 // would each spawn an LS process, race on the port, and leave an orphan.
@@ -148,10 +149,11 @@ const _pendingStartSeq = new Map();
 // This prevents transient RSS spikes where old and new LS workers overlap.
 const _stopping = new Map();
 let _startAdmissionQueue = Promise.resolve();
-// Track which LS keys are being shut down intentionally so the exit handler
-// doesn't fire an auto-restart for them. Without this, stopLanguageServer()
-// and restartLsForProxy() would trigger unwanted respawns.
-const _intentionalShutdown = new Set();
+// Track concrete LS processes being shut down intentionally so the exit
+// handler doesn't fire an auto-restart for them. This must be per-process,
+// not per-key: restartLsForProxy() can spawn a new same-key LS before the
+// old process emits exit.
+const _intentionalShutdownProcs = new WeakSet();
 let _nextPort = DEFAULT_PORT + 1;
 let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
@@ -295,6 +297,26 @@ function touchEntry(entry) {
   entry._evictAt = now;
 }
 
+function markIntentionalShutdown(entryOrProc) {
+  const proc = entryOrProc?.process || entryOrProc;
+  if (proc && typeof proc === 'object') _intentionalShutdownProcs.add(proc);
+}
+
+function isIntentionalShutdown(proc) {
+  return !!proc && _intentionalShutdownProcs.has(proc);
+}
+
+function clearIntentionalShutdown(proc) {
+  try { if (proc) _intentionalShutdownProcs.delete(proc); } catch {}
+}
+
+function keyByPort(port) {
+  for (const [key, entry] of _pool) {
+    if (entry?.port === port) return key;
+  }
+  return '';
+}
+
 export function beginLsUse(port) {
   const entry = getLsEntryByPort(port);
   if (!entry) return null;
@@ -308,6 +330,31 @@ export function endLsUse(port) {
   if (!entry) return;
   entry.activeRequests = Math.max(0, (entry.activeRequests || 0) - 1);
   touchEntry(entry);
+}
+
+export function beginLsMaintenanceUse(port) {
+  const entry = getLsEntryByPort(port);
+  if (!entry) return null;
+  if ((entry.activeRequests || 0) > 0) return null;
+  const key = keyByPort(port);
+  if (!key) return null;
+  _maintenanceUses.set(key, (_maintenanceUses.get(key) || 0) + 1);
+  touchEntry(entry);
+  return { key, port, generation: entry.generation };
+}
+
+export function endLsMaintenanceUse(token) {
+  const key = token?.key || '';
+  if (!key) return;
+  const n = (_maintenanceUses.get(key) || 0) - 1;
+  if (n > 0) _maintenanceUses.set(key, n);
+  else _maintenanceUses.delete(key);
+  const entry = _pool.get(key);
+  if (entry) touchEntry(entry);
+}
+
+export function getLsMaintenanceRequests(proxy = null) {
+  return _maintenanceUses.get(proxyKey(proxy)) || 0;
 }
 
 function invalidateEntryForShutdown(entry) {
@@ -520,7 +567,8 @@ async function evictLruIdleNonDefault() {
   const { key: lruKey, entry: evicted } = candidate;
   _stopping.set(lruKey, { at: Date.now(), pid: evicted?.process?.pid || null, reason: 'evicted' });
   _pool.delete(lruKey);
-  _intentionalShutdown.add(lruKey);
+  _maintenanceUses.delete(lruKey);
+  markIntentionalShutdown(evicted);
   invalidateEntryForShutdown(evicted);
   try { evicted?.process?.kill('SIGTERM'); } catch {}
   let how = await waitProcessExit(evicted?.process, 1500);
@@ -637,6 +685,8 @@ function getLsPoolSummary(now = Date.now()) {
     else starting++;
     activeRequests += entry?.activeRequests || 0;
   }
+  let maintenanceRequests = 0;
+  for (const n of _maintenanceUses.values()) maintenanceRequests += Math.max(0, n || 0);
   const pendingKeys = Array.from(_pending.keys()).map(publicLsKey);
   const stoppingInstances = Array.from(_stopping.entries()).map(([key, entry]) => ({
     key: publicLsKey(key),
@@ -671,6 +721,7 @@ function getLsPoolSummary(now = Date.now()) {
     stopping: _stopping.size,
     stoppingInstances,
     activeRequests,
+    maintenanceRequests,
     nonDefaultInstances,
     defaultRunning,
     idleEvictable: !!evictionCandidate,
@@ -692,6 +743,7 @@ export function getLsAdmissionStatus(proxy = null) {
   const evictionCandidateCount = countIdleNonDefaultEvictionCandidates();
   const memoryGuard = getLsMemoryGuardStatus({ reservedStarts: activeSpawnReservationCount({ excludeKey: key }) });
   if (existing?.ready) {
+    const maintenanceRequests = _maintenanceUses.get(key) || 0;
     return {
       ok: true,
       wouldStart: false,
@@ -703,6 +755,7 @@ export function getLsAdmissionStatus(proxy = null) {
       maxInstances: MAX_LS_INSTANCES,
       pending,
       activeRequests: existing.activeRequests || 0,
+      maintenanceRequests,
       memoryGuard,
     };
   }
@@ -833,7 +886,7 @@ export function sweepIdleLanguageServers(now = Date.now()) {
     if ((entry.activeRequests || 0) > 0) continue;
     const last = entry.lastUsedAt || entry.startedAt || now;
     if (now - last < LS_IDLE_TTL_MS) continue;
-    _intentionalShutdown.add(key);
+    markIntentionalShutdown(entry);
     try { entry.process?.kill('SIGTERM'); } catch {}
     invalidateEntryForShutdown(entry);
     _pool.delete(key);
@@ -926,6 +979,10 @@ function lsStatusConfig() {
     detectedMemoryLimitBytes: detectMemoryLimitBytes(),
     memoryGuard,
   };
+}
+
+export function shouldPrewarmDefaultLs() {
+  return process.env.LS_PREWARM_DEFAULT !== '0' && MAX_LS_INSTANCES > 1;
 }
 
 export function classifyLanguageServerStderr(line) {
@@ -1193,7 +1250,10 @@ export async function ensureLs(proxy = null) {
     });
     proc.on('exit', (code, signal) => {
       log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);
-      if (!_intentionalShutdown.has(key)) {
+      const current = _pool.get(key);
+      const ownsEntry = current?.process === proc;
+      const intentionalExit = isIntentionalShutdown(proc);
+      if (!intentionalExit) {
         _admissionStats.lastFailure = admissionEvent({
           kind: 'process_exit',
           key: publicLsKey(key),
@@ -1211,10 +1271,15 @@ export async function ensureLs(proxy = null) {
         log.error('  3. Binary corrupted — delete and re-download: rm ' + _binaryPath + ' && bash install-ls.sh');
         log.error('  4. Port already in use — check: lsof -i :' + port);
       }
-      const gone = _pool.get(key);
+      const gone = ownsEntry ? current : null;
       const goneGen = gone?.generation;
       const gonePort = gone?.port;
-      _pool.delete(key);
+      if (ownsEntry) {
+        _pool.delete(key);
+        _maintenanceUses.delete(key);
+      } else {
+        log.debug(`Ignoring stale LS exit for ${key}; pool entry belongs to a newer generation`);
+      }
       if (gonePort) {
         closeSessionForPort(gonePort);
         import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gonePort, lsGeneration: goneGen })).catch(() => {});
@@ -1225,10 +1290,10 @@ export async function ensureLs(proxy = null) {
       // tracks per-key restart attempts to avoid infinite loops on
       // permanent errors (e.g. missing binary, incompatible arch).
       // Skip when the exit was intentional (stopLanguageServer / restartLsForProxy).
-      if (AUTO_RESTART_ENABLED && gone && !_intentionalShutdown.has(key)) {
+      if (AUTO_RESTART_ENABLED && gone && !intentionalExit) {
         scheduleLsRestart(key, gone.proxy, gonePort);
       }
-      _intentionalShutdown.delete(key);
+      clearIntentionalShutdown(proc);
     });
     proc.on('error', (err) => {
       if (err.code === 'ENOEXEC') {
@@ -1245,7 +1310,10 @@ export async function ensureLs(proxy = null) {
       } else {
         log.error(`LS instance ${key} spawn error: ${err.message}`);
       }
-      _pool.delete(key);
+      if (_pool.get(key)?.process === proc) {
+        _pool.delete(key);
+        _maintenanceUses.delete(key);
+      }
     });
 
     Object.assign(entry, {
@@ -1272,7 +1340,10 @@ export async function ensureLs(proxy = null) {
       } catch (err) {
         log.error(`LS instance ${key} failed to become ready: ${err.message}`);
         try { proc.kill('SIGKILL'); } catch {}
-        _pool.delete(key);
+        if (_pool.get(key)?.process === proc) {
+          _pool.delete(key);
+          _maintenanceUses.delete(key);
+        }
         throw err;
       }
     return entry;
@@ -1301,7 +1372,7 @@ export async function ensureLs(proxy = null) {
 export async function restartLsForProxy(proxy) {
   const key = proxyKey(proxy);
   const entry = _pool.get(key);
-  _intentionalShutdown.add(key);  // prevent auto-restart
+  markIntentionalShutdown(entry);  // prevent auto-restart
   if (entry?.process) {
     try { entry.process.kill('SIGTERM'); } catch {}
   }
@@ -1317,6 +1388,7 @@ export async function restartLsForProxy(proxy) {
     } catch {}
   }
   _pool.delete(key);
+  _maintenanceUses.delete(key);
   return ensureLs(proxy);
 }
 
@@ -1497,12 +1569,13 @@ export function stopLanguageServer() {
   // cascade ids into the next LS's session window.
   const portsToClose = [];
   for (const [key, entry] of _pool) {
-    _intentionalShutdown.add(key);  // prevent auto-restart
+    markIntentionalShutdown(entry);  // prevent auto-restart
     try { entry.process?.kill('SIGTERM'); } catch {}
     if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
     log.info(`LS instance ${key} stopped`);
   }
   _pool.clear();
+  _maintenanceUses.clear();
   if (portsToClose.length) {
     import('./conversation-pool.js').then(m => {
       for (const p of portsToClose) {
@@ -1533,6 +1606,7 @@ export async function stopLanguageServerAndWait({ perProcessTimeoutMs = 1500 } =
     if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
   }
   _pool.clear();
+  _maintenanceUses.clear();
   await Promise.allSettled(procs.map(({ key, proc }) => new Promise((resolve) => {
     let settled = false;
     const finish = (how) => {

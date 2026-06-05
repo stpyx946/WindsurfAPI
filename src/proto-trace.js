@@ -19,7 +19,7 @@ function enabled() {
 }
 
 function traceDir() {
-  return process.env.WINDSURFAPI_PROTO_TRACE_DIR || '/tmp/windsurf-proto-trace';
+  return process.env.WINDSURFAPI_PROTO_TRACE_DIR || '/data/proto-trace';
 }
 
 function positiveIntEnv(name, fallback) {

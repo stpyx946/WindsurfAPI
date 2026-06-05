@@ -6,6 +6,7 @@ const model = process.env.MODEL || process.env.WINDSURFAPI_SMOKE_MODEL || 'claud
 const marker = `NATIVE_BRIDGE_SMOKE_${Date.now().toString(36)}`;
 const streamEnabled = process.env.NATIVE_BRIDGE_SMOKE_STREAM !== '0';
 const nonStreamEnabled = process.env.NATIVE_BRIDGE_SMOKE_NON_STREAM !== '0';
+const noExitOnFailure = process.env.NATIVE_BRIDGE_SMOKE_NO_EXIT_ON_FAILURE === '1';
 const requestTimeoutMs = Math.max(5_000, Number(process.env.NATIVE_BRIDGE_SMOKE_TIMEOUT_MS || 120_000));
 const streamEarlyTool = process.env.NATIVE_BRIDGE_SMOKE_EARLY_TOOL !== '0';
 const includeEnv = process.env.NATIVE_BRIDGE_SMOKE_ENV !== '0';
@@ -290,4 +291,4 @@ console.log(JSON.stringify({
   results,
   failures,
 }, null, 2));
-if (failures.length) process.exit(1);
+if (failures.length && !noExitOnFailure) process.exit(1);

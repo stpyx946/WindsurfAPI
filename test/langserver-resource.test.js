@@ -101,6 +101,7 @@ describe('language server resource policy', () => {
     assert.equal(typeof status.pool.pending, 'number');
     assert.equal(typeof status.pool.reservedPendingStarts, 'number');
     assert.equal(typeof status.pool.stopping, 'number');
+    assert.equal(typeof status.pool.maintenanceRequests, 'number');
     assert.equal(typeof status.pool.canStartNewNonDefault, 'boolean');
     assert.equal(typeof status.pool.idleEvictableCount, 'number');
     assert.equal(typeof status.pool.memoryGuard, 'object');
@@ -129,13 +130,13 @@ describe('language server resource policy', () => {
   });
 
   test('auth warmup honors LS_PREWARM_DEFAULT=0 too', () => {
-    assert.match(AUTH_JS, /if \(process\.env\.LS_PREWARM_DEFAULT !== '0'\) \{\s*uniqueProxies\.set\('default', null\);/);
+    assert.match(AUTH_JS, /shouldPrewarmDefaultLs\(\)/);
   });
 
   test('default LS startup prewarm can be disabled for low-memory pools', () => {
     const src = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
     assert.match(src, /configureLanguageServer\(lsConfig\)/);
-    assert.match(src, /process\.env\.LS_PREWARM_DEFAULT !== '0'/);
+    assert.match(src, /shouldPrewarmDefaultLs\(\)/);
     assert.match(src, /LS default prewarm disabled/);
   });
 
@@ -149,6 +150,8 @@ describe('language server resource policy', () => {
     assert.match(AUTH_JS, /const admission = getLsAdmissionForAccount\(a\.id\)/);
     assert.match(AUTH_JS, /admission\.reason !== 'already_running'/);
     assert.match(AUTH_JS, /\(admission\.activeRequests \|\| 0\) > 0/);
+    assert.match(AUTH_JS, /\(admission\.maintenanceRequests \|\| 0\) > 0/);
+    assert.match(AUTH_JS, /isAccountBusyForProbe\(a\)/);
     assert.match(AUTH_JS, /Scheduled probe .*wouldStart=/);
     assert.match(AUTH_JS, /probeAccount\(a\.id, \{ allowLsStart: false \}\)/);
   });
@@ -182,6 +185,10 @@ describe('language server resource policy', () => {
     assert.match(ls, /await withStartAdmissionLock/);
     assert.match(ls, /activeSpawnReservationCount\(\{ excludeKey: key, beforeSeq: pendingStartSeq \}\)/);
     assert.match(ls, /poolOccupancyWithPendingReservations\(\{ excludeKey: key, beforeSeq: pendingStartSeq \}\)/);
+    assert.match(ls, /const ownsEntry = current\?\.process === proc/);
+    assert.match(ls, /Ignoring stale LS exit/);
+    assert.match(ls, /const _intentionalShutdownProcs = new WeakSet\(\)/);
+    assert.match(ls, /markIntentionalShutdown\(entry\)/);
   });
 
   test('LS capacity formula counts pending starts before admitting cold proxies', () => {
@@ -210,5 +217,14 @@ describe('language server resource policy', () => {
     assert.match(ls, /evictionCandidateKey: evictionCandidate\?\.key \? publicLsKey\(evictionCandidate\.key\) : null/);
     assert.match(AUTH_JS, /effectivePoolSize: lsAdmission\.effectivePoolSize/);
     assert.match(AUTH_JS, /estimatedRssBytesPerInstance: lsAdmission\.memoryGuard\?\.estimatedRssBytesPerInstance/);
+  });
+
+  test('default prewarm is skipped when LS_MAX_INSTANCES leaves no proxy slot', () => {
+    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
+    const index = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
+    assert.match(ls, /export function shouldPrewarmDefaultLs\(\)/);
+    assert.match(ls, /MAX_LS_INSTANCES > 1/);
+    assert.match(index, /shouldPrewarmDefaultLs\(\)/);
+    assert.match(AUTH_JS, /shouldPrewarmDefaultLs\(\)/);
   });
 });

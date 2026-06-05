@@ -17,7 +17,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdi
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
-import { getLsAdmissionStatus } from './langserver.js';
+import { getLsAdmissionStatus, getLsMaintenanceRequests } from './langserver.js';
 
 import { join } from 'path';
 // accounts.json lives in the cluster-shared dir so add-account writes from
@@ -30,6 +30,45 @@ const ACCOUNTS_FILE = join(config.sharedDataDir || config.dataDir, 'accounts.jso
 const accounts = [];
 let _roundRobinIndex = 0;
 let _bindHost = '0.0.0.0';
+
+function accountInflight(account) {
+  return Math.max(0, account?._inflight || 0);
+}
+
+function accountMaintenance(account) {
+  return Math.max(0, account?._maintenance || 0);
+}
+
+function accountLsMaintenance(account) {
+  if (!account?.id) return 0;
+  try {
+    return Math.max(0, getLsMaintenanceRequests(getEffectiveProxy(account.id) || null));
+  } catch {
+    return 0;
+  }
+}
+
+function isAccountBusyForProbe(account) {
+  return accountInflight(account) > 0 || accountMaintenance(account) > 0 || accountLsMaintenance(account) > 0;
+}
+
+function isAccountInMaintenance(account) {
+  return accountMaintenance(account) > 0 || accountLsMaintenance(account) > 0;
+}
+
+function beginAccountMaintenance(account) {
+  if (!account) return null;
+  account._maintenance = accountMaintenance(account) + 1;
+  account._maintenanceAt = Date.now();
+  return { account };
+}
+
+function endAccountMaintenance(token) {
+  const account = token?.account;
+  if (!account) return;
+  account._maintenance = Math.max(0, accountMaintenance(account) - 1);
+  if (account._maintenance === 0) account._maintenanceAt = 0;
+}
 
 // Per-tier requests-per-minute limits. Used for both filter-by-cap and
 // weighted selection (accounts with more headroom are preferred).
@@ -647,7 +686,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
       if (acct) {
         const limit = rpmLimitFor(acct);
         const used = pruneRpmHistory(acct, now);
-        if (limit > 0 && used < limit && !isRateLimitedForModel(acct, modelKey, now)) {
+        if (limit > 0 && used < limit && !isRateLimitedForModel(acct, modelKey, now) && !isAccountInMaintenance(acct)) {
           if (!modelKey || isModelAllowedForAccount(acct, modelKey)) {
             const reservationTimestamp = nextReservationToken(now);
             acct._rpmHistory.push(reservationTimestamp);
@@ -681,6 +720,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   for (const a of accounts) {
     if (a.status !== 'active') continue;
     if (excludeKeys.includes(a.apiKey)) continue;
+    if (isAccountInMaintenance(a)) continue;
     if (isRateLimitedForModel(a, modelKey, now)) continue;
     const limit = rpmLimitFor(a);
     if (limit <= 0) continue; // expired tier
@@ -700,8 +740,8 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   // doesn't keep getting picked over a healthier account). Then RPM
   // remaining-ratio. Finally least-recently-used.
   candidates.sort((x, y) => {
-    const ix = x.account._inflight || 0;
-    const iy = y.account._inflight || 0;
+    const ix = accountInflight(x.account) + accountMaintenance(x.account);
+    const iy = accountInflight(y.account) + accountMaintenance(y.account);
     if (ix !== iy) return ix - iy;
     const qx = quotaScore(x.account);
     const qy = quotaScore(y.account);
@@ -739,8 +779,8 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
     } else {
       const first = candidates[0];
       const second = candidates[1];
-      const ix0 = first.account._inflight || 0;
-      const iy0 = second.account._inflight || 0;
+      const ix0 = accountInflight(first.account) + accountMaintenance(first.account);
+      const iy0 = accountInflight(second.account) + accountMaintenance(second.account);
       const qx0 = Math.floor(quotaScore(first.account) / 5);
       const qy0 = Math.floor(quotaScore(second.account) / 5);
       const rx0 = (first.limit - first.used) / first.limit || 0;
@@ -850,6 +890,7 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return null;
   if (a.status !== 'active') return null;
+  if (isAccountInMaintenance(a)) return null;
   if (isRateLimitedForModel(a, modelKey, now)) return null;
   const limit = rpmLimitFor(a);
   if (limit <= 0) return null;
@@ -1515,10 +1556,12 @@ export async function probeAccount(id, { allowLsStart = true } = {}) {
 
   if (!allowLsStart) {
     const admission = getLsAdmissionForAccount(id);
-    if (!admission.ok || admission.reason !== 'already_running' || (admission.activeRequests || 0) > 0) {
+    const busyReason = isAccountBusyForProbe(account) ? 'account_busy'
+      : null;
+    if (!admission.ok || admission.reason !== 'already_running' || (admission.activeRequests || 0) > 0 || busyReason) {
       return {
         skipped: true,
-        reason: admission.errorType || admission.reason || 'ls_not_idle_resident',
+        reason: admission.errorType || busyReason || admission.reason || 'ls_not_idle_resident',
         tier: account.tier || 'unknown',
         capabilities: account.capabilities || {},
         admission,
@@ -1534,10 +1577,29 @@ export async function probeAccount(id, { allowLsStart = true } = {}) {
 }
 
 async function _probeAccountImpl(account) {
+  let accountMaintenanceToken = null;
+  let lsMaintenanceToken = null;
   try {
+    const { beginLsMaintenanceUse } = await import('./langserver.js');
+    const preAdmission = getLsAdmissionForAccount(account.id);
+    if (preAdmission.reason === 'already_running' && preAdmission.port) {
+      accountMaintenanceToken = beginAccountMaintenance(account);
+      lsMaintenanceToken = beginLsMaintenanceUse(preAdmission.port);
+      if (!lsMaintenanceToken) {
+        endAccountMaintenance(accountMaintenanceToken);
+        accountMaintenanceToken = null;
+        return {
+          skipped: true,
+          reason: 'ls_not_idle_resident',
+          tier: account.tier || 'unknown',
+          capabilities: account.capabilities || {},
+          admission: preAdmission,
+        };
+      }
+    }
 
-  // ── Step 1: authoritative tier via GetUserStatus ──
-  const status = await fetchUserStatus(account.id);
+    // ── Step 1: authoritative tier via GetUserStatus ──
+    const status = await fetchUserStatus(account.id);
 
   const { WindsurfClient } = await import('./client.js');
   const { getModelInfo } = await import('./models.js');
@@ -1651,6 +1713,12 @@ async function _probeAccountImpl(account) {
   } catch (err) {
     log.error(`Probe failed for ${account.id}: ${err.message}`);
     throw err;
+  } finally {
+    try {
+      const { endLsMaintenanceUse } = await import('./langserver.js');
+      endLsMaintenanceUse(lsMaintenanceToken);
+    } catch {}
+    endAccountMaintenance(accountMaintenanceToken);
   }
 }
 
@@ -1901,7 +1969,7 @@ export async function initAuth() {
     for (const a of accounts) {
       if (a.status !== 'active') continue;
       const admission = getLsAdmissionForAccount(a.id);
-      if (!admission.ok || admission.reason !== 'already_running' || (admission.activeRequests || 0) > 0) {
+      if (!admission.ok || admission.reason !== 'already_running' || (admission.activeRequests || 0) > 0 || (admission.maintenanceRequests || 0) > 0 || isAccountBusyForProbe(a)) {
         log.info(`Scheduled probe ${a.id} skipped: ${admission.errorType || admission.reason} (wouldStart=${!!admission.wouldStart}, ls=${admission.key || '?'})`);
         continue;
       }
@@ -1934,9 +2002,9 @@ export async function initAuth() {
   // LS instances are on-demand by default: current LS builds can consume
   // ~500MB RSS including the child worker, so prewarming every proxy on a
   // small VPS can exhaust memory before any request arrives.
-  const { ensureLs } = await import('./langserver.js');
+  const { ensureLs, shouldPrewarmDefaultLs } = await import('./langserver.js');
   const uniqueProxies = new Map();
-  if (process.env.LS_PREWARM_DEFAULT !== '0') {
+  if (shouldPrewarmDefaultLs()) {
     uniqueProxies.set('default', null);
   }
   if (process.env.LS_PREWARM_PROXIES === '1') {
