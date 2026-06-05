@@ -43,6 +43,20 @@ import {
   _runOneTick as runQuietWindowTickNow,
 } from './quiet-window-updater.js';
 
+function shouldPrewarmLsOnAccountAdd() {
+  return process.env.LS_PREWARM_ON_ACCOUNT_ADD === '1' || process.env.LS_PREWARM_PROXIES === '1';
+}
+
+function scheduleAccountWarmup(accountId, { probe = true } = {}) {
+  if (!shouldPrewarmLsOnAccountAdd()) return;
+  ensureLsForAccount(accountId)
+    .then(() => {
+      if (probe) return probeAccount(accountId);
+      return null;
+    })
+    .catch(e => log.warn(`LS ensure failed: ${e.message}`));
+}
+
 export function parseProxyUrl(proxy) {
   // Normalize whitespace so "socks5 127.0.0.1   1089" and
   // "socks5://127.0.0.1:1089" both parse correctly.
@@ -161,9 +175,7 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
     // Persist the per-account proxy we used for login so chat requests
     // also egress through the same IP, then warm up a matching LS.
     if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
-    ensureLsForAccount(account.id)
-      .then(() => probeAccount(account.id))
-      .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+    scheduleAccountWarmup(account.id);
   }
 
   return {
@@ -489,11 +501,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       if (parsedProxy) {
         setAccountProxy(account.id, parsedProxy);
-        ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
       }
 
-      // Fire-and-forget probe so the UI gets tier info shortly after add
-      probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+      // Fire-and-forget LS warmup is opt-in. Current LS builds are heavy,
+      // so adding many proxied accounts must not spawn many LSPs up front.
+      scheduleAccountWarmup(account.id);
       return json(res, 200, {
         success: true,
         account: { id: account.id, email: account.email, method: account.method, status: account.status },
@@ -1262,13 +1274,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             const binding = buildBatchProxyBinding(result, item.proxyRaw);
             if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
-              ensureLsForAccount(binding.accountId).catch(() => {});
+              scheduleAccountWarmup(binding.accountId);
             }
           } else if (item.kind === 'token') {
             const account = await addAccountByToken(item.token, item.label);
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
-              ensureLsForAccount(account.id).catch(() => {});
+              scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
@@ -1280,7 +1292,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             const account = addAccountByKey(item.apiKey, item.label, item.apiServerUrl || '');
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
-              ensureLsForAccount(account.id).catch(() => {});
+              scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
@@ -1342,9 +1354,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         if (refreshToken) {
           setAccountTokens(account.id, { refreshToken, idToken });
         }
-        ensureLsForAccount(account.id)
-          .then(() => probeAccount(account.id))
-          .catch(e => log.warn(`OAuth auto-probe failed: ${e.message}`));
+        scheduleAccountWarmup(account.id);
       }
 
       return json(res, 200, {

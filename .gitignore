@@ -5,7 +5,8 @@ model-access.json
 sshpass.sh
 sshpass2.sh
 deploy-us.py
-scripts/
+scripts/*
+!scripts/native-bridge-smoke.mjs
 src/get-token.js
 src/test-cascade.js
 src/runtime-config.json

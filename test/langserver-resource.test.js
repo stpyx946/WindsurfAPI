@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
   detectMemoryLimitBytes,
+  detectMemoryCurrentBytes,
+  detectHostMemAvailableBytes,
   estimateDefaultMaxLsInstances,
+  classifyLanguageServerStderr,
   getLsStatus,
   sweepIdleLanguageServers,
 } from '../src/langserver.js';
@@ -50,15 +53,42 @@ describe('language server resource policy', () => {
     assert.equal(detectMemoryLimitBytes(readFile, 4 * 1024 * 1024 * 1024), 4 * 1024 * 1024 * 1024);
   });
 
+  test('memory current detection reads cgroup usage', () => {
+    const files = new Map([
+      ['/sys/fs/cgroup/memory.current', String(300 * 1024 * 1024)],
+    ]);
+    const readFile = (path) => {
+      if (!files.has(path)) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      return files.get(path);
+    };
+    assert.equal(detectMemoryCurrentBytes(readFile), 300 * 1024 * 1024);
+  });
+
+  test('host memory available detection parses /proc/meminfo', () => {
+    const readFile = () => 'MemTotal: 2048000 kB\nMemAvailable: 512000 kB\n';
+    assert.equal(detectHostMemAvailableBytes(readFile, 1), 512000 * 1024);
+  });
+
+  test('LS stderr classifier keeps normal startup lines out of warn', () => {
+    assert.equal(classifyLanguageServerStderr('I0605 00:00:00.000000 server started'), 'info');
+    assert.equal(classifyLanguageServerStderr('listening on 42100'), 'info');
+    assert.equal(classifyLanguageServerStderr('W0605 00:00:00.000000 slow startup'), 'warn');
+    assert.equal(classifyLanguageServerStderr('E0605 00:00:00.000000 failed to bind'), 'error');
+    assert.equal(classifyLanguageServerStderr('panic: crash'), 'error');
+  });
+
   test('status exposes resource guard configuration even before LS starts', () => {
     const status = getLsStatus();
     assert.equal(typeof status.maxInstances, 'number');
     assert.ok(status.maxInstances >= 1);
+    assert.equal(typeof status.poolWaitMs, 'number');
     assert.equal(typeof status.idleTtlMs, 'number');
     assert.equal(typeof status.idleSweepMs, 'number');
     assert.equal(status.estimatedRssBytesPerInstance, 700 * 1024 * 1024);
     assert.equal(typeof status.systemMemoryBytes, 'number');
     assert.equal(typeof status.detectedMemoryLimitBytes, 'number');
+    assert.equal(typeof status.memoryGuard, 'object');
+    assert.equal(typeof status.memoryGuard.minAvailableBytes, 'number');
     assert.ok(Array.isArray(status.instances));
   });
 
@@ -72,5 +102,11 @@ describe('language server resource policy', () => {
   test('startup proxy prewarm is opt-in', () => {
     assert.match(AUTH_JS, /uniqueProxies\.set\('default', null\)/);
     assert.match(AUTH_JS, /process\.env\.LS_PREWARM_PROXIES === '1'/);
+  });
+
+  test('dashboard account-add LS warmup is opt-in', () => {
+    const src = readFileSync(join(__dirname, '..', 'src/dashboard/api.js'), 'utf8');
+    assert.match(src, /LS_PREWARM_ON_ACCOUNT_ADD === '1'/);
+    assert.match(src, /function scheduleAccountWarmup/);
   });
 });

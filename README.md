@@ -268,9 +268,13 @@ curl http://localhost:3003/v1/messages \
 | `LS_DATA_DIR` | Linux: `/opt/windsurf/data`；macOS: `~/.windsurf/data` | 每个 proxy 独立的 LS 数据根目录 |
 | `LS_PORT` | `42100` | LS gRPC 端口 |
 | `LS_MAX_INSTANCES` | 内存自适应，最多 `20` | LS 池最大实例数；2GB VPS 建议 `2` |
+| `LS_POOL_WAIT_MS` | `30000` | LS 池满且全部 active 时，新 proxy LS 最多等待这么久再返回 `LS_POOL_EXHAUSTED` |
+| `LS_SPAWN_MIN_AVAILABLE_BYTES` | `700MB` | 新增非 default LS 前要求的可用内存水位；低于该值会排队/拒绝，避免 OOM |
+| `LS_MEMORY_GUARD` | `1` | 设 `0` 可关闭 LS 内存护栏（仅在你有外部 memory limit/监控时考虑） |
 | `LS_IDLE_TTL_MS` | `1200000` | 非 default LS 空闲超过该时间自动停止；`0` 关闭 |
 | `LS_IDLE_SWEEP_MS` | 自动推导 | LS 空闲回收扫描间隔 |
 | `LS_PREWARM_PROXIES` | `0` | 设为 `1` 才在启动时预热所有 proxy LS；默认按需启动 |
+| `LS_PREWARM_ON_ACCOUNT_ADD` | `0` | 设为 `1` 才在 Dashboard/批量导入/OAuth 添加账号后立即预热对应 LS；默认避免批量录入打爆内存 |
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE` | 空 | `all_mapped` 仅在 Read/Bash/Grep/Glob/WebSearch/WebFetch 等全部可映射时走 native bridge，不再把这些工具塞进 prompt preamble；`1` 为混合工具强制 partition 模式 |
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | 空 | 设为 `1` 强制关闭 native tool bridge，优先级高于上面的开关 |
 | `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | 空 | 可选 special-agent 后端。设为 `devin-cli` 后，`swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 不再走 direct Cascade，而是走 Devin CLI PoC |

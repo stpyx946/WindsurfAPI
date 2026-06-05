@@ -14,7 +14,6 @@
 import http from 'http';
 import { randomUUID } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
-import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import {
@@ -29,22 +28,13 @@ import { handleModels } from './handlers/models.js';
 import { handleDashboardApi, parseProxyUrl } from './dashboard/api.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
-import { VERSION } from './version.js';
+import { getVersionInfo } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
 
-const VERSION_INFO = (() => {
-  let commit = '', commitMessage = '', commitDate = '', branch = 'unknown';
-  if (existsSync(join(REPO_ROOT, '.git'))) {
-    try { commit = execSync('git rev-parse --short HEAD', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
-    try { commitMessage = execSync('git log -1 --pretty=format:%s', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
-    try { commitDate = execSync('git log -1 --pretty=format:%cI', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
-    try { branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
-  }
-  return { version: VERSION, commit, commitMessage, commitDate, branch };
-})();
+const VERSION_INFO = getVersionInfo();
 
 // 10 MB is way above any realistic chat-completions payload while still
 // bounding worst-case memory from a malicious/broken client.
@@ -116,6 +106,7 @@ async function route(req, res) {
       commitMessage: VERSION_INFO.commitMessage,
       commitDate: VERSION_INFO.commitDate,
       branch: VERSION_INFO.branch,
+      buildSource: VERSION_INFO.source,
       uptime: Math.round(process.uptime()),
       accounts: counts,
     };

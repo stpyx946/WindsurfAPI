@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { handleChatCompletions } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { handleResponses } from '../src/handlers/responses.js';
-import { getModelInfo, resolveModel } from '../src/models.js';
+import { getModelInfo, listModels, resolveModel } from '../src/models.js';
 import {
   getModelAccessConfig,
   setModelAccessList,
@@ -24,6 +24,7 @@ const ENV_KEYS = [
   'DEVIN_CLI_ALLOW_CLIENT_TOOLS',
   'DEVIN_CLI_ALLOW_MEDIA',
   'DEVIN_CLI_MODE',
+  'WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
 const originalModelAccess = getModelAccessConfig();
@@ -303,5 +304,32 @@ describe('special-agent prompt/status helpers', () => {
     const status = getSpecialAgentStatus();
     assert.equal(status.enabled, false);
     assert.equal(status.backend, 'disabled');
+  });
+
+  it('hides special-agent models from /v1/models while backend is disabled', () => {
+    delete process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND;
+    delete process.env.DEVIN_CLI_ENABLED;
+    delete process.env.WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS;
+    const ids = listModels().map(m => m.id);
+    assert.equal(ids.includes('swe-1.6'), false);
+    assert.equal(ids.includes('swe-1.6-fast'), false);
+  });
+
+  it('can expose disabled special-agent models with unavailable metadata for operators', () => {
+    delete process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND;
+    delete process.env.DEVIN_CLI_ENABLED;
+    process.env.WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS = '1';
+    const model = listModels().find(m => m.id === 'swe-1.6');
+    assert.equal(model?._backend, 'special_agent');
+    assert.equal(model?._available, false);
+    assert.equal(model?._unavailable_reason, 'special-agent backend disabled');
+  });
+
+  it('shows special-agent models as available when backend is enabled', () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    delete process.env.DEVIN_CLI_ENABLED;
+    const model = listModels().find(m => m.id === 'swe-1.6');
+    assert.equal(model?._backend, 'special_agent');
+    assert.equal(model?._available, true);
   });
 });

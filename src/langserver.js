@@ -14,7 +14,7 @@ import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
 import { randomUUID } from 'crypto';
-import { totalmem } from 'os';
+import { freemem, totalmem } from 'os';
 import { posix, resolve } from 'path';
 import { log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
@@ -31,6 +31,26 @@ const DEFAULT_LINUX_DATA_ROOT = '/opt/windsurf/data';
 // unsafe on 2GB VPSes. Operators with large machines can still override.
 const DEFAULT_LS_RSS_ESTIMATE_BYTES = 700 * 1024 * 1024;
 const RSS_SNAPSHOT_TTL_MS = 5000;
+
+function positiveIntEnv(name, fallback, min = 0) {
+  const n = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n >= min ? n : fallback;
+}
+
+function bytesEnv(name, fallback) {
+  const raw = String(process.env[name] || '').trim();
+  if (!raw) return fallback;
+  const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|k|mb|mib|m|gb|gib|g)?$/i);
+  if (!m) return fallback;
+  const n = Number(m[1]);
+  if (!Number.isFinite(n) || n < 0) return fallback;
+  const unit = (m[2] || 'b').toLowerCase();
+  const mul = unit === 'gb' || unit === 'gib' || unit === 'g' ? 1024 ** 3
+    : unit === 'mb' || unit === 'mib' || unit === 'm' ? 1024 ** 2
+      : unit === 'kb' || unit === 'kib' || unit === 'k' ? 1024
+        : 1;
+  return Math.floor(n * mul);
+}
 
 export function detectMemoryLimitBytes(readFile = readFileSync, hostTotalBytes = totalmem()) {
   const candidates = [];
@@ -52,6 +72,27 @@ export function detectMemoryLimitBytes(readFile = readFileSync, hostTotalBytes =
   return sane.length ? Math.min(...sane) : hostTotal;
 }
 
+export function detectMemoryCurrentBytes(readFile = readFileSync) {
+  for (const path of ['/sys/fs/cgroup/memory.current', '/sys/fs/cgroup/memory/memory.usage_in_bytes']) {
+    try {
+      const raw = String(readFile(path, 'utf-8')).trim();
+      const n = Number(raw);
+      if (Number.isFinite(n) && n >= 0) return n;
+    } catch {}
+  }
+  return null;
+}
+
+export function detectHostMemAvailableBytes(readFile = readFileSync, fallback = freemem()) {
+  try {
+    const raw = String(readFile('/proc/meminfo', 'utf-8'));
+    const m = raw.match(/^MemAvailable:\s+(\d+)\s+kB/im);
+    if (m) return parseInt(m[1], 10) * 1024;
+  } catch {}
+  const n = Number(fallback);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
 export function estimateDefaultMaxLsInstances(totalBytes = totalmem(), perInstanceBytes = DEFAULT_LS_RSS_ESTIMATE_BYTES) {
   const total = Number(totalBytes) || 0;
   const per = Number(perInstanceBytes) || DEFAULT_LS_RSS_ESTIMATE_BYTES;
@@ -65,6 +106,9 @@ const MAX_LS_INSTANCES = (() => {
   const n = parseInt(process.env.LS_MAX_INSTANCES || '', 10);
   return Number.isFinite(n) && n > 0 ? n : estimateDefaultMaxLsInstances(detectMemoryLimitBytes());
 })();
+const LS_POOL_WAIT_MS = positiveIntEnv('LS_POOL_WAIT_MS', 30_000, 0);
+const LS_MEMORY_GUARD_ENABLED = process.env.LS_MEMORY_GUARD !== '0';
+const LS_SPAWN_MIN_AVAILABLE_BYTES = bytesEnv('LS_SPAWN_MIN_AVAILABLE_BYTES', DEFAULT_LS_RSS_ESTIMATE_BYTES);
 
 const LS_IDLE_TTL_MS = (() => {
   const n = parseInt(process.env.LS_IDLE_TTL_MS || '', 10);
@@ -241,6 +285,97 @@ function invalidateEntryForShutdown(entry) {
     .catch(() => {});
 }
 
+function delay(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function evictLruIdleNonDefault() {
+  let lruKey = null;
+  let lruTime = Infinity;
+  for (const [k, e] of _pool) {
+    if (k === 'default') continue;
+    if ((e.activeRequests || 0) > 0) continue;
+    const at = e.lastUsedAt || e._evictAt || e.startedAt || 0;
+    if (at < lruTime) { lruTime = at; lruKey = k; }
+  }
+  if (!lruKey) return null;
+  const evicted = _pool.get(lruKey);
+  _intentionalShutdown.add(lruKey);
+  try { evicted?.process?.kill('SIGTERM'); } catch {}
+  invalidateEntryForShutdown(evicted);
+  _pool.delete(lruKey);
+  log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
+  return lruKey;
+}
+
+function memoryGuardSnapshot() {
+  const limit = detectMemoryLimitBytes();
+  const current = detectMemoryCurrentBytes();
+  const cgroupAvailableBytes = Number.isFinite(limit) && Number.isFinite(current)
+    ? Math.max(0, limit - current)
+    : null;
+  const hostAvailableBytes = detectHostMemAvailableBytes();
+  const candidates = [cgroupAvailableBytes, hostAvailableBytes]
+    .filter(n => Number.isFinite(n) && n >= 0);
+  return {
+    enabled: LS_MEMORY_GUARD_ENABLED,
+    minAvailableBytes: LS_SPAWN_MIN_AVAILABLE_BYTES,
+    cgroupAvailableBytes,
+    hostAvailableBytes,
+    availableBytes: candidates.length ? Math.min(...candidates) : null,
+  };
+}
+
+export function getLsMemoryGuardStatus() {
+  const snap = memoryGuardSnapshot();
+  return {
+    ...snap,
+    okToSpawn: !snap.enabled || snap.availableBytes == null || snap.availableBytes >= snap.minAvailableBytes,
+  };
+}
+
+async function waitForPoolCapacity(key) {
+  if (key === 'default') return;
+  const start = Date.now();
+  let logged = false;
+  while (_pool.size >= MAX_LS_INSTANCES) {
+    if (evictLruIdleNonDefault()) return;
+    const remaining = LS_POOL_WAIT_MS - (Date.now() - start);
+    if (remaining <= 0) {
+      throw lsPoolExhaustedError(`LS pool at cap (${MAX_LS_INSTANCES}) and no idle non-default instance became evictable within ${LS_POOL_WAIT_MS}ms`);
+    }
+    if (!logged) {
+      logged = true;
+      log.info(`LS pool at cap (${MAX_LS_INSTANCES}); waiting up to ${LS_POOL_WAIT_MS}ms for an active non-default instance to go idle`);
+    }
+    await delay(Math.min(500, remaining));
+    const existing = _pool.get(key);
+    if (existing?.ready) return;
+  }
+}
+
+async function waitForMemoryHeadroom(key) {
+  if (!LS_MEMORY_GUARD_ENABLED || key === 'default') return;
+  const start = Date.now();
+  let logged = false;
+  while (true) {
+    const snap = memoryGuardSnapshot();
+    if (snap.availableBytes == null || snap.availableBytes >= snap.minAvailableBytes) return;
+    const remaining = LS_POOL_WAIT_MS - (Date.now() - start);
+    if (remaining <= 0) {
+      const err = lsPoolExhaustedError(`LS memory guard blocked new instance ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
+      err.type = 'ls_memory_guard';
+      err.code = 'LS_MEMORY_GUARD';
+      throw err;
+    }
+    if (!logged) {
+      logged = true;
+      log.info(`LS memory guard delaying ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
+    }
+    await delay(Math.min(500, remaining));
+  }
+}
+
 export function sweepIdleLanguageServers(now = Date.now()) {
   if (!LS_IDLE_TTL_MS) return { scanned: _pool.size, stopped: 0, ttlMs: LS_IDLE_TTL_MS };
   let stopped = 0;
@@ -333,12 +468,23 @@ function collectTrackedRssSnapshot(now = Date.now()) {
 function lsStatusConfig() {
   return {
     maxInstances: MAX_LS_INSTANCES,
+    poolWaitMs: LS_POOL_WAIT_MS,
     idleTtlMs: LS_IDLE_TTL_MS,
     idleSweepMs: LS_IDLE_SWEEP_MS,
     estimatedRssBytesPerInstance: DEFAULT_LS_RSS_ESTIMATE_BYTES,
     systemMemoryBytes: totalmem(),
     detectedMemoryLimitBytes: detectMemoryLimitBytes(),
+    memoryGuard: getLsMemoryGuardStatus(),
   };
+}
+
+export function classifyLanguageServerStderr(line) {
+  const s = String(line || '').trim();
+  if (!s) return 'debug';
+  if (/(?:^|\s)E\d{4}\s|\b(?:FATAL|PANIC|CRITICAL|ERROR|ERR)\b/i.test(s)) return 'error';
+  if (/(?:^|\s)W\d{4}\s|\b(?:WARN|WARNING)\b/i.test(s)) return 'warn';
+  if (/\b(?:failed|failure|exception|denied|refused|timed?\s*out|not found|cannot|could not|invalid|unavailable|crash|segmentation fault)\b/i.test(s)) return 'warn';
+  return 'info';
 }
 
 // Pass only what the LS binary actually needs to its child env. Forwarding
@@ -479,29 +625,15 @@ export async function ensureLs(proxy = null) {
   const pending = _pending.get(key);
   if (pending) return pending;
 
-  // Evict LRU non-default LS when at the pool cap (#174).
-  if (key !== 'default' && _pool.size >= MAX_LS_INSTANCES) {
-    let lruKey = null;
-    let lruTime = Infinity;
-    for (const [k, e] of _pool) {
-      if (k === 'default') continue; // never evict default LS
-      if ((e.activeRequests || 0) > 0) continue;
-      const at = e.lastUsedAt || e._evictAt || e.startedAt || 0;
-      if (at < lruTime) { lruTime = at; lruKey = k; }
-    }
-    if (lruKey) {
-      const evicted = _pool.get(lruKey);
-      _intentionalShutdown.add(lruKey);
-      try { evicted?.process?.kill('SIGTERM'); } catch {}
-      invalidateEntryForShutdown(evicted);
-      _pool.delete(lruKey);
-      log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
-    } else {
-      throw lsPoolExhaustedError(`LS pool at cap (${MAX_LS_INSTANCES}) and no idle non-default instance can be evicted`);
-    }
-  }
-
   const promise = (async () => {
+    await waitForPoolCapacity(key);
+    await waitForMemoryHeadroom(key);
+    const nowExisting = _pool.get(key);
+    if (nowExisting?.ready) {
+      touchEntry(nowExisting);
+      return nowExisting;
+    }
+
     const isDefault = key === 'default';
     let port = isDefault ? DEFAULT_PORT : _nextPort++;
 
@@ -575,8 +707,12 @@ export async function ensureLs(proxy = null) {
       }
     });
     proc.stderr.on('data', (data) => {
-      const line = data.toString().trim();
-      if (line) log.warn(`[LS:${key}:err] ${line}`);
+      const lines = data.toString().trim().split(/\r?\n/);
+      for (const line of lines) {
+        if (!line) continue;
+        const level = classifyLanguageServerStderr(line);
+        log[level](`[LS:${key}:stderr] ${line}`);
+      }
     });
     proc.on('exit', (code, signal) => {
       log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);

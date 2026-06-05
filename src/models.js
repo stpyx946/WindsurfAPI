@@ -573,17 +573,31 @@ export function getTierModels(tier) {
   return MODEL_TIER_ACCESS[tier] || MODEL_TIER_ACCESS.unknown;
 }
 
+function isSpecialAgentCatalogEnabled() {
+  const backend = String(process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND || '').trim().toLowerCase();
+  return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
+}
+
 /** List all models in OpenAI /v1/models format. Hides deprecated models. */
-export function listModels() {
+export function listModels(opts = {}) {
   const ts = Math.floor(Date.now() / 1000);
+  const specialAgentEnabled = opts.specialAgentEnabled ?? isSpecialAgentCatalogEnabled();
+  const includeDisabledSpecialAgent = opts.includeDisabledSpecialAgent
+    ?? process.env.WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS === '1';
   return Object.entries(MODELS)
     .filter(([, info]) => !info.deprecated)
+    .filter(([, info]) => info.backend !== 'special_agent' || specialAgentEnabled || includeDisabledSpecialAgent)
     .map(([id, info]) => ({
       id: info.name,
       object: 'model',
       created: ts,
       owned_by: info.provider,
       _windsurf_id: id,
+      ...(info.backend === 'special_agent' ? {
+        _backend: 'special_agent',
+        _available: !!specialAgentEnabled,
+        ...(!specialAgentEnabled ? { _unavailable_reason: 'special-agent backend disabled' } : {}),
+      } : {}),
     }));
 }
 

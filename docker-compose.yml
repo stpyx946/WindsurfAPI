@@ -8,6 +8,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_VERSION: ${BUILD_VERSION:-}
+        BUILD_COMMIT: ${BUILD_COMMIT:-}
+        BUILD_COMMIT_MESSAGE: ${BUILD_COMMIT_MESSAGE:-}
+        BUILD_COMMIT_DATE: ${BUILD_COMMIT_DATE:-}
+        BUILD_BRANCH: ${BUILD_BRANCH:-}
     # Remove container_name to allow Compose to scale replicas
     restart: unless-stopped
     init: true

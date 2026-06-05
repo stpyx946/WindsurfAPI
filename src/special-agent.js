@@ -34,6 +34,10 @@ function isEnabled() {
   return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
 }
 
+export function isSpecialAgentEnabled() {
+  return isEnabled();
+}
+
 function configuredBackend() {
   if (!isEnabled()) return '';
   return 'devin-cli';
