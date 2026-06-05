@@ -637,23 +637,25 @@ function buildNativeCascadeToolConfig(allowlist = null) {
     ? allowlist
     : ['view_file', 'run_command', 'grep_search_v2', 'find', 'list_dir'];
   const enabled = nativeToolConfigSwitches(list);
+  const rawSubconfigs = parseNativeToolConfigRawOverrides();
   const parts = [];
-  // Empty messages = "use defaults" for each enabled tool. Setting the
-  // submessage at all is what tells the LS the tool is on.
+  // Empty messages = "use defaults" for each enabled tool. For protocol
+  // reverse-engineering only, WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW can
+  // replace a sub-message body with exact protobuf bytes.
   if (enabled.runCommand) {
-    parts.push(writeEmptyMessageField(8));
+    parts.push(writeNativeToolConfigField(8, 'run_command', rawSubconfigs));
   }
   if (enabled.viewFile) {
-    parts.push(writeEmptyMessageField(10));
+    parts.push(writeNativeToolConfigField(10, 'view_file', rawSubconfigs));
   }
   if (enabled.listDir) {
-    parts.push(writeEmptyMessageField(19));
+    parts.push(writeNativeToolConfigField(19, 'list_dir', rawSubconfigs));
   }
   if (enabled.grepV2) {
-    parts.push(writeEmptyMessageField(33));
+    parts.push(writeNativeToolConfigField(33, 'grep_v2', rawSubconfigs));
   }
   if (enabled.find) {
-    parts.push(writeEmptyMessageField(5));
+    parts.push(writeNativeToolConfigField(5, 'find', rawSubconfigs));
   }
   // tool_allowlist (field 32, repeated string)
   for (const name of list) {
@@ -662,10 +664,70 @@ function buildNativeCascadeToolConfig(allowlist = null) {
   return Buffer.concat(parts);
 }
 
-function writeEmptyMessageField(field) {
+function writeNativeToolConfigField(field, kind, rawSubconfigs) {
   // writeMessageField intentionally drops empty buffers for most call sites;
   // CascadeToolConfig needs the field presence itself, encoded as len=0.
-  return writeBytesField(field, Buffer.alloc(0));
+  return writeBytesField(field, rawSubconfigs.get(kind) || Buffer.alloc(0));
+}
+
+function parseNativeToolConfigRawOverrides() {
+  const raw = String(process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW || '').trim();
+  if (!raw) return new Map();
+  const out = new Map();
+  for (const entry of raw.split(';')) {
+    const item = entry.trim();
+    if (!item) continue;
+    const sep = item.indexOf(':');
+    if (sep <= 0) throw new Error(`Invalid WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW entry: ${item}`);
+    const kind = normalizeNativeToolConfigKind(item.slice(0, sep));
+    const payload = decodeNativeToolConfigRawPayload(item.slice(sep + 1));
+    out.set(kind, payload);
+  }
+  return out;
+}
+
+function normalizeNativeToolConfigKind(kind) {
+  const key = String(kind || '').trim();
+  const map = new Map([
+    ['run_command', 'run_command'],
+    ['shell_command', 'run_command'],
+    ['bash', 'run_command'],
+    ['view_file', 'view_file'],
+    ['read_file', 'view_file'],
+    ['read', 'view_file'],
+    ['list_dir', 'list_dir'],
+    ['list_directory', 'list_dir'],
+    ['grep_v2', 'grep_v2'],
+    ['grep_search_v2', 'grep_v2'],
+    ['grep_search', 'grep_v2'],
+    ['grep', 'grep_v2'],
+    ['find', 'find'],
+    ['glob', 'find'],
+  ]);
+  const normalized = map.get(key.toLowerCase());
+  if (!normalized) throw new Error(`Unknown native tool config kind: ${key}`);
+  return normalized;
+}
+
+function decodeNativeToolConfigRawPayload(rawValue) {
+  let value = String(rawValue || '').trim();
+  let mode = 'hex';
+  if (value.toLowerCase().startsWith('hex:')) {
+    value = value.slice(4).trim();
+  } else if (value.toLowerCase().startsWith('base64:')) {
+    mode = 'base64';
+    value = value.slice(7).trim();
+  }
+  const buf = mode === 'base64'
+    ? Buffer.from(value, 'base64')
+    : Buffer.from(value.replace(/\s+/g, ''), 'hex');
+  if (buf.length > 512) {
+    throw new Error('WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW entry exceeds 512 bytes');
+  }
+  if (!buf.length && value) {
+    throw new Error('WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW entry did not decode to bytes');
+  }
+  return buf;
 }
 
 function nativeToolConfigSwitches(list) {

@@ -39,6 +39,72 @@ async function withMockServer(handler, fn) {
 }
 
 describe('native bridge smoke CLI', () => {
+  it('refuses to run scenarios when LS budget preflight is busy', async () => {
+    let healthHits = 0;
+    let chatHits = 0;
+    await withMockServer((req, res) => {
+      if (req.url?.startsWith('/health')) {
+        healthHits++;
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({
+          status: 'ok',
+          version: 'test-version',
+          commit: 'test-commit',
+          accounts: { total: 1, active: 1, error: 0 },
+          nativeBridge: { requests: 0, emittedByTool: {}, byCascadeKind: {} },
+          lsPool: {
+            running: true,
+            maxInstances: 2,
+            totalRssBytes: 1234,
+            pool: {
+              size: 1,
+              effectiveOccupancy: 1,
+              pending: 0,
+              reservedPendingStarts: 0,
+              activeRequests: 1,
+              maintenanceRequests: 0,
+              nonDefaultInstances: 0,
+              canStartNewNonDefault: true,
+              blockReason: null,
+            },
+          },
+        }));
+        return;
+      }
+
+      if (req.url === '/v1/chat/completions' && req.method === 'POST') {
+        chatHits++;
+        req.resume();
+        res.writeHead(500);
+        res.end('chat should not be called');
+        return;
+      }
+
+      res.writeHead(404);
+      res.end();
+    }, async (baseUrl) => {
+      const result = await runNodeScript(join(root, 'scripts', 'native-bridge-smoke.mjs'), {
+        API_KEY: 'test-key',
+        BASE_URL: baseUrl,
+        MODEL: 'claude-test',
+        NATIVE_BRIDGE_SMOKE_TOOLS: 'Bash',
+        NATIVE_BRIDGE_SMOKE_STREAM: '1',
+        NATIVE_BRIDGE_SMOKE_NON_STREAM: '0',
+        NATIVE_BRIDGE_SMOKE_NO_EXIT_ON_FAILURE: '1',
+        NATIVE_BRIDGE_SMOKE_TIMEOUT_MS: '5000',
+      });
+
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(chatHits, 0);
+      assert.equal(healthHits, 2);
+      const json = JSON.parse(result.stdout);
+      assert.equal(json.ok, false);
+      assert.equal(json.enforceLsBudget, true);
+      assert.match(json.results.preflight.error, /LS budget unavailable/);
+      assert.match(json.results.preflight.diagnostic.reason, /activeRequests=1/);
+    });
+  });
+
   it('prints health snapshots and response diagnostics when a stream has no tool_calls', async () => {
     let healthHits = 0;
     let chatHits = 0;

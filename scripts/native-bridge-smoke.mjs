@@ -13,6 +13,7 @@ const includeEnv = process.env.NATIVE_BRIDGE_SMOKE_ENV !== '0';
 const includeHealth = process.env.NATIVE_BRIDGE_SMOKE_HEALTH !== '0';
 const requireNativeBridgeTool = process.env.NATIVE_BRIDGE_SMOKE_REQUIRE_NATIVE !== '0';
 const validateToolArgs = process.env.NATIVE_BRIDGE_SMOKE_VALIDATE_ARGS !== '0';
+const enforceLsBudget = process.env.NATIVE_BRIDGE_SMOKE_LS_BUDGET !== '0';
 async function sha256Hex(text) {
   const bytes = new TextEncoder().encode(String(text || ''));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -475,6 +476,31 @@ async function fetchHealthSnapshot(label) {
   }
 }
 
+function lsBudgetBlockReason(health) {
+  if (!enforceLsBudget || !includeHealth) return null;
+  if (!health) return 'health_unavailable';
+  if (health.ok === false) return `health_${health.status || 'failed'}`;
+  const pool = health.lsPool?.pool;
+  if (!pool || typeof pool !== 'object') return null;
+  const busy = [];
+  for (const key of ['activeRequests', 'maintenanceRequests', 'pending', 'reservedPendingStarts']) {
+    const value = Number(pool[key] || 0);
+    if (value > 0) busy.push(`${key}=${value}`);
+  }
+  if (busy.length) return `ls_busy:${busy.join(',')}`;
+  if (pool.canStartNewNonDefault === false) return `ls_capacity:${pool.blockReason || 'cannot_start_non_default'}`;
+  return null;
+}
+
+function assertLsBudgetAvailable(health) {
+  const reason = lsBudgetBlockReason(health);
+  if (!reason) return;
+  throw smokeError(`preflight: LS budget unavailable (${reason}); refusing to run native bridge smoke against production capacity`, {
+    reason,
+    lsPool: health?.lsPool || null,
+  });
+}
+
 const selected = expandScenarios(requestedScenarios);
 if (!selected.length) {
   console.error(`No valid scenarios selected. Use one or more of: ${Object.keys(SCENARIOS).join(',')},all`);
@@ -484,23 +510,31 @@ if (!selected.length) {
 const results = {};
 const failures = [];
 const healthBefore = await fetchHealthSnapshot('before');
-for (const name of selected) {
-  const scenario = SCENARIOS[name];
-  results[name] = {};
-  if (nonStreamEnabled) {
-    try {
-      results[name].nonStream = await runNonStream(name, scenario);
-    } catch (error) {
-      results[name].nonStream = resultFromError(error);
-      failures.push(`${name} non-stream: ${String(error?.message || error)}`);
+try {
+  assertLsBudgetAvailable(healthBefore);
+} catch (error) {
+  failures.push(String(error?.message || error));
+  results.preflight = resultFromError(error);
+}
+if (!failures.length) {
+  for (const name of selected) {
+    const scenario = SCENARIOS[name];
+    results[name] = {};
+    if (nonStreamEnabled) {
+      try {
+        results[name].nonStream = await runNonStream(name, scenario);
+      } catch (error) {
+        results[name].nonStream = resultFromError(error);
+        failures.push(`${name} non-stream: ${String(error?.message || error)}`);
+      }
     }
-  }
-  if (streamEnabled) {
-    try {
-      results[name].stream = await runStream(name, scenario);
-    } catch (error) {
-      results[name].stream = resultFromError(error);
-      failures.push(`${name} stream: ${String(error?.message || error)}`);
+    if (streamEnabled) {
+      try {
+        results[name].stream = await runStream(name, scenario);
+      } catch (error) {
+        results[name].stream = resultFromError(error);
+        failures.push(`${name} stream: ${String(error?.message || error)}`);
+      }
     }
   }
 }
@@ -516,6 +550,7 @@ console.log(JSON.stringify({
   smokeFile,
   includeEnv,
   includeHealth,
+  enforceLsBudget,
   requireNativeBridgeTool,
   validateToolArgs,
   streamEarlyTool,

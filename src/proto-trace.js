@@ -68,6 +68,28 @@ function countRepeatedMessageFields(fields, num) {
   return getAllFields(fields, num).filter(f => f.wireType === 2).length;
 }
 
+function summarizeMessageChildren(buf, maxFields = 12) {
+  let children = [];
+  try {
+    children = parseFields(buf).slice(0, maxFields).map(child => ({
+      field: child.field,
+      wireType: child.wireType,
+      type: Buffer.isBuffer(child.value)
+        ? (mostlyText(child.value) ? 'string' : 'message_or_bytes')
+        : 'varint',
+      bytes: Buffer.isBuffer(child.value) ? child.value.length : undefined,
+      value: Buffer.isBuffer(child.value) ? undefined : Number(child.value),
+    }));
+  } catch {
+    children = [];
+  }
+  return {
+    bytes: buf.length,
+    fieldNumbers: children.map(child => child.field),
+    fields: children,
+  };
+}
+
 const NATIVE_TOOL_CONFIG_FIELDS = new Map([
   [5, 'find'],
   [8, 'run_command'],
@@ -79,20 +101,17 @@ const NATIVE_TOOL_CONFIG_FIELDS = new Map([
 function summarizeNativeToolSubconfig(fields, num) {
   const f = getField(fields, num, 2);
   if (!f) return null;
-  let children = [];
-  try {
-    children = parseFields(f.value).map(child => ({
-      field: child.field,
-      wireType: child.wireType,
-      bytes: Buffer.isBuffer(child.value) ? child.value.length : undefined,
-    }));
-  } catch {}
+  const summary = summarizeMessageChildren(f.value);
   return {
     field: num,
     kind: NATIVE_TOOL_CONFIG_FIELDS.get(num) || `field_${num}`,
-    bytes: f.value.length,
-    fieldNumbers: children.map(child => child.field),
-    fields: children,
+    bytes: summary.bytes,
+    fieldNumbers: summary.fieldNumbers,
+    fields: summary.fields.map(child => ({
+      field: child.field,
+      wireType: child.wireType,
+      bytes: child.bytes,
+    })),
   };
 }
 
@@ -229,12 +248,20 @@ function summarizeTrajectoryStep(stepBuf, index) {
       body: summarizeNativeStepBody(kind, oneof.value),
     });
   }
+  const interestingFields = fields
+    .filter(f => f.wireType === 2 && ![5].includes(f.field))
+    .slice(0, positiveIntEnv('WINDSURFAPI_PROTO_TRACE_SEMANTIC_FIELD_LIMIT', 12))
+    .map(f => ({
+      field: f.field,
+      ...summarizeMessageChildren(f.value, 8),
+    }));
   return {
     index,
     type: numberField(fields, 1),
     status: numberField(fields, 4),
     fieldNumbers: fields.map(f => f.field),
     nativeOneofs: oneofFields,
+    messageFields: interestingFields,
   };
 }
 

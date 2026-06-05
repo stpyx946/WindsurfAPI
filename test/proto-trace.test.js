@@ -171,4 +171,34 @@ describe('proto trace', () => {
     assert.equal(rec.semantic.steps[0].nativeOneofs[0].kind, 'grep_search_v2');
     assert.equal(rec.semantic.steps[0].nativeOneofs[0].body.rawOutputBytes, 'README.md\n'.length);
   });
+
+  it('summarizes non-oneof step message fields for protocol diffing', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const viewWrapper = Buffer.concat([
+      writeStringField(2, 'file:///workspace/README.md'),
+      writeMessageField(3, writeStringField(1, 'nested request')),
+      writeStringField(4, 'observed content'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, viewWrapper),
+    ]);
+    const response = writeMessageField(1, step);
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: response,
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    assert.equal(rec.semantic.steps[0].type, 14);
+    assert.deepEqual(rec.semantic.steps[0].nativeOneofs, []);
+    assert.equal(rec.semantic.steps[0].messageFields[0].field, 19);
+    assert.deepEqual(rec.semantic.steps[0].messageFields[0].fieldNumbers, [2, 3, 4]);
+  });
 });

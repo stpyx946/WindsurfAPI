@@ -547,6 +547,25 @@ describe('buildSendCascadeMessageRequest — additional_steps on field 9', () =>
     assert.equal(getField(tc, 5, 2), null, 'list_dir experiment should not also enable FindToolConfig');
   });
 
+  it('native tool config raw overrides inject exact sub-config bytes for protocol experiments', () => {
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW = 'read_file:0a03616263;grep_v2:base64:EgJwYQ==';
+    try {
+      const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
+        nativeMode: true,
+        nativeAllowlist: ['read_file', 'grep_v2'],
+      });
+      const top = parseFields(proto);
+      const cfg = parseFields(getField(top, 5, 2).value);
+      const planner = parseFields(getField(cfg, 1, 2).value);
+      const tc = parseFields(getField(planner, 13, 2).value);
+      assert.equal(getField(tc, 10, 2).value.toString('hex'), '0a03616263');
+      assert.equal(getField(tc, 33, 2).value.toString('hex'), '12027061');
+      assert.deepEqual(getAllFields(tc, 32).map(f => f.value.toString('utf8')), ['read_file', 'grep_v2']);
+    } finally {
+      delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW;
+    }
+  });
+
   it('nativeMode=true can carry environment facts without tool emulation schema', () => {
     const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
       nativeMode: true,
