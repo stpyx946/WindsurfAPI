@@ -79,7 +79,7 @@ const DEFAULT_NATIVE_BRIDGE_TOOLS = new Set([
   'Read', 'read_file', 'view_file',
   'Bash', 'shell_command', 'run_command',
   'Grep', 'grep_v2', 'grep_search', 'grep_search_v2',
-  'Glob', 'find',
+  'Glob', 'find', 'list_dir', 'list_directory',
 ]);
 
 // ─── argument translators ─────────────────────────────────────────
@@ -252,9 +252,13 @@ function forwardGlobArgs(args) {
   };
 }
 function reverseGlobArgs(cascade) {
+  const path = cascade.search_directory || stripFileUri(cascade.directory_path_uri || '');
   return {
-    pattern: cascade.pattern || '',
-    ...(cascade.search_directory ? { path: cascade.search_directory } : {}),
+    // Cascade may satisfy a Glob request via list_directory when the
+    // experiment allowlist maps find -> list_dir. That step has no glob
+    // pattern field, so keep the caller's schema valid with a broad match.
+    pattern: cascade.pattern || (cascade.directory_path_uri ? '*' : ''),
+    ...(path ? { path } : {}),
   };
 }
 
@@ -592,10 +596,27 @@ export function buildReverseLookup(callerTools) {
     const name = t.function.name;
     const entry = TOOL_MAP[name];
     if (!entry) continue;
-    if (!out.has(entry.kind)) out.set(entry.kind, []);
-    out.get(entry.kind).push(name);
+    addReverseLookup(out, entry.kind, name);
+    const allowlistKind = cascadeKindForAllowlistName(nativeAllowlistNameForTool(name));
+    if (allowlistKind && allowlistKind !== entry.kind) {
+      addReverseLookup(out, allowlistKind, name);
+    }
   }
   return out;
+}
+
+function addReverseLookup(out, kind, name) {
+  if (!kind || !name) return;
+  if (!out.has(kind)) out.set(kind, []);
+  const names = out.get(kind);
+  if (!names.includes(name)) names.push(name);
+}
+
+function cascadeKindForAllowlistName(name) {
+  const n = String(name || '').trim();
+  if (!n) return '';
+  if (TOOL_MAP[n]?.kind) return TOOL_MAP[n].kind;
+  return CASCADE_STEP[n] ? n : '';
 }
 
 function nativeAllowlistNameOverrides() {

@@ -5,12 +5,17 @@ import {
   getApiKey,
   removeAccount,
 } from '../src/auth.js';
+import { parseFields, writeMessageField, writeStringField, writeVarintField } from '../src/proto.js';
 import {
   applyToolPreambleBudget,
   buildToolRoutingPlan,
   handleChatCompletions,
 } from '../src/handlers/chat.js';
-import { nativeAllowlistNameForTool } from '../src/cascade-native-bridge.js';
+import {
+  buildReverseLookup,
+  decodeCascadeStepToToolCall,
+  nativeAllowlistNameForTool,
+} from '../src/cascade-native-bridge.js';
 
 const createdAccountIds = [];
 
@@ -220,6 +225,30 @@ describe('native mapped-tool routing', () => {
     assert.equal(nativeAllowlistNameForTool('Grep'), 'grep_v2');
     assert.equal(nativeAllowlistNameForTool('Glob'), 'list_dir');
     assert.equal(nativeAllowlistNameForTool('Bash'), 'run_command');
+  });
+
+  it('maps list_directory native steps back to caller Glob when find is allowlist-overridden', () => {
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_ALLOWLIST_NAMES = 'find:list_dir';
+    const lookup = buildReverseLookup([fnTool('Glob')]);
+    assert.deepEqual(lookup.get('find'), ['Glob']);
+    assert.deepEqual(lookup.get('list_directory'), ['Glob']);
+
+    const stepBuf = Buffer.concat([
+      writeVarintField(1, 15),
+      writeVarintField(4, 7),
+      writeMessageField(15, writeStringField(1, 'file:///home/user/projects/workspace-test')),
+    ]);
+    const parsed = decodeCascadeStepToToolCall(
+      parseFields(stepBuf),
+      'list_directory',
+      lookup,
+    );
+    assert.equal(parsed.name, 'Glob');
+    assert.equal(parsed.cascade_kind, 'list_directory');
+    assert.deepEqual(parsed.arguments, {
+      pattern: '*',
+      path: '/home/user/projects/workspace-test',
+    });
   });
 
   it('all_mapped mode refuses mixed toolsets so unmapped tools still get prompt emulation', () => {
