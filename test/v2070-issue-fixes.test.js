@@ -13,7 +13,11 @@ import {
   buildAdditionalStep, buildAdditionalStepsFromHistory,
 } from '../src/cascade-native-bridge.js';
 import { parseFields, getField, getAllFields } from '../src/proto.js';
-import { parseTrajectorySteps } from '../src/windsurf.js';
+import {
+  buildHandleReadUrlContentInteractionRequest,
+  parseTrajectoryInfo,
+  parseTrajectorySteps,
+} from '../src/windsurf.js';
 import { writeMessageField, writeVarintField, writeStringField } from '../src/proto.js';
 import { buildToolPreambleForProto } from '../src/handlers/tool-emulation.js';
 
@@ -285,5 +289,66 @@ describe('parseTrajectorySteps recognises propose_code + search_web (v2.0.70)', 
     const resp = wrapResp(wrapStep(40, 40, body));
     const calls = parseTrajectorySteps(resp)[0].toolCalls.filter(tc => tc.cascade_native);
     assert.equal(calls[0].result, 'markdown chunk text');
+  });
+
+  it('read_url_content waiting step exposes requested interaction metadata', () => {
+    const spec = Buffer.concat([
+      writeStringField(1, 'https://example.com/'),
+      writeStringField(2, 'https://example.com'),
+    ]);
+    const body = Buffer.concat([
+      writeStringField(1, 'https://example.com/'),
+      writeVarintField(7, 8),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 40),
+      writeVarintField(4, 9),
+      writeMessageField(56, writeMessageField(14, spec)),
+      writeMessageField(40, body),
+    ]);
+    const steps = parseTrajectorySteps(wrapResp(step));
+    assert.deepEqual(steps[0].requestedInteraction, {
+      kind: 'read_url_content',
+      url: 'https://example.com/',
+      origin: 'https://example.com',
+    });
+    assert.deepEqual(steps[0].toolCalls, []);
+  });
+});
+
+describe('WebFetch permission interaction protobuf', () => {
+  it('builds official HandleCascadeUserInteraction request fields', () => {
+    const req = buildHandleReadUrlContentInteractionRequest('cascade-1', {
+      trajectoryId: 'trajectory-1',
+      stepIndex: 7,
+      action: 1,
+      url: 'https://example.com/',
+      origin: 'https://example.com',
+    });
+    const top = parseFields(req);
+    assert.equal(getField(top, 1, 2).value.toString('utf8'), 'cascade-1');
+    const interaction = parseFields(getField(top, 2, 2).value);
+    assert.equal(getField(interaction, 1, 2).value.toString('utf8'), 'trajectory-1');
+    assert.equal(getField(interaction, 2, 0).value, 7);
+    const readUrl = parseFields(getField(interaction, 15, 2).value);
+    assert.equal(getField(readUrl, 1, 0).value, 1);
+    assert.equal(getField(readUrl, 2, 2).value.toString('utf8'), 'https://example.com/');
+    assert.equal(getField(readUrl, 3, 2).value.toString('utf8'), 'https://example.com');
+  });
+
+  it('parses GetCascadeTrajectoryResponse status and trajectory id', () => {
+    const trajectory = Buffer.concat([
+      writeStringField(1, 'trajectory-abc'),
+      writeStringField(6, 'cascade-abc'),
+    ]);
+    const resp = Buffer.concat([
+      writeMessageField(1, trajectory),
+      writeVarintField(2, 2),
+    ]);
+    assert.deepEqual(parseTrajectoryInfo(resp), {
+      status: 2,
+      trajectoryId: 'trajectory-abc',
+      cascadeId: 'cascade-abc',
+    });
   });
 });

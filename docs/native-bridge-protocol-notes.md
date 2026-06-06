@@ -249,6 +249,24 @@ receives the `read_url_content` config but still fails before emitting the web
 oneof. The missing piece remains an LS-side web executor precondition or a
 descriptor-backed direct WebFetch/read-url API.
 
+The v2.0.134 VPS pass tested `read_url_content` alone with an explicit
+allowlist subconfig for `https://example.com/`:
+
+- `SendUserCascadeMessage` enabled the bridge decision for mapped WebFetch and
+  sent `read_url_content` in the native allowlist.
+- `GetCascadeTrajectorySteps` repeatedly returned a pending
+  `requested_interaction.read_url_content` for the target URL/origin.
+- The matching native step body had fields `[1, 7]`: URL plus
+  `autoRunDecision=8`; there was no `web_document` yet and no executor error.
+- Both streaming and non-streaming canaries timed out because the proxy did not
+  answer the official permission prompt.
+
+Updated direction: do not search for a guessed direct WebFetch endpoint first.
+The observed blocker is now the official LS permission interaction. The next
+valid canary must send `HandleCascadeUserInteraction` and then verify whether
+the same trajectory advances to `read_url_content.web_document`, an error step,
+or another requested interaction.
+
 ## Direct Web Search API
 
 `GetWebSearchResults` is confirmed independently of the LS-native tool path:
@@ -319,9 +337,25 @@ User settings that influence auto-approval:
   (`1` disabled, `2` allowlist, `3` turbo)
 
 `WINDSURFAPI_PROTO_TRACE` now summarizes `requested_interaction=56` and its
-read-url body with byte lengths and hashes only. The next valid WebFetch canary
-decision point is: did the LS emit a read-url requested interaction, a completed
-`field=40` step with `web_document`, or an error step before either?
+read-url body with byte lengths and hashes only. It also summarizes
+`HandleCascadeUserInteraction` requests, including cascade/trajectory ID hashes,
+step index, action enum, and URL/origin hashes. The next valid WebFetch canary
+decision point is: after approval, did the LS emit a completed `field=40` step
+with `web_document`, an error step, or another requested interaction?
+
+v2.0.135 adds a lab-only auto-approval hook for this canary:
+
+```text
+WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE=1
+WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE_ORIGINS=https://example.com
+```
+
+The hook is still behind normal native bridge gating and only runs when
+`read_url_content` is in the native allowlist. It is not a production default.
+Pending `read_url_content` steps that only contain the permission request are
+not surfaced as completed native tool calls; the proxy waits for an actual
+`web_document` or legacy result before returning WebFetch content to the
+client. The origin list must explicitly match the requested origin or URL.
 
 ## Experiment Hooks
 

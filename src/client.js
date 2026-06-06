@@ -23,7 +23,8 @@ import {
   buildUpdatePanelStateWithUserStatusRequest,
   buildStartCascadeRequest, parseStartCascadeResponse,
   buildSendCascadeMessageRequest,
-  buildGetTrajectoryRequest, parseTrajectoryStatus,
+  buildGetTrajectoryRequest,
+  parseTrajectoryInfo, buildHandleReadUrlContentInteractionRequest,
   buildGetTrajectoryStepsRequest, parseTrajectorySteps,
   buildGetGeneratorMetadataRequest, parseGeneratorMetadata,
   buildGetUserStatusRequest, extractUserStatusBytes, parseGetUserStatusResponse,
@@ -63,6 +64,21 @@ function resetCascadeTransportState(port) {
   if (!lsEntry) return;
   lsEntry.workspaceInit = null;
   lsEntry.sessionId = null;
+}
+
+function csvSetEnv(name) {
+  return new Set(String(process.env[name] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean));
+}
+
+function isReadUrlAutoApproveAllowed(url, origin) {
+  if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE !== '1') return false;
+  const allow = csvSetEnv('WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE_ORIGINS');
+  if (!allow.size) return false;
+  const candidates = [origin, url].map(v => String(v || '').trim()).filter(Boolean);
+  return candidates.some(v => allow.has(v) || allow.has(v.replace(/\/+$/, '')));
 }
 
 function isImageLikeBlock(part) {
@@ -836,6 +852,8 @@ export class WindsurfClient {
       const usageByStep = new Map();
       const seenToolCallIds = new Set();
       const toolCalls = [];
+      const approvedReadUrlInteractions = new Set();
+      let cascadeTrajectoryId = '';
       let totalYielded = 0;
       let totalThinking = 0;
       let idleCount = 0;
@@ -870,6 +888,48 @@ export class WindsurfClient {
         const hasNativeProposalInBatch = nativeMode && !nativeBridgePollAfterTool
           && steps.some(step => Array.isArray(step?.toolCalls)
             && step.toolCalls.some(tc => tc?.cascade_native));
+
+        if (nativeMode && (nativeAllowlist || []).includes('read_url_content')) {
+          for (let i = 0; i < steps.length; i++) {
+            const pending = steps[i]?.requestedInteraction;
+            if (pending?.kind !== 'read_url_content') continue;
+            const url = pending.url || '';
+            const origin = pending.origin || '';
+            if (!isReadUrlAutoApproveAllowed(url, origin)) continue;
+            if (!cascadeTrajectoryId) {
+              const statusResp = await grpcUnary(
+                this.port, this.csrfToken,
+                `${LS_SERVICE}/GetCascadeTrajectory`,
+                grpcFrame(buildGetTrajectoryRequest(cascadeId))
+              );
+              const info = parseTrajectoryInfo(statusResp);
+              cascadeTrajectoryId = info.trajectoryId || '';
+              lastStatus = info.status;
+            }
+            if (!cascadeTrajectoryId) {
+              log.warn('WebFetch auto-approve skipped: missing trajectory_id');
+              continue;
+            }
+            const approvalKey = `${cascadeTrajectoryId}:${stepOffset + i}:${url}:${origin}`;
+            if (approvedReadUrlInteractions.has(approvalKey)) continue;
+            approvedReadUrlInteractions.add(approvalKey);
+            const req = buildHandleReadUrlContentInteractionRequest(cascadeId, {
+              trajectoryId: cascadeTrajectoryId,
+              stepIndex: stepOffset + i,
+              action: 1, // READ_URL_CONTENT_ACTION_ALLOW_ONCE
+              url,
+              origin,
+            });
+            await grpcUnary(
+              this.port, this.csrfToken,
+              `${LS_SERVICE}/HandleCascadeUserInteraction`,
+              grpcFrame(req),
+              10000
+            );
+            lastGrowthAt = Date.now();
+            log.warn(`WebFetch auto-approved read_url_content for allowed origin ${origin || '(unknown)'}`);
+          }
+        }
 
         // CORTEX_STEP_TYPE_ERROR_MESSAGE = 17. An error step means the cascade
         // refused the request (permission denied, model unavailable, etc.) —
@@ -1070,7 +1130,9 @@ export class WindsurfClient {
         const statusResp = await grpcUnary(
           this.port, this.csrfToken, `${LS_SERVICE}/GetCascadeTrajectory`, grpcFrame(statusProto)
         );
-        const status = parseTrajectoryStatus(statusResp);
+        const statusInfo = parseTrajectoryInfo(statusResp);
+        const status = statusInfo.status;
+        if (statusInfo.trajectoryId) cascadeTrajectoryId = statusInfo.trajectoryId;
         lastStatus = status;
 
         if (status !== 1) sawActive = true;

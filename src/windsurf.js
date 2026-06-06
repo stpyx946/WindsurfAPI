@@ -793,6 +793,87 @@ export function buildGetTrajectoryRequest(cascadeId) {
 }
 
 /**
+ * Parse GetCascadeTrajectoryResponse.
+ *
+ * Response {
+ *   CortexTrajectory trajectory = 1; // trajectory_id=1, cascade_id=6
+ *   CascadeRunStatus status = 2;
+ * }
+ */
+export function parseTrajectoryInfo(buf) {
+  const fields = parseFields(buf);
+  const statusField = getField(fields, 2, 0);
+  const trajectoryField = getField(fields, 1, 2);
+  let trajectoryId = '';
+  let cascadeId = '';
+  if (trajectoryField) {
+    try {
+      const trajectory = parseFields(trajectoryField.value);
+      trajectoryId = getField(trajectory, 1, 2)?.value?.toString('utf8') || '';
+      cascadeId = getField(trajectory, 6, 2)?.value?.toString('utf8') || '';
+    } catch {}
+  }
+  return {
+    status: statusField ? statusField.value : 0,
+    trajectoryId,
+    cascadeId,
+  };
+}
+
+function parseReadUrlRequestedInteraction(stepFields) {
+  const requested = getField(stepFields, 56, 2);
+  if (!requested) return null;
+  try {
+    const requestedFields = parseFields(requested.value);
+    const readUrl = getField(requestedFields, 14, 2);
+    if (!readUrl) return null;
+    const spec = parseFields(readUrl.value);
+    const url = getField(spec, 1, 2)?.value?.toString('utf8') || '';
+    const origin = getField(spec, 2, 2)?.value?.toString('utf8') || '';
+    if (!url) return null;
+    return { url, origin };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Build HandleCascadeUserInteractionRequest for ReadUrlContent approval.
+ *
+ * HandleCascadeUserInteractionRequest {
+ *   string cascade_id = 1;
+ *   CascadeUserInteraction interaction = 2;
+ * }
+ * CascadeUserInteraction {
+ *   string trajectory_id = 1;
+ *   uint32 step_index = 2;
+ *   CascadeReadUrlContentInteraction read_url_content = 15;
+ * }
+ */
+export function buildHandleReadUrlContentInteractionRequest(cascadeId, {
+  trajectoryId = '',
+  stepIndex = 0,
+  action = 1,
+  url = '',
+  origin = '',
+} = {}) {
+  const readUrlInteraction = Buffer.concat([
+    writeVarintField(1, action),
+    writeStringField(2, url),
+    writeStringField(3, origin),
+  ]);
+  const interaction = Buffer.concat([
+    writeStringField(1, trajectoryId),
+    writeVarintField(2, stepIndex),
+    writeMessageField(15, readUrlInteraction),
+  ]);
+  return Buffer.concat([
+    writeStringField(1, cascadeId),
+    writeMessageField(2, interaction),
+  ]);
+}
+
+/**
  * Build GetCascadeTrajectoryGeneratorMetadataRequest.
  *
  * Field 1: cascade_id
@@ -892,9 +973,7 @@ export function parseStartCascadeResponse(buf) {
 
 /** Parse GetCascadeTrajectoryResponse → status (field 2). */
 export function parseTrajectoryStatus(buf) {
-  const fields = parseFields(buf);
-  const f2 = getField(fields, 2, 0);
-  return f2 ? f2.value : 0;
+  return parseTrajectoryInfo(buf).status;
 }
 
 /**
@@ -963,6 +1042,13 @@ export function parseTrajectorySteps(buf) {
       toolCalls: [], // [{id, name, argumentsJson, result?}]
       usage: null,  // {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens}
     };
+    const readUrlRequestedInteraction = parseReadUrlRequestedInteraction(sf);
+    if (readUrlRequestedInteraction) {
+      entry.requestedInteraction = {
+        kind: 'read_url_content',
+        ...readUrlRequestedInteraction,
+      };
+    }
 
     // CortexTrajectoryStep.metadata (field 5) → CortexStepMetadata.
     // CortexStepMetadata.model_usage (field 9) → ModelUsageStats.
@@ -1176,6 +1262,7 @@ export function parseTrajectorySteps(buf) {
           const webDocument = getField(body, 2, 2);
           result = webDocument ? decodeKnowledgeBaseItemText(webDocument.value) : '';
           if (!result) result = getField(body, 5, 2)?.value?.toString('utf8') || '';
+          if (!result && readUrlRequestedInteraction) continue;
         } else if (kind === 'search_web') {
           const args = {
             query: getField(body, 1, 2)?.value?.toString('utf8') || '',

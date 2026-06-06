@@ -196,6 +196,12 @@ const CASCADE_WEB_REQUESTS_AUTO_EXECUTION = new Map([
   [3, 'TURBO'],
 ]);
 
+const READ_URL_CONTENT_ACTION = new Map([
+  [1, 'ALLOW_ONCE'],
+  [2, 'REJECT'],
+  [3, 'ALWAYS_ALLOW_ORIGIN'],
+]);
+
 function enumSummary(value, names) {
   return value == null ? null : {
     value,
@@ -467,6 +473,42 @@ function summarizeRequestedInteraction(buf) {
   };
 }
 
+function summarizeHandleCascadeUserInteraction(payload) {
+  const fields = parseFields(payload);
+  const cascadeId = stringField(fields, 1);
+  const interactionField = getField(fields, 2, 2);
+  const out = {
+    cascadeIdBytes: cascadeId.length,
+    cascadeIdHash: cascadeId ? shortHash(Buffer.from(cascadeId, 'utf8')) : null,
+    fieldNumbers: fields.map(f => f.field),
+  };
+  if (!interactionField) return out;
+
+  const interaction = parseFields(interactionField.value);
+  const trajectoryId = stringField(interaction, 1);
+  const readUrlField = getField(interaction, 15, 2);
+  out.interaction = {
+    trajectoryIdBytes: trajectoryId.length,
+    trajectoryIdHash: trajectoryId ? shortHash(Buffer.from(trajectoryId, 'utf8')) : null,
+    stepIndex: numberField(interaction, 2),
+    fieldNumbers: interaction.map(f => f.field),
+  };
+  if (!readUrlField) return out;
+
+  const readUrl = parseFields(readUrlField.value);
+  const url = stringField(readUrl, 2);
+  const origin = stringField(readUrl, 3);
+  out.interaction.readUrlContent = {
+    action: enumSummary(numberField(readUrl, 1), READ_URL_CONTENT_ACTION),
+    urlBytes: url.length,
+    urlHash: url ? shortHash(Buffer.from(url, 'utf8')) : null,
+    originBytes: origin.length,
+    originHash: origin ? shortHash(Buffer.from(origin, 'utf8')) : null,
+    fieldNumbers: readUrl.map(f => f.field),
+  };
+  return out;
+}
+
 function summarizeReadWrapperField19(wrapperBuf) {
   const fields = parseFields(wrapperBuf);
   return {
@@ -675,6 +717,9 @@ function semanticSummary(method, direction, payload) {
     }
     if (method === 'GetCascadeTrajectorySteps' && direction === 'response') {
       return summarizeGetCascadeTrajectorySteps(payload);
+    }
+    if (method === 'HandleCascadeUserInteraction' && direction === 'request') {
+      return summarizeHandleCascadeUserInteraction(payload);
     }
   } catch (err) {
     return { error: err.message };

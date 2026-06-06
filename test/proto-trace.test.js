@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { grpcFrame } from '../src/grpc.js';
 import { writeBoolField, writeBytesField, writeMessageField, writeStringField, writeVarintField } from '../src/proto.js';
-import { buildSendCascadeMessageRequest } from '../src/windsurf.js';
+import { buildHandleReadUrlContentInteractionRequest, buildSendCascadeMessageRequest } from '../src/windsurf.js';
 import {
   _resetProtoTraceForTests,
   summarizeProtoForTrace,
@@ -384,6 +384,43 @@ describe('proto trace', () => {
     assert.equal(summary.interactions[0].body.originBytes, 'https://example.com'.length);
     assert.ok(summary.interactions[0].body.urlHash);
     assert.ok(summary.interactions[0].body.originHash);
+    assert.doesNotMatch(line, /private\/page/);
+    assert.doesNotMatch(line, /https:\/\/example\.com/);
+  });
+
+  it('summarizes read-url approval interactions without raw URLs', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const proto = buildHandleReadUrlContentInteractionRequest('cascade-secret-id', {
+      trajectoryId: 'trajectory-secret-id',
+      stepIndex: 12,
+      action: 1,
+      url: 'https://example.com/private/page',
+      origin: 'https://example.com',
+    });
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction',
+      direction: 'request',
+      body: grpcFrame(proto),
+      transport: 'grpc',
+      framed: true,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-HandleCascadeUserInteraction.jsonl`);
+    const line = readFileSync(file, 'utf8').trim();
+    const rec = JSON.parse(line);
+    assert.equal(rec.semantic.cascadeIdBytes, 'cascade-secret-id'.length);
+    assert.ok(rec.semantic.cascadeIdHash);
+    assert.equal(rec.semantic.interaction.trajectoryIdBytes, 'trajectory-secret-id'.length);
+    assert.equal(rec.semantic.interaction.stepIndex, 12);
+    assert.deepEqual(rec.semantic.interaction.fieldNumbers, [1, 2, 15]);
+    assert.equal(rec.semantic.interaction.readUrlContent.action.name, 'ALLOW_ONCE');
+    assert.equal(rec.semantic.interaction.readUrlContent.urlBytes, 'https://example.com/private/page'.length);
+    assert.equal(rec.semantic.interaction.readUrlContent.originBytes, 'https://example.com'.length);
+    assert.ok(rec.semantic.interaction.readUrlContent.urlHash);
+    assert.ok(rec.semantic.interaction.readUrlContent.originHash);
+    assert.doesNotMatch(line, /cascade-secret-id/);
+    assert.doesNotMatch(line, /trajectory-secret-id/);
     assert.doesNotMatch(line, /private\/page/);
     assert.doesNotMatch(line, /https:\/\/example\.com/);
   });
