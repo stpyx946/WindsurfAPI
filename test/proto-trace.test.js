@@ -335,6 +335,48 @@ describe('proto trace', () => {
     });
   });
 
+  it('classifies read-url web_document as completed even with requested interaction echo', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const doc = Buffer.concat([
+      writeStringField(2, 'document text'),
+      writeStringField(3, 'https://example.com/'),
+      writeStringField(7, 'document summary'),
+    ]);
+    const fetchBody = Buffer.concat([
+      writeStringField(1, 'https://example.com/'),
+      writeMessageField(2, doc),
+      writeStringField(3, 'https://example.com/'),
+      writeVarintField(4, 123),
+      writeVarintField(7, 8),
+    ]);
+    const spec = Buffer.concat([
+      writeStringField(1, 'https://example.com/'),
+      writeStringField(2, 'https://example.com'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 31),
+      writeVarintField(4, 3),
+      writeMessageField(56, writeMessageField(14, spec)),
+      writeMessageField(40, fetchBody),
+    ]);
+
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: writeMessageField(1, step),
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    assert.equal(rec.semantic.steps[0].type, 31);
+    assert.equal(rec.semantic.steps[0].webFetchTrace.state, 'completed_web_document');
+    assert.equal(rec.semantic.steps[0].webFetchTrace.hasRequestedInteraction, true);
+    assert.equal(rec.semantic.steps[0].webFetchTrace.hasWebDocument, true);
+  });
+
   it('summarizes non-oneof step message fields for protocol diffing', () => {
     process.env.WINDSURFAPI_PROTO_TRACE = '1';
     const viewWrapper = Buffer.concat([

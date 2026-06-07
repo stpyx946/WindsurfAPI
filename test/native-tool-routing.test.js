@@ -625,6 +625,97 @@ describe('native mapped-tool routing', () => {
     assert.equal(res.body.includes('ok'), true);
   });
 
+  it('non-stream native bridge returns completed WebFetch document as assistant content', async () => {
+    resetNativeBridgeStats();
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = 'all_mapped';
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS = 'WebFetch';
+    delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF;
+    const account = addAccountByKey(`native-webfetch-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'native-webfetch');
+    createdAccountIds.push(account.id);
+
+    class FakeClient {
+      async cascadeChat(_messages, _modelEnum, _modelUid, opts) {
+        assert.equal(opts.nativeMode, true);
+        assert.deepEqual(opts.nativeAllowlist, ['read_url_content']);
+        return Object.assign([
+          { text: 'Final answer from Cascade using the fetched document.' },
+        ], {
+          toolCalls: [{
+            id: 'native:read_url_content:0',
+            name: 'read_url_content',
+            argumentsJson: JSON.stringify({ url: 'https://example.com/' }),
+            result: 'Example Domain fetched body',
+            hasWebDocument: true,
+            cascade_native: true,
+          }],
+        });
+      }
+    }
+
+    const result = await handleChatCompletions({
+      model: 'claude-4.5-haiku',
+      stream: false,
+      messages: [{ role: 'user', content: 'fetch example.com with no final answer' }],
+      tools: [fnTool('WebFetch')],
+    }, {
+      waitForAccount(tried, _signal, _maxWaitMs, modelKey) {
+        return tried.length === 0 ? getApiKey(tried, modelKey) : null;
+      },
+      ensureLs: async () => {},
+      getLsFor: () => ({ port: 17777, csrfToken: 'csrf', generation: 1 }),
+      WindsurfClient: FakeClient,
+    });
+
+    assert.equal(result.status, 200);
+    const choice = result.body.choices[0];
+    assert.equal(choice.finish_reason, 'stop');
+    assert.equal(choice.message.content, 'Final answer from Cascade using the fetched document.');
+    assert.equal(Object.prototype.hasOwnProperty.call(choice.message, 'tool_calls'), false);
+  });
+
+  it('non-stream native bridge falls back to WebFetch document when Cascade has no text', async () => {
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = 'all_mapped';
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS = 'WebFetch';
+    delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF;
+    const account = addAccountByKey(`native-webfetch-fallback-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'native-webfetch-fallback');
+    createdAccountIds.push(account.id);
+
+    class FakeClient {
+      async cascadeChat() {
+        return Object.assign([], {
+          toolCalls: [{
+            id: 'native:read_url_content:0',
+            name: 'read_url_content',
+            argumentsJson: JSON.stringify({ url: 'https://example.com/' }),
+            result: 'Example Domain fetched body',
+            hasWebDocument: true,
+            cascade_native: true,
+          }],
+        });
+      }
+    }
+
+    const result = await handleChatCompletions({
+      model: 'claude-4.5-haiku',
+      stream: false,
+      messages: [{ role: 'user', content: 'fetch example.com' }],
+      tools: [fnTool('WebFetch')],
+    }, {
+      waitForAccount(tried, _signal, _maxWaitMs, modelKey) {
+        return tried.length === 0 ? getApiKey(tried, modelKey) : null;
+      },
+      ensureLs: async () => {},
+      getLsFor: () => ({ port: 17777, csrfToken: 'csrf', generation: 1 }),
+      WindsurfClient: FakeClient,
+    });
+
+    assert.equal(result.status, 200);
+    const choice = result.body.choices[0];
+    assert.equal(choice.finish_reason, 'stop');
+    assert.equal(choice.message.content, 'Example Domain fetched body');
+    assert.equal(Object.prototype.hasOwnProperty.call(choice.message, 'tool_calls'), false);
+  });
+
   it('stream native bridge converts provider-native XML before content is emitted', async () => {
     resetNativeBridgeStats();
     process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = 'all_mapped';

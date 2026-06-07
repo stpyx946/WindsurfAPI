@@ -288,6 +288,14 @@ export function shouldColdStall({ elapsed, coldStallMs, sawActive, sawText, tota
   return elapsed > coldStallMs && sawActive && !sawText && (totalThinking || 0) === 0 && (toolCallCount || 0) === 0;
 }
 
+function isCompletedReadUrlNativeResult(tc) {
+  return !!(tc?.cascade_native
+    && tc.name === 'read_url_content'
+    && tc.hasWebDocument
+    && typeof tc.result === 'string'
+    && tc.result.length > 0);
+}
+
 // v2.0.74 (#122). Three-tier ceiling picker for warm-stall detection.
 // Exported so the regression test can assert that:
 //   - tool-active beats thinking beats text-only
@@ -918,12 +926,13 @@ export class WindsurfClient {
         const steps = parseTrajectorySteps(stepsResp);
         const hasNativeProposalInBatch = nativeMode && !nativeBridgePollAfterTool
           && steps.some(step => Array.isArray(step?.toolCalls)
-            && step.toolCalls.some(tc => tc?.cascade_native));
+            && step.toolCalls.some(tc => tc?.cascade_native && !isCompletedReadUrlNativeResult(tc)));
 
         if (nativeMode && (nativeAllowlist || []).includes('read_url_content')) {
           for (let i = 0; i < steps.length; i++) {
             const pending = steps[i]?.requestedInteraction;
             if (pending?.kind !== 'read_url_content') continue;
+            if (steps[i]?.toolCalls?.some(isCompletedReadUrlNativeResult)) continue;
             const url = pending.url || '';
             const origin = pending.origin || '';
             if (!isReadUrlAutoApproveAllowed(url, origin)) continue;
@@ -1058,7 +1067,9 @@ export class WindsurfClient {
               // ChatToolCall variants are dropped in chat.js anyway —
               // see "Built-in Cascade tool calls ... DROPPED" comment).
               if (tc.cascade_native) {
-                const chunk = { text: '', thinking: '', isError: false, nativeToolCall: tc };
+                const chunk = isCompletedReadUrlNativeResult(tc)
+                  ? { text: '', thinking: '', isError: false, nativeToolResult: tc }
+                  : { text: '', thinking: '', isError: false, nativeToolCall: tc };
                 chunks.push(chunk);
                 onChunk?.(chunk);
               }
@@ -1067,7 +1078,8 @@ export class WindsurfClient {
             // Cascade-native IDE step has been surfaced as a tool_call, stop
             // polling immediately so the LS does not keep executing the
             // built-in tool in the remote workspace while the client waits.
-            if (nativeMode && step.toolCalls.some(tc => tc.cascade_native)) {
+            const hasNativeProposal = step.toolCalls.some(tc => tc.cascade_native && !isCompletedReadUrlNativeResult(tc));
+            if (nativeMode && hasNativeProposal) {
               if (!nativeBridgePollAfterTool) {
                 endReason = 'native_tool_call';
                 break;

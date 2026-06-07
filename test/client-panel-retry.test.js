@@ -148,6 +148,32 @@ function readUrlContentDoneStepResponse() {
   return writeMessageField(1, step);
 }
 
+function readUrlContentDoneWithEchoStepResponse() {
+  const spec = Buffer.concat([
+    writeStringField(1, 'https://example.com/'),
+    writeStringField(2, 'https://example.com'),
+  ]);
+  const doc = Buffer.concat([
+    writeStringField(2, 'Example Domain fetched body'),
+    writeStringField(3, 'https://example.com/'),
+    writeStringField(7, 'Example Domain summary'),
+  ]);
+  const body = Buffer.concat([
+    writeStringField(1, 'https://example.com/'),
+    writeMessageField(2, doc),
+    writeStringField(3, 'https://example.com/'),
+    writeVarintField(4, 123),
+    writeVarintField(7, 8),
+  ]);
+  const step = Buffer.concat([
+    writeVarintField(1, 31),
+    writeVarintField(4, 3),
+    writeMessageField(56, writeMessageField(14, spec)),
+    writeMessageField(40, body),
+  ]);
+  return writeMessageField(1, step);
+}
+
 function setEnvForTest(values) {
   const previous = new Map(Object.keys(values).map(key => [key, process.env[key]]));
   for (const [key, value] of Object.entries(values)) {
@@ -709,6 +735,85 @@ describe('WindsurfClient cascade panel retry', () => {
       assert.equal(getField(readUrl, 1, 0).value, 1);
       assert.equal(getField(readUrl, 2, 2).value.toString('utf8'), 'https://example.com/');
       assert.equal(getField(readUrl, 3, 2).value.toString('utf8'), 'https://example.com');
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it('does not treat completed WebFetch with requested interaction echo as a proposal', async () => {
+    const restoreEnv = setEnvForTest({
+      WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE: '1',
+      WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE_ORIGINS: 'https://example.com',
+      WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL: '1',
+      CASCADE_POLL_INTERVAL_MS: '10',
+      CASCADE_IDLE_GRACE_MS: '1',
+      CASCADE_MAX_WAIT_MS: '500',
+      CASCADE_COLD_STALL_BASE_MS: '500',
+      GRPC_PROTOCOL: 'connect',
+    });
+
+    let approvals = 0;
+    const streamed = [];
+    try {
+      await withFakeLanguageServer((stream, headers) => {
+        const chunks = [];
+        stream.on('data', chunk => chunks.push(chunk));
+        stream.on('end', () => {
+          const method = String(headers[':path'] || '').split('/').pop();
+          if (method === 'StartCascade') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(startCascadeResponse('webfetch-completed-cascade'), headers));
+            return;
+          }
+          if (method === 'SendUserCascadeMessage') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.alloc(0), headers));
+            return;
+          }
+          if (method === 'GetCascadeTrajectorySteps') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.concat([
+              readUrlContentDoneWithEchoStepResponse(),
+              trajectoryStepsResponse('Natural answer using Example Domain.'),
+            ]), headers));
+            return;
+          }
+          if (method === 'HandleCascadeUserInteraction') {
+            approvals++;
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.alloc(0), headers));
+            return;
+          }
+          if (method === 'GetCascadeTrajectory') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(trajectoryInfoResponse(1, 'trajectory-webfetch', 'webfetch-completed-cascade'), headers));
+            return;
+          }
+          if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.alloc(0), headers));
+            return;
+          }
+          stream.respond({ ':status': 404 });
+          stream.end();
+        });
+      }, async (port) => {
+        const { WindsurfClient } = await import('../src/client.js');
+        const client = new WindsurfClient('test-api-key', port, 'csrf-token');
+        const chunks = await client.cascadeChat([{ role: 'user', content: 'fetch it' }], 0, 'claude-4.5-haiku', {
+          nativeMode: true,
+          nativeAllowlist: ['read_url_content'],
+          onChunk: c => streamed.push(c),
+        });
+        assert.equal(approvals, 0);
+        assert.equal(chunks.toolCalls.length, 1);
+        assert.equal(chunks.toolCalls[0].name, 'read_url_content');
+        assert.equal(chunks.toolCalls[0].result, 'Example Domain fetched body');
+        assert.equal(chunks.toolCalls[0].hasWebDocument, true);
+        assert.equal(streamed.filter(c => c.nativeToolCall).length, 0);
+        assert.equal(streamed.filter(c => c.nativeToolResult).length, 1);
+        assert.match(chunks.map(c => c.text || '').join(''), /Natural answer using Example Domain/);
+      });
     } finally {
       restoreEnv();
     }

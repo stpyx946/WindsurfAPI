@@ -700,8 +700,8 @@ function summarizeWebFetchTrajectoryBranch({ type, status, nativeOneofs, request
   const hasLegacySummary = legacySummaryBytes > 0;
   const autoRunDecision = readUrlOneof?.body?.autoRunDecision ?? null;
   let state = null;
-  if (pendingReadUrl) state = 'pending_permission';
-  else if (readUrlOneof && hasWebDocument) state = 'completed_web_document';
+  if (readUrlOneof && hasWebDocument) state = 'completed_web_document';
+  else if (pendingReadUrl) state = 'pending_permission';
   else if (readUrlOneof && autoRunDecision != null && !hasWebDocument && !hasLegacySummary) state = 'auto_run_decision_only';
   else if (readUrlOneof && hasLegacySummary && !hasWebDocument) state = 'legacy_summary_only';
   else if (readUrlOneof) state = 'native_oneof_no_document';

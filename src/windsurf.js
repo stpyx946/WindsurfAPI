@@ -1264,11 +1264,12 @@ export function parseTrajectorySteps(buf) {
           };
           argumentsJson = JSON.stringify(args);
           const webDocument = getField(body, 2, 2);
-          result = webDocument ? decodeKnowledgeBaseItemText(webDocument.value) : '';
+          const hasWebDocument = !!webDocument;
+          result = hasWebDocument ? decodeKnowledgeBaseItemText(webDocument.value) : '';
           if (!result && readUrlLegacySummaryFallbackEnabled()) {
             result = getField(body, 5, 2)?.value?.toString('utf8') || '';
           }
-          if (!result && readUrlRequestedInteraction) continue;
+          if (!hasWebDocument && !result && readUrlRequestedInteraction) continue;
         } else if (kind === 'search_web') {
           const args = {
             query: getField(body, 1, 2)?.value?.toString('utf8') || '',
@@ -1289,6 +1290,7 @@ export function parseTrajectorySteps(buf) {
         name: kind,
         argumentsJson,
         result,
+        ...(kind === 'read_url_content' && getField(body, 2, 2) ? { hasWebDocument: true } : {}),
         cascade_native: true,
       });
     }

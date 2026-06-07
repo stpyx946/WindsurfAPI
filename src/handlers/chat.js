@@ -87,6 +87,14 @@ function appendAssistantTurn(messages, allText, toolCalls) {
   return [...(messages || []), m];
 }
 
+function isCompletedReadUrlNativeResult(raw) {
+  return !!(raw?.cascade_native
+    && raw.name === 'read_url_content'
+    && raw.hasWebDocument
+    && typeof raw.result === 'string'
+    && raw.result.length > 0);
+}
+
 // Cap exponential backoff before falling over to the next account when
 // upstream Cascade returns "internal error occurred". Without this a
 // 9-account pool hammers the upstream within ~10s and every attempt
@@ -2516,6 +2524,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     let allThinking = '';
     let cascadeMeta = null;
     let toolCalls = [];
+    let hasCompletedNativeReadUrlResult = false;
     const bridgeDiag = {
       bridgeEnabled: nativeBridgeOn,
       requestedTools: Array.isArray(tools) && tools.length > 0,
@@ -2566,11 +2575,18 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // can't be safely surfaced (caller wouldn't know how to execute).
         const lookup = nativeOpts?.callerLookup || new Map();
         const nativeCalls = [];
+        const nativeResults = [];
+        let usedNativeReadUrlFallback = false;
         for (const raw of (chunks.toolCalls || [])) {
           if (!raw?.cascade_native) continue;
           bridgeDiag.cascadeToolCalls++;
           bridgeDiag.cascadeKinds.push(raw.name);
           recordNativeBridgeCascadeToolCall(raw.name);
+          if (isCompletedReadUrlNativeResult(raw)) {
+            nativeResults.push(raw);
+            hasCompletedNativeReadUrlResult = true;
+            continue;
+          }
           const candidates = lookup.get(raw.name) || [];
           const callerName = candidates[0];
           if (!callerName) {
@@ -2595,7 +2611,11 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         }
         toolCalls = filterToolCallsByAllowlist(nativeCalls, tools);
         for (const tc of toolCalls) recordNativeBridgeEmittedToolCall(tc.name, { source: 'cascade' });
-        if (toolCalls.length === 0 && allText) {
+        if (!allText && toolCalls.length === 0 && nativeResults.length) {
+          allText = nativeResults.map(raw => raw.result).filter(Boolean).join('\n');
+          usedNativeReadUrlFallback = !!allText;
+        }
+        if (toolCalls.length === 0 && allText && !usedNativeReadUrlFallback) {
           const fallback = parseNativeFunctionCallsFromText(allText, lookup);
           const filteredFallback = filterToolCallsByAllowlist(fallback.toolCalls, tools);
           allText = fallback.text || '';
@@ -2612,10 +2632,10 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // emitting the cascade step, and the caller doesn't want that
         // noise.
         allText = stripToolMarkupFromText(allText);
-        if (toolCalls.length === 0 && (chunks.toolCalls || []).length > 0) {
+        if (toolCalls.length === 0 && nativeResults.length === 0 && (chunks.toolCalls || []).length > 0) {
           log.info(`Chat[non-stream]: nativeBridge=true received ${chunks.toolCalls.length} cascade tool calls but none mapped to caller tools (kinds=${chunks.toolCalls.map(tc => tc.name).join(',')})`);
         }
-        if (toolCalls.length === 0) recordNativeBridgeNoToolCallResponse();
+        if (toolCalls.length === 0 && nativeResults.length === 0) recordNativeBridgeNoToolCallResponse();
       } else if (emulateTools) {
         // Capture pre-parse text once for diagnostic logging — useful when
         // non-Claude models emit a tool call in a format the parser missed.
@@ -2844,7 +2864,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       allThinking = '';
     }
     bridgeDiag.totalToolCalls = toolCalls.length;
-    bridgeDiag.noToolCalls = bridgeDiag.requestedTools && toolCalls.length === 0;
+    bridgeDiag.noToolCalls = bridgeDiag.requestedTools && toolCalls.length === 0 && !hasCompletedNativeReadUrlResult;
     logBridgeResultDiagnostics(reqId, bridgeDiag);
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
@@ -3226,6 +3246,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         route: deps?.route || 'chat',
       }) : null;
       const collectedToolCalls = [];
+      const completedNativeReadUrlResults = [];
       const bridgeDiagCascadeSeen = new Set();
       const bridgeDiag = {
         bridgeEnabled: nativeBridgeOn,
@@ -3325,6 +3346,18 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         // back into the caller's OpenAI tool name via callerLookup, then
         // emit as a tool_call delta. Old behaviour batched these at
         // turn end (release notes for v2.0.65 documented the gap).
+        if (nativeBridgeOn && chunk.nativeToolResult) {
+          const raw = chunk.nativeToolResult;
+          if (markBridgeDiagCascadeRaw({ ...raw, cascade_native: true })) {
+            recordNativeBridgeCascadeToolCall(raw.name);
+          }
+          if (isCompletedReadUrlNativeResult(raw)
+              && !completedNativeReadUrlResults.some(existing => (existing.id || '') === (raw.id || ''))) {
+            completedNativeReadUrlResults.push(raw);
+          }
+          return;
+        }
+
         if (nativeBridgeOn && chunk.nativeToolCall) {
           const raw = chunk.nativeToolCall;
           markBridgeDiagCascadeRaw({ ...raw, cascade_native: true });
@@ -3695,8 +3728,15 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               const nativeRaw = [];
               for (const raw of cascadeResult.toolCalls) {
                 if (!raw?.cascade_native) continue;
-                markBridgeDiagCascadeRaw(raw);
-                recordNativeBridgeCascadeToolCall(raw.name);
+                if (markBridgeDiagCascadeRaw(raw)) {
+                  recordNativeBridgeCascadeToolCall(raw.name);
+                }
+                if (isCompletedReadUrlNativeResult(raw)) {
+                  if (!completedNativeReadUrlResults.some(existing => (existing.id || '') === (raw.id || ''))) {
+                    completedNativeReadUrlResults.push(raw);
+                  }
+                  continue;
+                }
                 const candidates = lookup.get(raw.name) || [];
                 const callerName = candidates[0];
                 if (!callerName) {
@@ -3727,13 +3767,18 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 recordNativeBridgeEmittedToolCall(tc.name, { source: 'cascade' });
                 emitToolCallDelta(tc, idx);
               }
-              if (filteredNative.length === 0 && cascadeResult.toolCalls.some(tc => tc.cascade_native)) {
+              if (filteredNative.length === 0 && completedNativeReadUrlResults.length === 0 && cascadeResult.toolCalls.some(tc => tc.cascade_native)) {
                 log.info(`Chat[stream]: nativeBridge=true received cascade tool calls but none mapped to caller tools (kinds=${cascadeResult.toolCalls.filter(tc => tc.cascade_native).map(tc => tc.name).join(',')})`);
               }
             }
-            if (nativeBridgeOn && collectedToolCalls.length === 0) recordNativeBridgeNoToolCallResponse();
+            if (accText.length === 0 && collectedToolCalls.length === 0 && completedNativeReadUrlResults.length) {
+              const fallbackText = completedNativeReadUrlResults.map(raw => raw.result).filter(Boolean).join('\n');
+              if (fallbackText) emitContent(pathStreamText.feed(fallbackText));
+              emitContent(pathStreamText.flush());
+            }
+            if (nativeBridgeOn && collectedToolCalls.length === 0 && completedNativeReadUrlResults.length === 0) recordNativeBridgeNoToolCallResponse();
             bridgeDiag.totalToolCalls = collectedToolCalls.length;
-            bridgeDiag.noToolCalls = bridgeDiag.requestedTools && collectedToolCalls.length === 0;
+            bridgeDiag.noToolCalls = bridgeDiag.requestedTools && collectedToolCalls.length === 0 && completedNativeReadUrlResults.length === 0;
             logBridgeResultDiagnostics(reqId, bridgeDiag);
             // Pool check-in on success (cascade only)
             if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
