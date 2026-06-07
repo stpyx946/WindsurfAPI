@@ -220,6 +220,9 @@ export function getSpecialAgentStatus() {
     activeProcs,
     queued: waiters.length,
     maxProcs: maxProcs(),
+    queueTimeoutMs: queueTimeoutMs(),
+    runTimeoutMs: runTimeoutMs(),
+    outputLimitBytes: outputLimitBytes(),
     mode: process.env.DEVIN_CLI_MODE || 'print',
   };
 }

@@ -12,9 +12,17 @@ describe('special-agent smoke script', () => {
     assert.match(script, /special-agent backend is disabled/);
   });
 
-  it('keeps the POC text-only and tool-free', () => {
+  it('keeps the positive smoke text-only and tool-free', () => {
     assert.match(script, /swe-1\.6-fast/);
-    assert.doesNotMatch(script, /\btools\s*:/);
-    assert.doesNotMatch(script, /image_url|input_image/);
+    const positiveSection = script.split(/async function runNegativeSmoke/)[0];
+    assert.doesNotMatch(positiveSection, /\btools\s*:/);
+    assert.doesNotMatch(positiveSection, /image_url|input_image/);
+  });
+
+  it('includes negative smoke for tools and media rejection', () => {
+    assert.match(script, /negative_tools/);
+    assert.match(script, /unsupported_tool_boundary/);
+    assert.match(script, /negative_media/);
+    assert.match(script, /unsupported_media/);
   });
 });

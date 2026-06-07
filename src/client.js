@@ -87,6 +87,10 @@ function canonicalWebUrl(value) {
   };
 }
 
+function shortHash(value) {
+  return createHash('sha256').update(String(value || '')).digest('hex').slice(0, 12);
+}
+
 export function isReadUrlAutoApproveAllowed(url, origin) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE !== '1') return false;
   const allow = csvSetEnv('WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE_ORIGINS');
@@ -898,6 +902,7 @@ export class WindsurfClient {
       let endReason = 'unknown';
       const nativeBridgePollAfterTool = nativeMode && process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL === '1';
       let nativeBridgePollAfterToolLogged = false;
+      let approvalError = null;
 
       while (Date.now() - startTime < maxWait) {
         if (aborted()) { endReason = 'aborted'; break; }
@@ -946,14 +951,27 @@ export class WindsurfClient {
               url,
               origin,
             });
-            await grpcUnary(
-              this.port, this.csrfToken,
-              `${LS_SERVICE}/HandleCascadeUserInteraction`,
-              grpcFrame(req),
-              10000
-            );
-            lastGrowthAt = Date.now();
-            log.warn(`WebFetch auto-approved read_url_content for allowed origin ${origin || '(unknown)'}`);
+            try {
+              await grpcUnary(
+                this.port, this.csrfToken,
+                `${LS_SERVICE}/HandleCascadeUserInteraction`,
+                grpcFrame(req),
+                10000
+              );
+              lastGrowthAt = Date.now();
+              log.warn('WebFetch auto-approved read_url_content', {
+                cascadeIdHash: shortHash(cascadeId),
+                stepIndex: stepOffset + i,
+                originHash: origin ? shortHash(origin) : null,
+              });
+            } catch (e) {
+              approvalError = {
+                cascadeIdHash: shortHash(cascadeId),
+                stepIndex: stepOffset + i,
+                message: String(e?.message || e),
+              };
+              log.warn('WebFetch auto-approve RPC failed', approvalError);
+            }
           }
         }
 
@@ -1238,6 +1256,7 @@ export class WindsurfClient {
         sawActive,
         sawText,
         lastStatus,
+        approvalError,
         ms: Date.now() - startTime,
       };
       const shortNormalDone = (endReason === 'idle_done' || endReason === 'native_tool_call')
@@ -1314,6 +1333,7 @@ export class WindsurfClient {
         : null;
       chunks.toolCalls = toolCalls;
       chunks.usage = serverUsage;
+      chunks.approvalError = approvalError;
       // v2.0.25 HIGH-2: surface "the original reuse entry was dead and we
       // recovered with a fresh cascade" so the caller skips checking the dead
       // entry back into the pool. The new cascadeId we attached above is the

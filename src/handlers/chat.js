@@ -270,6 +270,31 @@ function logToolRoutingDiagnostics(reqId, diag) {
   );
 }
 
+function bridgeResultList(values) {
+  const list = (Array.isArray(values) ? values : [])
+    .map(v => String(v || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, 80))
+    .filter(Boolean);
+  return [...new Set(list)].slice(0, 50).join(',') || 'none';
+}
+
+function logBridgeResultDiagnostics(reqId, diag) {
+  if (!diag || !diag.requestedTools) return;
+  log.info(
+    `BridgeResult[${reqId}]: bridgeEnabled=${!!diag.bridgeEnabled} ` +
+    `cascadeToolCalls=${diag.cascadeToolCalls || 0} ` +
+    `mappedToolCalls=${diag.mappedToolCalls || 0} ` +
+    `unmappedToolCalls=${diag.unmappedToolCalls || 0} ` +
+    `emulatedToolCalls=${diag.emulatedToolCalls || 0} ` +
+    `totalToolCalls=${diag.totalToolCalls || 0} ` +
+    `noToolCalls=${!!diag.noToolCalls} ` +
+    `argParseFailures=${diag.argParseFailures || 0} reverseFailures=${diag.reverseFailures || 0} ` +
+    `cascadeKinds=[${bridgeResultList(diag.cascadeKinds)}] ` +
+    `mapped=[${bridgeResultList(diag.mappedNames)}] ` +
+    `unmapped=[${bridgeResultList(diag.unmappedKinds)}] ` +
+    `emulated=[${bridgeResultList(diag.emulatedNames)}]`,
+  );
+}
+
 export function redactRequestLogText(text) {
   return String(text || '')
     .replace(/sk-[A-Za-z0-9_-]{20,}/g, 'sk-***')
@@ -2323,6 +2348,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // success-path cacheSet writes under the original key as well —
       // next identical original-model request hits cache instead of
       // re-burning the rate-limit + fallback cycle.
+      reqId,
       context.__originalCkey || null,
     );
     if (result.status === 200) return result;
@@ -2482,7 +2508,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, aliasCkey = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null) {
   const startTime = Date.now();
   const nativeBridgeOn = !!nativeOpts?.enabled;
   try {
@@ -2490,6 +2516,22 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     let allThinking = '';
     let cascadeMeta = null;
     let toolCalls = [];
+    const bridgeDiag = {
+      bridgeEnabled: nativeBridgeOn,
+      requestedTools: Array.isArray(tools) && tools.length > 0,
+      cascadeToolCalls: 0,
+      mappedToolCalls: 0,
+      unmappedToolCalls: 0,
+      emulatedToolCalls: 0,
+      totalToolCalls: 0,
+      noToolCalls: false,
+      argParseFailures: 0,
+      reverseFailures: 0,
+      cascadeKinds: [],
+      mappedNames: [],
+      unmappedKinds: [],
+      emulatedNames: [],
+    };
     // Server-reported token usage from CortexStepMetadata.model_usage, summed
     // across all trajectory steps. Preferred over the chars/4 estimate when
     // present so downstream billing (new-api, etc.) sees real Cascade numbers.
@@ -2526,19 +2568,25 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         const nativeCalls = [];
         for (const raw of (chunks.toolCalls || [])) {
           if (!raw?.cascade_native) continue;
+          bridgeDiag.cascadeToolCalls++;
+          bridgeDiag.cascadeKinds.push(raw.name);
           recordNativeBridgeCascadeToolCall(raw.name);
           const candidates = lookup.get(raw.name) || [];
           const callerName = candidates[0];
           if (!callerName) {
+            bridgeDiag.unmappedToolCalls++;
+            bridgeDiag.unmappedKinds.push(raw.name);
             recordNativeBridgeUnmappedCascadeToolCall(raw.name);
             continue;
           }
           const reverseFn = TOOL_MAP[callerName]?.reverse;
           let cascadeArgs;
-          try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+          try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { bridgeDiag.argParseFailures++; cascadeArgs = {}; }
           let openaiArgs;
           try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
-          catch { openaiArgs = cascadeArgs; }
+          catch { bridgeDiag.reverseFailures++; openaiArgs = cascadeArgs; }
+          bridgeDiag.mappedToolCalls++;
+          bridgeDiag.mappedNames.push(callerName);
           nativeCalls.push({
             id: raw.id || `call_${nativeCalls.length}_${Date.now().toString(36)}`,
             name: callerName,
@@ -2553,6 +2601,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           allText = fallback.text || '';
           if (filteredFallback.length) {
             toolCalls = filteredFallback;
+            bridgeDiag.emulatedToolCalls += filteredFallback.length;
+            bridgeDiag.emulatedNames.push(...filteredFallback.map(tc => tc.name));
             for (const tc of toolCalls) recordNativeBridgeEmittedToolCall(tc.name, { source: 'provider_xml' });
             log.info(`Chat[non-stream]: native bridge parsed ${toolCalls.length} provider-native function_call(s) from text`);
           }
@@ -2584,6 +2634,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // prompt-injection payloads emit calls for tools the caller
         // never offered, e.g. `Bash` when only `get_weather` is declared).
         toolCalls = filterToolCallsByAllowlist(parsed.toolCalls, tools);
+        bridgeDiag.emulatedToolCalls += toolCalls.length;
+        bridgeDiag.emulatedNames.push(...toolCalls.map(tc => tc.name));
         // Diagnostic: emulation was active and the model returned text but no
         // recognized tool call. Surface tool-shaped substrings so we can see
         // whether the model emitted an unsupported format (markdown-fenced
@@ -2632,6 +2684,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
               if (filtered.length) {
                 log.info(`Chat[non-stream]: NLU recovery — promoted ${filtered.length} narrative tool_call(s) (markers=${markers.join(',') || 'none'} head="${rawTextHead}")`);
                 toolCalls = filtered;
+                bridgeDiag.emulatedToolCalls += filtered.length;
+                bridgeDiag.emulatedNames.push(...filtered.map(tc => tc.name));
                 allText = '';
                 allThinking = '';
               }
@@ -2709,6 +2763,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
                 if (retryCalls.length) {
                   log.info(`Chat[non-stream]: NLU retry — promoted ${retryCalls.length} tool_call(s) on second pass (tool=${intendedTool})`);
                   toolCalls = retryCalls;
+                  bridgeDiag.emulatedToolCalls += retryCalls.length;
+                  bridgeDiag.emulatedNames.push(...retryCalls.map(tc => tc.name));
                   allText = retryParsed.text || '';
                   allThinking = '';
                 } else {
@@ -2787,6 +2843,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       allText = allThinking;
       allThinking = '';
     }
+    bridgeDiag.totalToolCalls = toolCalls.length;
+    bridgeDiag.noToolCalls = bridgeDiag.requestedTools && toolCalls.length === 0;
+    logBridgeResultDiagnostics(reqId, bridgeDiag);
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
     // so the next request in the same conversation can resume it.
@@ -3167,6 +3226,34 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         route: deps?.route || 'chat',
       }) : null;
       const collectedToolCalls = [];
+      const bridgeDiagCascadeSeen = new Set();
+      const bridgeDiag = {
+        bridgeEnabled: nativeBridgeOn,
+        requestedTools: declaredTools.length > 0,
+        cascadeToolCalls: 0,
+        mappedToolCalls: 0,
+        unmappedToolCalls: 0,
+        emulatedToolCalls: 0,
+        totalToolCalls: 0,
+        noToolCalls: false,
+        argParseFailures: 0,
+        reverseFailures: 0,
+        cascadeKinds: [],
+        mappedNames: [],
+        unmappedKinds: [],
+        emulatedNames: [],
+      };
+      const markBridgeDiagCascadeRaw = (raw) => {
+        if (!raw?.cascade_native) return false;
+        if (raw?.id) {
+          const key = `id:${raw.id}`;
+          if (bridgeDiagCascadeSeen.has(key)) return false;
+          bridgeDiagCascadeSeen.add(key);
+        }
+        bridgeDiag.cascadeToolCalls++;
+        bridgeDiag.cascadeKinds.push(raw.name);
+        return true;
+      };
 
       // Streaming path sanitizers. Every text/thinking delta flows through a
       // PathSanitizeStream before leaving the server so /tmp/windsurf-workspace,
@@ -3217,6 +3304,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
           const idx = collectedToolCalls.length;
           collectedToolCalls.push(tc);
+          bridgeDiag.emulatedToolCalls++;
+          bridgeDiag.emulatedNames.push(tc.name);
           recordNativeBridgeEmittedToolCall(tc.name, { source: 'provider_xml' });
           emitToolCallDelta(tc, idx);
         }
@@ -3238,6 +3327,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         // turn end (release notes for v2.0.65 documented the gap).
         if (nativeBridgeOn && chunk.nativeToolCall) {
           const raw = chunk.nativeToolCall;
+          markBridgeDiagCascadeRaw({ ...raw, cascade_native: true });
           recordNativeBridgeCascadeToolCall(raw.name);
           const lookup = nativeOpts?.callerLookup || new Map();
           const candidates = lookup.get(raw.name) || [];
@@ -3245,10 +3335,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           if (callerName) {
             const reverseFn = TOOL_MAP[callerName]?.reverse;
             let cascadeArgs;
-            try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+            try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { bridgeDiag.argParseFailures++; cascadeArgs = {}; }
             let openaiArgs;
             try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
-            catch { openaiArgs = cascadeArgs; }
+            catch { bridgeDiag.reverseFailures++; openaiArgs = cascadeArgs; }
+            bridgeDiag.mappedToolCalls++;
+            bridgeDiag.mappedNames.push(callerName);
             const candidate = {
               id: raw.id || `call_${collectedToolCalls.length}_${Date.now().toString(36)}`,
               name: callerName,
@@ -3263,6 +3355,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               emitToolCallDelta(tc, idx);
             }
           } else {
+            bridgeDiag.unmappedToolCalls++;
+            bridgeDiag.unmappedKinds.push(raw.name);
             recordNativeBridgeUnmappedCascadeToolCall(raw.name);
           }
           return;
@@ -3300,6 +3394,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                   const tc = sanitizeToolCall(repairToolCallArguments(filtered[0], messages));
                   const idx = collectedToolCalls.length;
                   collectedToolCalls.push(tc);
+                  bridgeDiag.emulatedToolCalls++;
+                  bridgeDiag.emulatedNames.push(tc.name);
                   emitToolCallDelta(tc, idx);
                 }
               }
@@ -3317,6 +3413,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
+                bridgeDiag.emulatedToolCalls++;
+                bridgeDiag.emulatedNames.push(tc.name);
                 emitToolCallDelta(tc, idx);
               }
             }
@@ -3510,6 +3608,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
+                bridgeDiag.emulatedToolCalls++;
+                bridgeDiag.emulatedNames.push(tc.name);
                 emitToolCallDelta(tc, idx);
               }
               // Diagnostic: same as nonStreamResponse but for the SSE path —
@@ -3551,6 +3651,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                       const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                       const idx = collectedToolCalls.length;
                       collectedToolCalls.push(tc);
+                      bridgeDiag.emulatedToolCalls++;
+                      bridgeDiag.emulatedNames.push(tc.name);
                       emitToolCallDelta(tc, idx);
                     }
                     if (filtered.length) {
@@ -3593,19 +3695,24 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               const nativeRaw = [];
               for (const raw of cascadeResult.toolCalls) {
                 if (!raw?.cascade_native) continue;
+                markBridgeDiagCascadeRaw(raw);
                 recordNativeBridgeCascadeToolCall(raw.name);
                 const candidates = lookup.get(raw.name) || [];
                 const callerName = candidates[0];
                 if (!callerName) {
+                  bridgeDiag.unmappedToolCalls++;
+                  bridgeDiag.unmappedKinds.push(raw.name);
                   recordNativeBridgeUnmappedCascadeToolCall(raw.name);
                   continue;
                 }
                 const reverseFn = TOOL_MAP[callerName]?.reverse;
                 let cascadeArgs;
-                try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+                try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { bridgeDiag.argParseFailures++; cascadeArgs = {}; }
                 let openaiArgs;
                 try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
-                catch { openaiArgs = cascadeArgs; }
+                catch { bridgeDiag.reverseFailures++; openaiArgs = cascadeArgs; }
+                bridgeDiag.mappedToolCalls++;
+                bridgeDiag.mappedNames.push(callerName);
                 nativeRaw.push({
                   id: raw.id || `call_${nativeRaw.length}_${Date.now().toString(36)}`,
                   name: callerName,
@@ -3625,6 +3732,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               }
             }
             if (nativeBridgeOn && collectedToolCalls.length === 0) recordNativeBridgeNoToolCallResponse();
+            bridgeDiag.totalToolCalls = collectedToolCalls.length;
+            bridgeDiag.noToolCalls = bridgeDiag.requestedTools && collectedToolCalls.length === 0;
+            logBridgeResultDiagnostics(reqId, bridgeDiag);
             // Pool check-in on success (cascade only)
             if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
               const turnComplete = appendAssistantTurn(messages, accText, collectedToolCalls);

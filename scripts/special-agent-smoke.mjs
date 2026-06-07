@@ -65,6 +65,7 @@ const chat = await fetchJson('/v1/chat/completions', {
 
 const content = chat.body?.choices?.[0]?.message?.content || '';
 const out = {
+  stage: 'positive_text_chat',
   ok: chat.status >= 200 && chat.status < 300 && !chat.body?.error,
   model,
   status: chat.status,
@@ -76,3 +77,55 @@ const out = {
 
 console.log(JSON.stringify(out, null, 2));
 if (!out.ok) process.exit(1);
+
+async function runNegativeSmoke(name, payload, expectedType) {
+  const started = Date.now();
+  const result = await fetchJson('/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const error = result.body?.error || null;
+  const ok = result.status === 400 && error?.type === expectedType;
+  console.log(JSON.stringify({
+    stage: name,
+    result: ok ? 'PASS' : 'FAIL',
+    ok,
+    expectedStatus: 400,
+    expectedType,
+    status: result.status,
+    latencyMs: Date.now() - started,
+    error,
+    body: ok ? undefined : result.body,
+    text: ok ? undefined : compactText(result.text),
+  }, null, 2));
+  return ok;
+}
+
+const negativeResults = [];
+negativeResults.push(await runNegativeSmoke('negative_tools', {
+  model,
+  stream: false,
+  max_tokens: 128,
+  messages: [{ role: 'user', content: 'read package.json' }],
+  tools: [{
+    type: 'function',
+    function: {
+      name: 'Read',
+      description: 'Read tool',
+      parameters: { type: 'object', properties: {} },
+    },
+  }],
+}, 'unsupported_tool_boundary'));
+
+negativeResults.push(await runNegativeSmoke('negative_media', {
+  model,
+  stream: false,
+  max_tokens: 128,
+  messages: [{
+    role: 'user',
+    content: [{ type: 'image_url', image_url: { url: 'data:image/png;base64,xxx' } }],
+  }],
+}, 'unsupported_media'));
+
+if (negativeResults.some(ok => !ok)) process.exit(1);

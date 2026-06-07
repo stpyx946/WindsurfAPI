@@ -38,6 +38,11 @@ const requestedScenarios = String(process.env.NATIVE_BRIDGE_SMOKE_TOOLS || 'Bash
   .split(',')
   .map(s => s.trim())
   .filter(Boolean);
+const webFetchPreflightEnvVars = [
+  'WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE',
+  'WINDSURFAPI_NATIVE_TOOL_BRIDGE_WEBFETCH_AUTO_APPROVE_ORIGINS',
+  'WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL',
+];
 
 if (!apiKey) {
   console.error('API_KEY is required. Enable native bridge with narrow gates before this smoke.');
@@ -653,6 +658,7 @@ function summarizeWebFetchTraceDir(dir = protoTraceDir) {
       .sort((a, b) => b.mtimeMs - a.mtimeMs)
       .slice(0, 6);
     const stateCounts = {};
+    const errorClassifications = {};
     const recent = [];
     let records = 0;
     let parseErrors = 0;
@@ -672,6 +678,9 @@ function summarizeWebFetchTraceDir(dir = protoTraceDir) {
           const trace = step?.webFetchTrace;
           if (!trace?.state) continue;
           stateCounts[trace.state] = (stateCounts[trace.state] || 0) + 1;
+          for (const [key, value] of Object.entries(trace.errorClassifications || {})) {
+            if (value) errorClassifications[key] = (errorClassifications[key] || 0) + 1;
+          }
           recent.push({
             file: file.name,
             method: rec.method || '',
@@ -695,11 +704,83 @@ function summarizeWebFetchTraceDir(dir = protoTraceDir) {
       records,
       parseErrors,
       stateCounts,
+      errorClassifications,
       recent: recent.slice(-12),
     };
   } catch (error) {
     return { available: false, dir, reason: 'trace_summary_failed', error: String(error?.message || error) };
   }
+}
+
+function missingWebFetchPreflightEnv() {
+  return webFetchPreflightEnvVars.filter(name => !(name in process.env));
+}
+
+function webFetchTraceVerdict(summary) {
+  if (!summary?.available) {
+    return {
+      ok: false,
+      level: 'fail',
+      reason: summary?.reason || 'trace_unavailable',
+      message: `WebFetch canary proto trace unavailable (${summary?.reason || 'trace_unavailable'})`,
+    };
+  }
+  const stateCounts = summary.stateCounts || {};
+  if (Number(stateCounts.completed_web_document || 0) > 0) {
+    return {
+      ok: true,
+      level: 'pass',
+      reason: 'completed_web_document',
+      message: 'WebFetch canary reached completed document',
+    };
+  }
+  const recentErrors = (summary.recent || [])
+    .filter(item => item.state === 'error')
+    .map(item => ({
+      stepIndex: item.stepIndex,
+      status: item.status,
+      errorClassifications: item.errorClassifications || {},
+    }));
+  const errorClassifications = summary.errorClassifications || {};
+  const hasPermissionDenied = Number(errorClassifications.permissionDenied || 0) > 0
+    || recentErrors.some(item => item.errorClassifications.permissionDenied);
+  const hasFailedPrecondition = Number(errorClassifications.failedPrecondition || 0) > 0
+    || recentErrors.some(item => item.errorClassifications.failedPrecondition);
+  if (Number(stateCounts.error || 0) > 0 || hasPermissionDenied || hasFailedPrecondition) {
+    const classes = [
+      hasPermissionDenied ? 'permissionDenied' : '',
+      hasFailedPrecondition ? 'failedPrecondition' : '',
+    ].filter(Boolean);
+    return {
+      ok: false,
+      level: 'fail',
+      reason: classes.length ? `error:${classes.join(',')}` : 'error',
+      message: `WebFetch canary failed in proto trace (${classes.join(',') || 'error'})`,
+      errorClassifications,
+      recentErrors,
+    };
+  }
+  const nonZeroStates = Object.entries(stateCounts)
+    .filter(([, count]) => Number(count || 0) > 0)
+    .map(([state]) => state);
+  const onlyPendingOrDecision = nonZeroStates.length > 0
+    && nonZeroStates.every(state => state === 'pending_permission' || state === 'auto_run_decision_only');
+  if (onlyPendingOrDecision) {
+    return {
+      ok: false,
+      level: 'warn',
+      reason: 'pending_or_auto_run_decision_only',
+      message: 'WebFetch canary did not reach completed document',
+    };
+  }
+  return {
+    ok: false,
+    level: 'fail',
+    reason: nonZeroStates.length ? `unexpected_states:${nonZeroStates.join(',')}` : 'no_webfetch_trace_states',
+    message: nonZeroStates.length
+      ? `WebFetch canary did not reach completed document (states=${nonZeroStates.join(',')})`
+      : 'WebFetch canary produced no WebFetch proto trace states',
+  };
 }
 
 const selected = expandScenarios(requestedScenarios);
@@ -710,6 +791,13 @@ if (!selected.length) {
 
 const results = {};
 const failures = [];
+const warnings = [];
+if (selected.includes('WebFetch')) {
+  const missingEnv = missingWebFetchPreflightEnv();
+  if (missingEnv.length) {
+    warnings.push(`WARN: WebFetch preflight missing env vars: ${missingEnv.join(', ')}`);
+  }
+}
 const healthBefore = await fetchHealthSnapshot('before');
 try {
   assertLsBudgetAvailable(healthBefore);
@@ -741,6 +829,17 @@ if (!failures.length) {
 }
 const healthAfter = await fetchHealthSnapshot('after');
 const protoTraceSummary = summarizeWebFetchTraceDir();
+const webFetchTrace = selected.includes('WebFetch') ? webFetchTraceVerdict(protoTraceSummary) : null;
+if (webFetchTrace) {
+  results.WebFetch = results.WebFetch || {};
+  results.WebFetch.protoTrace = webFetchTrace;
+  if (webFetchTrace.level === 'warn') {
+    warnings.push(`WARN: ${webFetchTrace.message}`);
+  }
+  if (!webFetchTrace.ok) {
+    failures.push(webFetchTrace.message);
+  }
+}
 
 console.log(JSON.stringify({
   ok: failures.length === 0,
@@ -759,6 +858,7 @@ console.log(JSON.stringify({
   streamEarlyTool,
   scenarios: selected,
   results,
+  warnings,
   failures,
   nativeBridgeDecisionDelta: nativeBridgeDecisionDelta(healthBefore, healthAfter),
   protoTraceSummary,

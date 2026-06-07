@@ -176,6 +176,26 @@ describe('special-agent model routing', () => {
     assert.equal(runnerCalls, 0);
   });
 
+  it('rejects media content on print backend by default', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    delete process.env.DEVIN_CLI_ALLOW_MEDIA;
+
+    let runnerCalls = 0;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user([{ type: 'image_url', image_url: { url: 'data:image/png;base64,xxx' } }])],
+    }, {
+      specialAgent: {
+        runDevinPrint: async () => { runnerCalls++; return { text: 'bad' }; },
+      },
+    });
+
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.type, 'unsupported_media');
+    assert.equal(runnerCalls, 0);
+  });
+
   it('routes hidden adaptive/arena models before the deprecated-model 410 guard', async () => {
     process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
     process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
