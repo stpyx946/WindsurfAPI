@@ -12,16 +12,17 @@ into this file.
 - Repository: `D:\Project\WindsurfAPI`
 - Local/remote branch state at handoff: `master` is clean and aligned with
   `origin/master`.
-- Last verified repository baseline before this handoff update: `69e91a3`
-  (`chore(release): v2.0.143 diagnostics and canary hardening`). After
+- Last verified repository baseline before this handoff update: `1c47aef`
+  (`fix: surface completed native WebFetch documents (#183)`). After
   pulling, use `git log -1 --oneline` for the newest commit.
-- Latest release tag: `v2.0.143` at `69e91a3`
-  (`chore(release): v2.0.143 diagnostics and canary hardening`).
+- Latest release tag: `v2.0.144` at `1c47aef`
+  (`fix: surface completed native WebFetch documents (#183)`).
 - GitHub open PRs: none.
-- GitHub CI/Pages for `69e91a3`: pending verification.
+- GitHub CI/Pages for `1c47aef`: success.
 - VPS runtime: WindsurfAPI is healthy on release `v2.0.142`, commit
-  `72e1b9cf079e`, through the compose entry on `:3003`. v2.0.143 is
-  tagged and pushed but not yet deployed to VPS.
+  `72e1b9cf079e`, through the compose entry on `:3003`. v2.0.144 is
+  tagged, pushed, and verified in a memory-safe lab, but not yet deployed to
+  the production VPS.
 - VPS public port 80 is not a WindsurfAPI health signal in the current setup; it
   may be served by another Apache/PHP stack and can show an HTML 404 page.
 
@@ -40,7 +41,7 @@ into this file.
 | --- | --- | --- |
 | #177 | Broad degraded-model / tool-failure bucket. Keep open. | Require client, route, model, tool names/count, `ToolRoute[...]`, and `Probe[...]` logs before making new claims. |
 | #178 | "No tools get called" bucket. Keep open. | Use `ToolRoute[...]` and `Probe[...]` to distinguish stripped tools, native gate misses, compacted preambles, and model narration. |
-| #183 | WebSearch/WebFetch user-input loss/repetition. Keep open. | Continue protocol lab work in a memory-safe environment; do not bypass the production VPS memory guard. |
+| #183 | WebSearch/WebFetch user-input loss/repetition. Keep open for retest. | v2.0.144 fixes completed native WebFetch document handling in lab-gated mode; next step is controlled deployment/retest and issue response. |
 | #185 | Cursor truncation / stray JSON. Keep open for reporter retest. | v2.0.142 fixed post-content error JSON tails, but upstream provider deadlines can still truncate long streams. |
 | #186 | Gemini / DeepSeek wishlist plus SWE mention. Keep open. | Treat Gemini/DeepSeek as upstream catalog watch. SWE is tracked in #190. |
 | #190 | SWE-1.6 / SWE-1.6-fast. Keep open. | Build special-agent / Devin / ACP POC; do not treat this as ordinary Cascade catalog support. |
@@ -65,8 +66,11 @@ Closed recently and not currently the main thread: #191, #189, #176, #180,
    - direct WebFetch/read-url endpoint is not confirmed,
    - official WebFetch appears to require LS requested interaction plus
      `HandleCascadeUserInteraction`,
-   - success requires a completed document payload, not natural-language
-     narration or a repeated permission prompt.
+   - v2.0.144 verified that completed `read_url_content.web_document` payloads
+     can arrive together with a requested-interaction echo,
+   - success requires surfacing Cascade's final answer or the completed
+     document payload, not returning the completed step as a dead tool-call
+     proposal.
 4. Keep Read/Grep/Glob/WebSearch/WebFetch out of the default native bridge
    allowlist until runtime traces prove arguments, results, and execution
    boundary.
@@ -130,6 +134,16 @@ For docs-only changes:
   smoke (tools/media boundary), and /health bounded limits exposure.
 - v2.0.143 wrapped HandleCascadeUserInteraction in try/catch with hash-based
   safe logging; approval failures no longer terminate polling.
+- v2.0.144 fixes native WebFetch completed-document handling for lab-gated
+  `read_url_content`: completed `web_document` steps are no longer surfaced as
+  dead OpenAI tool-call proposals, and the proxy preserves Cascade's final
+  assistant text or falls back to document text when needed.
+- v2.0.144 also fixes proto-trace classification so steps containing both a
+  completed `web_document` and requested-interaction echo are classified as
+  `completed_web_document`.
+- Lab verification for #183 proved the original memory guard was an environment
+  blocker, not protocol evidence; on a memory-safe host, LS could fetch
+  `example.com`, and the proxy-side completed-document surfacing bug was fixed.
 - WebFetch VPS canary after v2.0.141 did not reach protocol execution because
   LS preflight refused with `ls_capacity:memory_guard`; that is not protocol
   evidence.
