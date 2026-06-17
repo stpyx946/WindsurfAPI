@@ -1,7 +1,9 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http from 'node:http';
 import { config } from '../src/config.js';
 import { configureBindHost, getAccountList, removeAccount, _resetLockoutForTests } from '../src/auth.js';
+import { startServer } from '../src/server.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { getEffectiveProxy, removeProxy } from '../src/dashboard/proxy-config.js';
 import { setRuntimeApiKey, setRuntimeDashboardPassword } from '../src/runtime-config.js';
@@ -9,7 +11,10 @@ import { setRuntimeApiKey, setRuntimeDashboardPassword } from '../src/runtime-co
 const originalAllowPrivate = config.allowPrivateProxyHosts;
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
+const originalHost = config.host;
+const originalPort = config.port;
 const createdAccountIds = new Set();
+let runningServer = null;
 
 function fakeRes() {
   return {
@@ -25,13 +30,19 @@ function snapshotAccountIds() {
   return getAccountList().map(a => a.id);
 }
 
-afterEach(() => {
+afterEach(async () => {
+  if (runningServer) {
+    await new Promise(resolve => runningServer.close(resolve));
+    runningServer = null;
+  }
   _resetLockoutForTests();
   setRuntimeApiKey('');
   setRuntimeDashboardPassword('');
   config.allowPrivateProxyHosts = originalAllowPrivate;
   config.dashboardPassword = originalDashboardPassword;
   config.apiKey = originalApiKey;
+  config.host = originalHost;
+  config.port = originalPort;
   configureBindHost('127.0.0.1');
   for (const a of getAccountList()) {
     if (typeof a.email === 'string' && a.email.startsWith('test-proxy-ordering-')) {
@@ -43,6 +54,41 @@ afterEach(() => {
     createdAccountIds.delete(id);
   }
 });
+
+function waitListening(server) {
+  return new Promise(resolve => {
+    if (server.address()) return resolve();
+    server.once('listening', resolve);
+  });
+}
+
+async function postJson(port, path, body, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const payload = JSON.stringify(body);
+    const req = http.request({
+      host: '127.0.0.1',
+      port,
+      path,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(payload),
+        ...headers,
+      },
+    }, res => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        resolve({
+          statusCode: res.statusCode,
+          body: raw ? JSON.parse(raw) : null,
+        });
+      });
+    });
+    req.on('error', reject);
+    req.end(payload);
+  });
+}
 
 describe('POST /accounts proxy ordering (regression for PR #90 follow-up)', () => {
   it('does NOT create account when proxy format is invalid', async () => {
@@ -92,6 +138,78 @@ describe('POST /accounts proxy ordering (regression for PR #90 follow-up)', () =
     assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}: ${res.body}`);
     assert.ok(/PRIVATE|private|local/i.test(res.json().error || ''), `expected private-host error, got ${res.json().error}`);
     assert.deepEqual(after, before, 'no account should be created when private proxy is rejected');
+  });
+
+  it('does NOT create account from batch-import when item proxy host is private', async () => {
+    _resetLockoutForTests();
+    setRuntimeApiKey('');
+    setRuntimeDashboardPassword('');
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    config.allowPrivateProxyHosts = false;
+    configureBindHost('127.0.0.1');
+
+    const before = snapshotAccountIds();
+    const label = `test-proxy-ordering-batch-${Date.now()}`;
+    const text = JSON.stringify([{
+      api_key: `key-${label}`,
+      label,
+      proxy: 'http://127.0.0.1:8080',
+    }]);
+    const res = fakeRes();
+    await handleDashboardApi(
+      'POST',
+      '/batch-import',
+      { text, autoAdd: true },
+      { headers: {}, socket: { remoteAddress: '127.0.0.1' } },
+      res
+    );
+    const after = snapshotAccountIds();
+    const body = res.json();
+
+    assert.equal(res.statusCode, 200, `expected 200 batch result, got ${res.statusCode}: ${res.body}`);
+    assert.equal(body.successCount, 0);
+    assert.equal(body.failCount, 1);
+    assert.equal(body.results[0].success, false);
+    assert.match(body.results[0].error, /ERR_PROXY_PRIVATE_(HOST|IP)|private|local/i);
+    assert.deepEqual(after, before, 'no account should be created when batch-import proxy is rejected');
+  });
+
+  it('does NOT create account from /auth/login when proxy host is private', async () => {
+    _resetLockoutForTests();
+    setRuntimeApiKey('');
+    setRuntimeDashboardPassword('');
+    config.dashboardPassword = '';
+    config.apiKey = 'test-admin-key';
+    config.allowPrivateProxyHosts = false;
+    config.host = '127.0.0.1';
+    config.port = 0;
+
+    const before = snapshotAccountIds();
+    runningServer = startServer();
+    await waitListening(runningServer);
+    const port = runningServer.address().port;
+    const label = `test-proxy-ordering-auth-${Date.now()}`;
+
+    try {
+      const res = await postJson(
+        port,
+        '/auth/login',
+        {
+          api_key: `key-${label}`,
+          label,
+          proxy: 'http://127.0.0.1:8080',
+        },
+        { authorization: 'Bearer test-admin-key' }
+      );
+      const after = snapshotAccountIds();
+
+      assert.equal(res.statusCode, 400, `expected 400, got ${res.statusCode}: ${JSON.stringify(res.body)}`);
+      assert.match(res.body.error, /ERR_PROXY_PRIVATE_(HOST|IP)|private|local/i);
+      assert.deepEqual(after, before, 'no account should be created when /auth/login proxy is rejected');
+    } finally {
+      config.port = originalPort;
+    }
   });
 
   it('creates account with valid public proxy and binds account-level proxy', async () => {

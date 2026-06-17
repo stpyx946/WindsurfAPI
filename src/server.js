@@ -25,7 +25,7 @@ import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
-import { handleDashboardApi, parseProxyUrl } from './dashboard/api.js';
+import { handleDashboardApi, parseProxyUrl, validateProxyHost } from './dashboard/api.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { getVersionInfo } from './version.js';
@@ -294,18 +294,25 @@ async function route(req, res) {
 
     try {
       // ── bind proxy to account ──────────────────────
-      function bindAccountProxy(accountId, proxyStr) {
-        if (!proxyStr) return;
+      async function parseAndValidateAccountProxy(proxyStr) {
+        if (!proxyStr) return null;
         const parsed = parseProxyUrl(proxyStr);
-        if (parsed) {
-          setAccountProxy(accountId, parsed);
+        if (!parsed) {
+          log.warn(`auth/login: ignoring invalid proxy format: ${String(proxyStr).slice(0, 80)}`);
+          return null;
+        }
+        await validateProxyHost(parsed);
+        return parsed;
+      }
+
+      function bindAccountProxy(accountId, parsedProxy) {
+        if (parsedProxy) {
+          setAccountProxy(accountId, parsedProxy);
           if (process.env.LS_PREWARM_ON_ACCOUNT_ADD === '1' || process.env.LS_PREWARM_PROXIES === '1') {
             ensureLsForAccount(accountId).then(r => {
               if (r && !r.ok) log.warn(`LS ensure skipped/failed: ${r.errorType || r.error}`);
             }).catch(e => log.warn(`LS ensure failed: ${e.message}`));
           }
-        } else {
-          log.warn(`auth/login: ignoring invalid proxy format: ${String(proxyStr).slice(0, 80)}`);
         }
       }
 
@@ -314,6 +321,7 @@ async function route(req, res) {
         const results = [];
         for (const acct of body.accounts) {
           try {
+            const parsedProxy = await parseAndValidateAccountProxy(acct.proxy);
             let result;
             if (acct.api_key) {
               result = addAccountByKey(acct.api_key, acct.label);
@@ -325,7 +333,7 @@ async function route(req, res) {
               results.push({ error: 'Missing credentials' });
               continue;
             }
-            bindAccountProxy(result.id, acct.proxy);
+            bindAccountProxy(result.id, parsedProxy);
             results.push({ id: result.id, email: result.email, status: result.status });
           } catch (err) {
             results.push({ email: acct.email, error: err.message });
@@ -335,6 +343,7 @@ async function route(req, res) {
       }
 
       // Single account
+      const parsedProxy = await parseAndValidateAccountProxy(body.proxy);
       let account;
       if (body.api_key) {
         account = addAccountByKey(body.api_key, body.label);
@@ -346,7 +355,7 @@ async function route(req, res) {
         return json(res, 400, { error: 'Provide api_key, token, or email+password' });
       }
 
-      bindAccountProxy(account.id, body.proxy);
+      bindAccountProxy(account.id, parsedProxy);
 
       return json(res, 200, {
         success: true,
@@ -355,7 +364,8 @@ async function route(req, res) {
       });
     } catch (err) {
       log.error('Login failed:', err.message);
-      return json(res, 401, { error: err.message });
+      const status = /^ERR_PROXY_/i.test(err.message || '') ? 400 : 401;
+      return json(res, status, { error: err.message });
     }
   }
 

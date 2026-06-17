@@ -104,6 +104,15 @@ export function parseProxyUrl(proxy) {
   };
 }
 
+export async function validateProxyHost(proxy) {
+  if (!proxy?.host) return;
+  if (config.allowPrivateProxyHosts) {
+    await validateHostFormat(proxy.host);
+  } else {
+    await assertPublicUrlHost(proxy.host);
+  }
+}
+
 export function buildBatchProxyBinding(result, proxy) {
   const accountId = result?.account?.id || null;
   if (!result?.success || !proxy || !accountId) return null;
@@ -542,11 +551,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           return json(res, 400, { error: 'ERR_PROXY_FORMAT_INVALID' });
         }
         try {
-          if (config.allowPrivateProxyHosts) {
-            await validateHostFormat(parsedProxy.host);
-          } else {
-            await assertPublicUrlHost(parsedProxy.host);
-          }
+          await validateProxyHost(parsedProxy);
         } catch (e) {
           return json(res, 400, { error: e.message || 'ERR_PROXY_INVALID' });
         }
@@ -981,10 +986,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // gate the add-account path uses, otherwise a dashboard-authenticated
     // caller can pin the global proxy at 127.0.0.1 / 169.254.169.254 /
     // any internal socket, then upstream egress flows through it. Skip
-    // when the operator explicitly allows private hosts or when the
-    // body has no host (clearing the global proxy via empty PUT).
-    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
-      try { await assertPublicUrlHost(body.host); }
+    // when the operator explicitly allows private hosts, only validate
+    // host format. Empty body / no host = clearing the global proxy via
+    // empty PUT.
+    if (body && typeof body === 'object' && body.host) {
+      try { await validateProxyHost(body); }
       catch (e) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
@@ -1003,8 +1009,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // Same H3 gate as /proxy/global PUT — per-account proxies were the
     // other half of the bypass. Empty body / no host = clearing the
     // proxy, leave it unvalidated.
-    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
-      try { await assertPublicUrlHost(body.host); }
+    if (body && typeof body === 'object' && body.host) {
+      try { await validateProxyHost(body); }
       catch (e) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
@@ -1339,6 +1345,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           continue;
         }
         try {
+          if (item.proxy) await validateProxyHost(item.proxy);
           let result;
           if (item.kind === 'email_password') {
             const loginProxy = item.proxy || getProxyConfig().global;

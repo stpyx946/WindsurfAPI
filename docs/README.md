@@ -17,6 +17,9 @@
 
 ## Protocol And Product Notes
 
+- [Architecture Review](review.html): project map from startup to HTTP routes,
+  protocol bridge, account/LS pools, dashboard, security boundaries, tests,
+  and core runtime behavior.
 - [Native Bridge Protocol Notes](native-bridge-protocol-notes.md): protobuf and
   runtime trace notes for native bridge protocol work.
 - [Dashboard i18n](dashboard-i18n.md): dashboard localization notes.
@@ -33,3 +36,4 @@
 
 - [index.html](index.html): GitHub Pages/static docs output. Do not use it as
   the canonical place for operational status.
+- [review.html](review.html): public architecture review page.

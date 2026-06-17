@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WindsurfAPI Architecture Review</title>
+<meta name="description" content="WindsurfAPI project architecture review: startup flow, HTTP routes, protocol bridge, account pool, LangServer pool, tool routing, dashboard, security boundaries, and tests.">
+<meta name="theme-color" content="#F7F6F1">
+<style>
+*{box-sizing:border-box}
+:root{
+  --bg:#f7f6f1;
+  --paper:#fff;
+  --ink:#171513;
+  --soft:#4f4a42;
+  --muted:#746f65;
+  --rule:#ded8ca;
+  --rule2:#ece7dc;
+  --accent:#b65335;
+  --accent2:#245f73;
+  --green:#3e6f45;
+  --gold:#9a6a24;
+  --mono:"SF Mono","JetBrains Mono",Consolas,ui-monospace,monospace;
+  --sans:"Inter","Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.62;font-size:16px}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+code{font-family:var(--mono);font-size:.9em;background:var(--rule2);border:1px solid var(--rule);border-radius:4px;padding:.08rem .28rem}
+nav{position:sticky;top:0;z-index:20;background:rgba(247,246,241,.94);border-bottom:1px solid var(--rule);backdrop-filter:blur(8px)}
+.nav-inner{max-width:1180px;margin:auto;padding:.85rem 1.4rem;display:flex;align-items:center;justify-content:space-between;gap:1rem}
+.brand{font-weight:700;color:var(--ink);letter-spacing:0}
+.nav-links{display:flex;align-items:center;gap:1rem;font-size:.9rem}
+.nav-links a{color:var(--soft)}
+.wrap{max-width:1180px;margin:auto;padding:0 1.4rem}
+.hero{padding:4.8rem 0 3.8rem;border-bottom:1px solid var(--rule)}
+.hero-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);gap:2rem;align-items:end}
+.kicker{font-size:.78rem;text-transform:uppercase;letter-spacing:.14em;color:var(--accent);font-weight:700;margin-bottom:.8rem}
+h1{font-size:clamp(2.4rem,6vw,4.6rem);line-height:1.02;letter-spacing:0;margin:.2rem 0 1rem}
+.lede{font-size:1.12rem;color:var(--soft);max-width:760px;margin:0}
+.hero-panel{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:1.1rem}
+.hero-panel h2{font-size:1rem;margin:0 0 .75rem}
+.facts{display:grid;grid-template-columns:1fr 1fr;gap:.6rem}
+.fact{border:1px solid var(--rule2);border-radius:6px;padding:.75rem;background:#fbfaf6}
+.fact b{display:block;font-size:1.5rem;line-height:1;color:var(--accent2);margin-bottom:.25rem}
+.fact span{font-size:.82rem;color:var(--muted)}
+section{padding:3.6rem 0;border-bottom:1px solid var(--rule)}
+.section-head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;margin-bottom:1.4rem}
+h2{font-size:2rem;line-height:1.14;margin:0}
+.sub{color:var(--muted);max-width:680px;margin:.45rem 0 0}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:1rem}
+.grid.two{grid-template-columns:repeat(2,1fr)}
+.card{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:1rem}
+.card h3{margin:0 0 .55rem;font-size:1.04rem}
+.card p{margin:.4rem 0;color:var(--soft)}
+.tagrow{display:flex;flex-wrap:wrap;gap:.45rem;margin-top:.75rem}
+.tag{font-family:var(--mono);font-size:.72rem;color:var(--soft);background:#f4f1e8;border:1px solid var(--rule);border-radius:999px;padding:.18rem .48rem}
+.flow{display:grid;grid-template-columns:repeat(5,1fr);gap:.75rem;counter-reset:step}
+.step{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:1rem;position:relative}
+.step:before{counter-increment:step;content:counter(step);display:inline-flex;width:1.5rem;height:1.5rem;align-items:center;justify-content:center;border-radius:50%;background:var(--accent);color:#fff;font-size:.78rem;font-weight:700;margin-bottom:.65rem}
+.step h3{font-size:.98rem;margin:.1rem 0 .35rem}
+.step p{font-size:.9rem;margin:0;color:var(--soft)}
+.tree{background:#181612;color:#f0eadf;border-radius:8px;padding:1rem;overflow:auto;border:1px solid #2f2a22}
+.tree code{display:block;background:transparent;border:0;color:#f0eadf;padding:0;white-space:pre;font-size:.88rem}
+table{width:100%;border-collapse:collapse;background:var(--paper);border:1px solid var(--rule);border-radius:8px;overflow:hidden}
+th,td{text-align:left;vertical-align:top;border-bottom:1px solid var(--rule2);padding:.78rem .85rem}
+th{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);background:#f6f2e9}
+td{color:var(--soft)}
+tr:last-child td{border-bottom:0}
+.route{font-family:var(--mono);font-size:.88rem;color:var(--ink);white-space:nowrap}
+.route.long{white-space:normal}
+.note{border-left:4px solid var(--accent2);background:#eef5f6;padding:1rem;border-radius:0 8px 8px 0;color:#274a55}
+.warn{border-left-color:var(--gold);background:#fbf3df;color:#604514}
+.ok{border-left-color:var(--green);background:#edf5ed;color:#284f2e}
+.refs{font-size:.86rem;color:var(--muted)}
+.refs a{color:var(--soft)}
+.test-map{display:grid;grid-template-columns:repeat(7,1fr);gap:.65rem}
+.test-box{background:var(--paper);border:1px solid var(--rule);border-radius:8px;padding:.75rem}
+.test-box b{display:block;font-size:1.6rem;color:var(--accent2);line-height:1}
+.test-box span{font-size:.78rem;color:var(--muted)}
+footer{padding:2rem 0;color:var(--muted);font-size:.9rem}
+@media(max-width:940px){
+  .hero-grid,.grid,.grid.two{grid-template-columns:1fr}
+  .flow{grid-template-columns:1fr 1fr}
+  .test-map{grid-template-columns:1fr 1fr}
+}
+@media(max-width:640px){
+  .nav-links{display:none}
+  .flow{grid-template-columns:1fr}
+  .facts{grid-template-columns:1fr}
+  th,td{display:block}
+  th{border-bottom:0}
+  .route{white-space:normal}
+}
+</style>
+</head>
+<body>
+<nav>
+  <div class="nav-inner">
+    <a class="brand" href="index.html">WindsurfAPI</a>
+    <div class="nav-links">
+      <a href="#position">定位</a>
+      <a href="#startup">启动</a>
+      <a href="#tree">树</a>
+      <a href="#routes">路由</a>
+      <a href="#core">核心</a>
+      <a href="#tests">测试</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <div class="kicker">Architecture Review · 2026-06-17</div>
+      <h1>从启动入口读完整个 WindsurfAPI</h1>
+      <p class="lede">这页把项目按运行路径拆开：Node 入口、HTTP 路由、OpenAI/Anthropic 兼容层、Windsurf Cascade 协议桥、账号池、LangServer 池、工具调用、Dashboard、部署与测试。它不是发布公告，而是给维护者和代码阅读者看的项目地图。</p>
+    </div>
+    <aside class="hero-panel">
+      <h2>Repository Snapshot</h2>
+      <div class="facts">
+        <div class="fact"><b>0</b><span>runtime npm dependencies</span></div>
+        <div class="fact"><b>3</b><span>SDK-compatible API families</span></div>
+        <div class="fact"><b>100+</b><span>model catalog entries</span></div>
+        <div class="fact"><b>114</b><span>root tests run by npm test</span></div>
+      </div>
+    </aside>
+  </div>
+</header>
+
+<main>
+  <section id="position">
+    <div class="wrap">
+      <div class="section-head">
+        <div>
+          <div class="kicker">Position</div>
+          <h2>项目定位</h2>
+          <p class="sub">WindsurfAPI 是一个零依赖 Node.js 本地代理，把 Windsurf / Codeium 的本地 Language Server 和 Cascade 云端能力包装成常见 SDK 能直接接入的 API 面。</p>
+        </div>
+      </div>
+      <div class="grid">
+        <article class="card">
+          <h3>兼容 API 网关</h3>
+          <p>同一进程暴露 OpenAI Chat Completions、OpenAI Responses 和 Anthropic Messages 三套入口，内部统一落到 chat handler 和 Cascade 请求模型。</p>
+          <div class="tagrow"><span class="tag">/v1/chat/completions</span><span class="tag">/v1/responses</span><span class="tag">/v1/messages</span></div>
+        </article>
+        <article class="card">
+          <h3>账号与 LS 池</h3>
+          <p>账号池负责 API key、token、限流、能力探测和模型可用性；LangServer 池按默认实例或代理实例启动、复用和回收本地 LS 进程。</p>
+          <div class="tagrow"><span class="tag">src/auth.js</span><span class="tag">src/langserver.js</span></div>
+        </article>
+        <article class="card">
+          <h3>协议翻译层</h3>
+          <p>核心协议层把标准请求翻译成 RawGetChatMessage 或 Cascade trajectory，再把上游文本、thinking、tool calls、usage 和错误翻译回客户端格式。</p>
+          <div class="tagrow"><span class="tag">src/client.js</span><span class="tag">src/windsurf.js</span><span class="tag">src/grpc.js</span></div>
+        </article>
+      </div>
+      <div class="note" style="margin-top:1rem">这个项目不在服务端直接操作调用方本地文件。标准路径是代理产生或转译 <code>tool_use</code> / <code>tool_calls</code>，由 Claude Code、Cline、Cursor、Aider 等客户端在调用方机器上执行工具并把结果送回下一轮。</div>
+    </div>
+  </section>
+
+  <section id="startup">
+    <div class="wrap">
+      <div class="kicker">Startup</div>
+      <h2>启动链路</h2>
+      <p class="sub">入口是 <code>node src/index.js</code>。启动路径先准备运行环境，再启动 HTTP 服务；LS 缺失时会告警并继续提供健康检查和管理面，关闭路径负责中止 SSE、保存账号状态和停止 LS。</p>
+      <div class="flow" style="margin-top:1.2rem">
+        <div class="step"><h3>加载 logger 与配置</h3><p><code>src/index.js</code> 首行导入 dashboard logger，然后读 <code>config</code>、版本信息和核心模块。</p></div>
+        <div class="step"><h3>准备 workspace</h3><p>当 LS binary 存在时，<code>resetWorkspace()</code> 清空临时 workspace，避免上次 Cascade 工具痕迹污染新会话。</p></div>
+        <div class="step"><h3>准备 LangServer</h3><p>缺二进制时按平台提示或自动安装；HTTP 仍会启动，LS 可预热 default 实例，也可按配置延迟到首个请求。</p></div>
+        <div class="step"><h3>初始化账号池</h3><p><code>initAuth()</code> 读取和迁移账号状态，后台刷新 Firebase token、能力探测和 drought 摘要。</p></div>
+        <div class="step"><h3>启动 HTTP</h3><p><code>startServer()</code> 注册路由、CORS、认证门和 Dashboard 静态页；信号处理和 graceful shutdown 留在 <code>src/index.js</code>。</p></div>
+      </div>
+      <p class="refs">Source: <a href="https://github.com/dwgx/WindsurfAPI/blob/master/src/index.js">src/index.js</a>, <a href="https://github.com/dwgx/WindsurfAPI/blob/master/src/server.js">src/server.js</a>, <a href="https://github.com/dwgx/WindsurfAPI/blob/master/src/config.js">src/config.js</a></p>
+    </div>
+  </section>
+
+  <section id="cascade">
+    <div class="wrap">
+      <div class="kicker">Cascade Flow</div>
+      <h2>Windsurf / Cascade 协议链路</h2>
+      <p class="sub">内部不是把 HTTP 请求直接转发到一个云 API，而是和本地 Language Server 说 gRPC。Cascade 路径先初始化 panel/workspace，再启动 cascade，发送用户消息，然后轮询 trajectory。</p>
+      <div class="flow" style="margin-top:1.2rem">
+        <div class="step"><h3>Panel warmup</h3><p><code>InitializeCascadePanelState</code>、<code>AddTrackedWorkspace</code>、<code>UpdateWorkspaceTrust</code>、<code>Heartbeat</code> 建立 LS 侧状态。</p></div>
+        <div class="step"><h3>StartCascade</h3><p><code>WindsurfClient.cascadeChat()</code> 调用 <code>buildStartCascadeRequest()</code> 拿到 <code>cascade_id</code>。</p></div>
+        <div class="step"><h3>Send message</h3><p><code>buildSendCascadeMessageRequest()</code> 拼装模型、history、tool preamble、native allowlist 和附加步骤。</p></div>
+        <div class="step"><h3>Poll trajectory</h3><p>循环读取 <code>GetCascadeTrajectorySteps</code> 和 <code>GetCascadeTrajectory</code>，只把新增 text/thinking/tool step 发给上层。</p></div>
+        <div class="step"><h3>Reuse context</h3><p><code>conversation-pool</code> 复用 <code>cascade_id</code>，按 caller、model、tools、history、LS generation 做隔离。</p></div>
+      </div>
+      <div class="grid two" style="margin-top:1rem">
+        <div class="card">
+          <h3>Transport split</h3>
+          <p><code>src/grpc.js</code> 管 HTTP/2 gRPC session、unary 和 stream；<code>src/connect.js</code> 是可选 Connect envelope；<code>src/proto.js</code> 是 schema-less wire codec；<code>src/windsurf.js</code> 才是业务 protobuf builder/parser。</p>
+        </div>
+        <div class="card">
+          <h3>Trace boundary</h3>
+          <p><code>WINDSURFAPI_PROTO_TRACE=1</code> 才开启协议 trace。默认只记录长度、hash、字段树和语义摘要；字符串 preview 属于受控调试开关，不适合公网长期打开。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tree">
+    <div class="wrap">
+      <div class="kicker">Repository Tree</div>
+      <h2>目录树读法</h2>
+      <p class="sub">这个仓库不是传统 MVC。更准确的读法是：入口层、兼容 handler、Cascade 协议层、账号/LS 运行时、Dashboard 管理面、测试与 docs。</p>
+      <div class="tree"><code>WindsurfAPI
+├─ src/index.js                 process entry, LS bootstrap, shutdown
+├─ src/server.js                HTTP route hub, auth gate, body limit
+├─ src/handlers/
+│  ├─ chat.js                   OpenAI Chat core pipeline
+│  ├─ responses.js              Responses API adapter
+│  ├─ messages.js               Anthropic Messages adapter
+│  ├─ tool-emulation.js         prompt-level tool protocol
+│  └─ intent-extractor.js       narrative tool-call recovery
+├─ src/client.js                WindsurfClient, Cascade loop, polling
+├─ src/windsurf.js              protobuf builders and parsers
+├─ src/grpc.js / connect.js     HTTP/2 gRPC and Connect transport
+├─ src/auth.js                  account pool, rate limits, probes
+├─ src/langserver.js            LS process pool, memory guard, proxy keys
+├─ src/cascade-native-bridge.js native tool bridge mapping and gates
+├─ src/dashboard/               management API, UI, i18n, self-update
+├─ scripts/                     smoke tests, docs model generation, scans
+├─ test/                        focused unit/integration invariants
+└─ docs/                        public site, maintainer docs, audits</code></div>
+    </div>
+  </section>
+
+  <section id="routes">
+    <div class="wrap">
+      <div class="kicker">HTTP Surface</div>
+      <h2>路由表</h2>
+      <p class="sub"><code>src/server.js</code> 直接按路径分发。<code>/health</code> 基础响应公开且包含部署指纹；verbose health、API 路由和管理读写动作分别经过 API key 或 dashboard password 边界。</p>
+      <table>
+        <thead><tr><th>Route</th><th>Handler</th><th>Role</th><th>Boundary</th></tr></thead>
+        <tbody>
+          <tr><td class="route">GET /health</td><td><code>route()</code></td><td>版本、commit、branch、uptime、账号计数；带合法 key 和 <code>verbose=1</code> 时附加池/缓存/native 状态。</td><td>基础公开；公网可在反代层限制。</td></tr>
+          <tr><td class="route">GET /v1/models</td><td><code>handleModels()</code></td><td>返回 OpenAI 格式模型目录。</td><td>API key gate。</td></tr>
+          <tr><td class="route">POST /v1/chat/completions</td><td><code>handleChatCompletions()</code></td><td>主 OpenAI Chat 路径，处理模型解析、账号选择、Cascade、stream、tool calls、usage。</td><td>API key + account pool。</td></tr>
+          <tr><td class="route">POST /v1/responses</td><td><code>handleResponses()</code></td><td>把 Responses input/tool/text format 转成 chat，再把 SSE/非流式结果转回 Responses 事件；<code>/v1/response</code> 是兼容别名。</td><td>API key + account pool + input validation。</td></tr>
+          <tr><td class="route">POST /v1/messages</td><td><code>handleMessages()</code></td><td>Anthropic Messages 兼容层，转换 system/content/tool_use/tool_result/thinking/cache policy。</td><td>API key + Anthropic error shape。</td></tr>
+          <tr><td class="route">/auth/*</td><td><code>auth.js</code> helpers</td><td>账号添加、列表、删除、状态。</td><td>API key gate。</td></tr>
+          <tr><td class="route long">GET /dashboard, /dashboard/i18n/*, /dashboard/data/*</td><td><code>route()</code></td><td>Dashboard shell、翻译 JSON、贡献者等静态数据。</td><td>公开静态资源；文件名白名单。</td></tr>
+          <tr><td class="route">/dashboard/api/*</td><td><code>handleDashboardApi()</code></td><td>账号、代理、模型访问、自更新、日志、运行时凭证等 operator 管理动作。</td><td><code>X-Dashboard-Password</code>；公网无密码 fail closed。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="core">
+    <div class="wrap">
+      <div class="kicker">Core Methods</div>
+      <h2>核心模块与方法</h2>
+      <table>
+        <thead><tr><th>Subsystem</th><th>Files</th><th>Key methods</th><th>What to know before editing</th></tr></thead>
+        <tbody>
+          <tr><td>Chat pipeline</td><td><code>src/handlers/chat.js</code></td><td><code>handleChatCompletions</code>, <code>buildToolRoutingPlan</code>, <code>filterToolCallsByAllowlist</code></td><td>这是最大文件，也是语义中心。改动会影响 stream、non-stream、tool calls、cache、account retry 和 conversation reuse。</td></tr>
+          <tr><td>Protocol bridge</td><td><code>src/client.js</code>, <code>src/windsurf.js</code></td><td><code>WindsurfClient.cascadeChat</code>, <code>buildSendCascadeMessageRequest</code>, <code>parseTrajectorySteps</code></td><td>Cascade 是 StartCascade -> SendUserCascadeMessage -> poll trajectory/generator metadata 的状态机，timeout 和 retry 不是普通 HTTP retry。</td></tr>
+          <tr><td>Transport</td><td><code>src/grpc.js</code>, <code>src/connect.js</code>, <code>src/proto.js</code></td><td><code>grpcUnary</code>, <code>grpcStream</code>, <code>StreamingFrameParser</code>, <code>parseFields</code></td><td>gRPC 是默认路径，Connect 可用环境变量切换；proto 层是手写最小编码/解析器。</td></tr>
+          <tr><td>Accounts</td><td><code>src/auth.js</code>, <code>src/account/sticky-session.js</code></td><td><code>initAuth</code>, <code>getApiKey</code>, <code>releaseAccount</code>, <code>probeAccount</code></td><td>账号选择同时看模型权限、RPM、错误状态、drought、sticky caller 和后台维护状态。</td></tr>
+          <tr><td>LangServer pool</td><td><code>src/langserver.js</code></td><td><code>ensureLs</code>, <code>getLsAdmissionStatus</code>, <code>getLsMemoryGuardStatus</code></td><td>每个代理可以有独立 LS，池容量受内存、空闲回收、pending start reservation 和进程健康影响。</td></tr>
+          <tr><td>Tools</td><td><code>tool-emulation.js</code>, <code>intent-extractor.js</code>, <code>cascade-native-bridge.js</code></td><td><code>buildToolPreamble</code>, <code>extractIntentFromNarrative</code>, <code>getNativeBridgeDecision</code></td><td>默认安全路径是 prompt-level emulation；native bridge 只在显式 gate 下把映射工具送进 Cascade planner。</td></tr>
+          <tr><td>Dashboard</td><td><code>src/dashboard/api.js</code>, <code>src/dashboard/index.html</code></td><td><code>handleDashboardApi</code>, <code>checkAuth</code>, <code>parseProxyUrl</code></td><td>管理面可改凭证、代理、LS、自更新、模型访问；公网绑定必须有明确 dashboard password。</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="compat">
+    <div class="wrap">
+      <div class="kicker">Compatibility</div>
+      <h2>三套 API 如何收敛</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>OpenAI Chat</h3>
+          <p><code>handleChatCompletions()</code> 是内部主干，负责模型解析、账号选择、LS 获取、Cascade/legacy 分流、stream/non-stream、cache、tool routing 和错误响应。</p>
+          <div class="tagrow"><span class="tag">handleChatCompletions</span><span class="tag">streamResponse</span><span class="tag">nonStreamResponse</span></div>
+        </div>
+        <div class="card">
+          <h3>Anthropic Messages</h3>
+          <p><code>handleMessages()</code> 先把 <code>system</code>、content blocks、<code>tool_use</code>、<code>tool_result</code>、thinking 和 cache policy 转成内部 Chat 形态，再把结果转回 Anthropic event/message。</p>
+          <div class="tagrow"><span class="tag">anthropicToOpenAI</span><span class="tag">openAIToAnthropic</span><span class="tag">AnthropicStreamTranslator</span></div>
+        </div>
+        <div class="card">
+          <h3>OpenAI Responses</h3>
+          <p><code>handleResponses()</code> 把 instructions、input items、function_call、custom tool、web_search 和 text.format 归一成 Chat 请求，再把 SSE 转成 Responses 生命周期事件。</p>
+          <div class="tagrow"><span class="tag">responsesToChat</span><span class="tag">flattenResponseTool</span><span class="tag">response.completed</span></div>
+        </div>
+      </div>
+      <div class="note warn" style="margin-top:1rem">Responses 的 <code>file_search</code>、<code>computer_use_preview</code>、<code>mcp</code> 这类 server-side tools 当前不会被伪装成已实现能力；适配层会丢弃无法桥接的 server-side tool 类型，保留普通 function tool 路径。</div>
+    </div>
+  </section>
+
+  <section id="data">
+    <div class="wrap">
+      <div class="kicker">State Flow</div>
+      <h2>数据与状态</h2>
+      <div class="grid two">
+        <div class="card">
+          <h3>持久化状态</h3>
+          <p><code>DATA_DIR</code> 收敛账号、运行时配置、统计、日志等 JSON/日志状态。Docker 默认挂载到 <code>/data</code>，本地默认使用项目根或配置目录。</p>
+          <div class="tagrow"><span class="tag">accounts.json</span><span class="tag">runtime-config.json</span><span class="tag">stats.json</span><span class="tag">logs/</span></div>
+        </div>
+        <div class="card">
+          <h3>运行时池</h3>
+          <p>请求进入 handler 后先解析模型和调用方 key，再从账号池取一个可用账号，按账号代理确保 LS 实例，最后用对应 port/csrfToken 调用 WindsurfClient。</p>
+          <div class="tagrow"><span class="tag">callerKey</span><span class="tag">account reservation</span><span class="tag">LS key</span><span class="tag">cascade id</span></div>
+        </div>
+        <div class="card">
+          <h3>账号选择</h3>
+          <p>账号池不是简单 round-robin。选择会综合 active 状态、模型 entitlement、per-model cooldown、RPM、inflight、quota score、sticky binding 和 caller hash。</p>
+          <div class="tagrow"><span class="tag">getApiKey</span><span class="tag">quotaScore</span><span class="tag">sticky-session</span></div>
+        </div>
+        <div class="card">
+          <h3>LS admission</h3>
+          <p>LangServer 池按 default/proxy key 隔离，启动前检查 pool 容量、pending start reservation、内存水位和 idle non-default 可驱逐实例。</p>
+          <div class="tagrow"><span class="tag">ensureLs</span><span class="tag">getLsAdmissionStatus</span><span class="tag">memory guard</span></div>
+        </div>
+      </div>
+      <div class="note warn" style="margin-top:1rem">Native bridge、local Windsurf import、Dashboard self-update、runtime credential rotation 都是管理面或实验能力。公开说明里应把这些写成有边界的 operator features，而不是默认推荐路径。</div>
+    </div>
+  </section>
+
+  <section id="tools">
+    <div class="wrap">
+      <div class="kicker">Tool Routing</div>
+      <h2>工具调用路径</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>默认：prompt-level emulation</h3>
+          <p>Cascade 请求没有 OpenAI <code>tools[]</code> 原生槽位，代理把工具 schema 压缩成文本协议，让模型输出 tool marker，再解析回 OpenAI/Anthropic tool call。</p>
+          <div class="tagrow"><span class="tag">buildToolPreambleForProto</span><span class="tag">ToolCallStreamParser</span></div>
+        </div>
+        <div class="card">
+          <h3>恢复：NLU recovery</h3>
+          <p>当模型用自然语言说“我要调用工具”但没有按协议输出 marker，<code>intent-extractor</code> 会在声明工具 allowlist 内做保守恢复，非流式路径还可二次 correction。</p>
+          <div class="tagrow"><span class="tag">extractIntentFromNarrative</span><span class="tag">detectToolIntentInNarrative</span></div>
+        </div>
+        <div class="card">
+          <h3>实验：native bridge</h3>
+          <p>显式开启后，映射且 allowlist 的工具可进入 Cascade native planner；未映射工具继续走 emulation。默认不把本地 IDE 工具改成远端执行。</p>
+          <div class="tagrow"><span class="tag">getNativeBridgeDecision</span><span class="tag">partitionTools</span><span class="tag">TOOL_MAP</span></div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:1rem">Special-agent 是另一条旁路：<code>swe-1.6</code>、<code>adaptive</code>、<code>arena-*</code> 等需要显式 <code>WINDSURFAPI_SPECIAL_AGENT_BACKEND=devin-cli</code>，默认拒绝 caller-local tools 和 media。</div>
+    </div>
+  </section>
+
+  <section id="security">
+    <div class="wrap">
+      <div class="kicker">Security Boundaries</div>
+      <h2>安全边界</h2>
+      <div class="grid">
+        <div class="note ok"><b>Fail closed auth</b><br>API 路由使用 <code>Authorization: Bearer</code> 或 <code>x-api-key</code>；<code>API_KEY</code> 持有者等同账号池管理员，公网 Dashboard API 仍必须单独设置 <code>DASHBOARD_PASSWORD</code>。</div>
+        <div class="note"><b>Bounded ingress</b><br>HTTP body 上限是 10MB；Dashboard 静态 JSON 文件名有 basename regex；日志和 key 输出走 masking/redaction。</div>
+        <div class="note warn"><b>Opt-in remote tools</b><br>native bridge 默认不作为本地 IDE 工具修复开关；映射、allowlist、模型/账号/API key gate 都需要谨慎配置。</div>
+      </div>
+      <div class="grid two" style="margin-top:1rem">
+        <div class="card">
+          <h3>Dashboard operator surface</h3>
+          <p>Dashboard shell 可以公开加载，真正的管理读写动作在 <code>/dashboard/api/*</code>。公开部署时必须把 <code>API_KEY</code> 与 <code>DASHBOARD_PASSWORD</code> 都当成高权限 secret；localhost-only 部署才保留便利 fallback。</p>
+        </div>
+        <div class="card">
+          <h3>SSRF and secret posture</h3>
+          <p>Dashboard proxy test、账号添加、batch import、<code>/auth/login</code> 与 proxy setters 默认拒绝本机、私网、metadata 地址，除非显式设置 <code>ALLOW_PRIVATE_PROXY_HOSTS=1</code>；导出日志前仍应复核敏感上下文。</p>
+        </div>
+      </div>
+      <div class="note warn" style="margin-top:1rem">
+        Docker self-update 只在 git 不可用且部署显式挂载 <code>/var/run/docker.sock</code> 时进入 fallback；docker socket 等价于把宿主机 Docker 控制权交给管理面，只适合可信单操作者环境。
+      </div>
+      <div class="grid two" style="margin-top:1rem">
+        <div class="card">
+          <h3>Health metadata</h3>
+          <p>基础 <code>/health</code> 公开返回版本、Git 和账号计数等部署指纹；公网部署若不希望暴露这些字段，应在反向代理层限制访问。</p>
+        </div>
+        <div class="card">
+          <h3>Secret handling</h3>
+          <p>Secret scan 只打印 path/rule，不打印命中的 secret 值；核心日志路径使用 hash/masking 引用账号、邮箱和 key，但日志导出仍属于管理面数据。</p>
+        </div>
+      </div>
+      <p class="refs">Relevant tests: <code>dashboard-auth-fail-closed.test.js</code>, <code>dashboard-brute-force.test.js</code>, <code>secret-scan.test.js</code>, <code>ssrf.test.js</code>, <code>log-safety.test.js</code>, <code>native-tool-routing.test.js</code>.</p>
+    </div>
+  </section>
+
+  <section id="tests">
+    <div class="wrap">
+      <div class="kicker">Test Coverage</div>
+      <h2>测试覆盖地图</h2>
+      <p class="sub"><code>npm test</code> 当前覆盖根层 <code>test/*.test.js</code> 的 114 个测试文件，集中覆盖 handler/tool/native/account/dashboard 等风险面。下面按文件名归类，实际 CI 以 <code>npm test</code> 和 <code>npm run test:release</code> 为准。</p>
+      <div class="test-map" style="margin-top:1rem">
+        <div class="test-box"><b>22</b><span>API handlers, stream, cache, tools</span></div>
+        <div class="test-box"><b>18</b><span>auth, accounts, rate limits</span></div>
+        <div class="test-box"><b>12</b><span>dashboard and deploy</span></div>
+        <div class="test-box"><b>12</b><span>protocol and LangServer</span></div>
+        <div class="test-box"><b>9</b><span>native bridge and special agent</span></div>
+        <div class="test-box"><b>5</b><span>explicit security tests</span></div>
+        <div class="test-box"><b>36</b><span>compatibility and regressions</span></div>
+      </div>
+      <div class="grid two" style="margin-top:1rem">
+        <div class="card"><h3>Release gate</h3><p><code>npm run test:release</code> focuses on cache, dashboard API/syntax, native bridge docs, proto trace, secret scan, shard script, release workflow and version checks.</p></div>
+        <div class="card"><h3>Broad gate</h3><p><code>npm test</code> runs the test files under <code>test/*.test.js</code> with Node's built-in test runner and force-exit behavior for long-running handles.</p></div>
+      </div>
+      <div class="note" style="margin-top:1rem">这些测试不等同于真实上游 smoke：真实 Windsurf LS、真实网络登录、浏览器端完整交互和 Docker socket 自更新仍需要按部署环境单独验证。</div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>WindsurfAPI Architecture Review · <a href="index.html">Docs home</a> · <a href="https://github.com/dwgx/WindsurfAPI" target="_blank" rel="noopener">GitHub</a></span>
+  </div>
+</footer>
+</body>
+</html>
