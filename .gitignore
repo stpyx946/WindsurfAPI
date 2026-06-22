@@ -10,6 +10,7 @@ scripts/*
 !scripts/special-agent-smoke.mjs
 !scripts/lsp-capacity-matrix.mjs
 !scripts/web-search-direct-probe.mjs
+!scripts/sync-docs-contributors.mjs
 !scripts/secret-scan.mjs
 !scripts/run-test-shard.mjs
 src/get-token.js

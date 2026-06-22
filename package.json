@@ -14,6 +14,7 @@
     "smoke:special-agent": "node scripts/special-agent-smoke.mjs",
     "smoke:lsp-matrix": "node scripts/lsp-capacity-matrix.mjs",
     "probe:web-search": "node scripts/web-search-direct-probe.mjs",
+    "sync:contributors": "node scripts/sync-docs-contributors.mjs",
     "secret-scan": "node scripts/secret-scan.mjs"
   },
   "engines": {

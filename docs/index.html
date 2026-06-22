@@ -233,6 +233,14 @@ nav .nav-cta:hover{background:var(--coral-deep);color:#fff}
 .contrib-weight-A-plus{background:#d97706;color:#fffbeb}
 .contrib-weight-A{background:var(--coral-wash);color:var(--coral-deep);border:1px solid var(--coral-soft)}
 .contrib-weight-B-plus{background:transparent;color:var(--muted);border:1px dashed var(--rule)}
+.contrib-weight-GOD{background:#1A1612;color:#FAF9F5}
+.contrib-weight-MR{background:linear-gradient(135deg,#4c1d95,#db2777);color:#fff}
+.contrib-weight-LR{background:linear-gradient(135deg,#7c2d12,#f59e0b);color:#fff7ed}
+.contrib-weight-UR{background:linear-gradient(135deg,#7c3aed,#e11d48,#f59e0b);color:#fff}
+.contrib-weight-SSR{background:linear-gradient(135deg,#f59e0b,#b45309);color:#fff7ed}
+.contrib-weight-SR{background:#dbeafe;color:#1d4ed8;border:1px solid #bfdbfe}
+.contrib-weight-B{background:transparent;color:var(--muted);border:1px solid var(--rule)}
+.contrib-loading{grid-column:1/-1;padding:1rem 1.2rem;border:1px dashed var(--rule);border-radius:10px;color:var(--muted);background:var(--paper)}
 .contrib-summary{font-size:.82rem;color:var(--muted);line-height:1.65}
 
 /* ── Deploy ── */
@@ -786,105 +794,8 @@ client = OpenAI(
       <p class="section-sub">每一條 PR 都附上 root-cause 分析；每一個 root-cause 都對應半夜在 Issues 區罵 Claude 的瞬間。權重按貢獻次數與精準度排，不是按代碼行數。</p>
     </div>
 
-    <div class="contrib-grid reveal">
-      <a class="contrib-card" href="https://github.com/aict666" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/aict666.png?size=128" alt="aict666" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@aict666 <span class="contrib-weight contrib-weight-S-plus">S+</span></div>
-            <div class="contrib-prs">PR #44 · #51 · #53 · #54</div>
-          </div>
-        </div>
-        <p class="contrib-summary">四連刀。Opus 4.7 注入守衛繞行重寫、redact 標記血淚迭代到 U+2026 省略號、Pro/Trial tier 被誤降級的 inferTier 補丁、tool preamble 從 1600 字符瘦身到 330。每個 PR 都是 root-cause 直擊。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/baily-zhang" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/baily-zhang.png?size=128" alt="baily-zhang" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@baily-zhang <span class="contrib-weight contrib-weight-S-plus">S+</span></div>
-            <div class="contrib-prs">PR #36 · #45 · #61</div>
-          </div>
-        </div>
-        <p class="contrib-summary">cascade reuse / fingerprint / trajectory offset 整套機器的實質 maintainer。從修 0% 命中率，到切斷舊 step 重放，到 Opus 4.7 多模態上下文爆炸，三次都在同一條技術線上深耕到底。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/youfak" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/youfak.png?size=128" alt="youfak" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@youfak <span class="contrib-weight contrib-weight-A-plus">A+</span></div>
-            <div class="contrib-prs">PR #26</div>
-          </div>
-        </div>
-        <p class="contrib-summary">Docker 零依賴適配一整套：Dockerfile / docker-compose.yml / DATA_DIR 持久化 / CRLF pipefail 修復 / LS 重啟兜底。讓這個項目從「裸跑 pm2」邁進「docker compose up」。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/motto1" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/motto1.png?size=128" alt="motto1" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@motto1 <span class="contrib-weight contrib-weight-A">A</span></div>
-            <div class="contrib-prs">PR #20</div>
-          </div>
-        </div>
-        <p class="contrib-summary">逆向 Windsurf 官網真正使用的 Auth1 登入鏈路 —— 4 步流程還原 + 批量導入 + 剪貼板讀取，補上 Firebase 路徑早已不是主鏈路的缺口。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/smeinecke" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/smeinecke.png?size=128" alt="smeinecke" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@smeinecke <span class="contrib-weight contrib-weight-A">A</span></div>
-            <div class="contrib-prs">PR #43</div>
-          </div>
-        </div>
-        <p class="contrib-summary">Dashboard 完整 i18n 國際化 —— 14 個 commit 把每處硬編碼中文改成 I18n.t() 調用，再加 check-i18n.js 校驗防漏。從半成品翻譯到真正中英雙語切換。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/abwuge" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/abwuge.png?size=128" alt="abwuge" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@abwuge <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
-            <div class="contrib-prs">PR #58</div>
-          </div>
-        </div>
-        <p class="contrib-summary">首次貢獻就解了部署死鎖。docker-compose 起來後所有容器持續 Restart 的兩個成因（nginx zone 缺失 + config.js join 漏 import），+3 / -2 surgical 全堵上。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/dd373156" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/dd373156.png?size=128" alt="dd373156" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@dd373156 <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
-            <div class="contrib-prs">PR #1</div>
-          </div>
-        </div>
-        <p class="contrib-summary">首位外部貢獻者。MODEL_TIER_ACCESS.pro 是模塊載入時的快照，雲端動態合併進來的 claude-opus-4-7-* 永遠進不了 Pro 列表。一行 getter 修。三步 curl 復現寫得教科書級。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/colin1112a" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/colin1112a.png?size=128" alt="colin1112a" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@colin1112a <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
-            <div class="contrib-prs">PR #13</div>
-          </div>
-        </div>
-        <p class="contrib-summary">早期代碼審查先行者，一個 PR 涵蓋 15 個安全 / 並發 / 資源管理 bug：XSS 轉義、grpc HTTP/2 池、16MB frame 上限、varint BigInt。雖未直接合並，方向都對，後續多項被獨立重做。</p>
-      </a>
-
-      <a class="contrib-card" href="https://github.com/andya1lan" target="_blank" rel="noopener">
-        <div class="contrib-head">
-          <img class="contrib-avatar" src="https://github.com/andya1lan.png?size=128" alt="andya1lan" loading="lazy" onerror="this.style.visibility='hidden'">
-          <div class="contrib-meta">
-            <div class="contrib-name">@andya1lan <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
-            <div class="contrib-prs">PR #192</div>
-          </div>
-        </div>
-        <p class="contrib-summary">修正 update.sh 的 LS 二進制更新鏈路，改為復用 install-ls.sh 的多源 fallback 和 atomic rename；同時去掉 GNU grep -P 依賴，讓 macOS BSD grep 環境下的一鍵更新也能穩定執行。</p>
-      </a>
+    <div class="contrib-grid reveal" id="contributors-grid" data-source="dashboard/data/contributors.json">
+      <div class="contrib-loading">正在載入貢獻者名單...</div>
     </div>
 
     <p class="reveal" style="text-align:center;margin-top:2rem;font-size:.85rem;color:var(--muted)">
@@ -922,7 +833,7 @@ client = OpenAI(
       </div>
     </div>
     <div class="footer-bottom">
-      <span>Contributors: <a href="https://github.com/aict666">@aict666</a> · <a href="https://github.com/baily-zhang">@baily-zhang</a> · <a href="https://github.com/youfak">@youfak</a> · <a href="https://github.com/motto1">@motto1</a> · <a href="https://github.com/smeinecke">@smeinecke</a> · <a href="https://github.com/abwuge">@abwuge</a> · <a href="https://github.com/dd373156">@dd373156</a> · <a href="https://github.com/colin1112a">@colin1112a</a> · <a href="https://github.com/andya1lan">@andya1lan</a> · <a href="#contributors" style="opacity:.7">完整名單 ↑</a></span>
+      <span id="contributors-footer">Contributors: <a href="#contributors" style="opacity:.7">完整名單 ↑</a></span>
       <span>&copy; 2026 dwgx</span>
     </div>
   </div>
@@ -1137,6 +1048,95 @@ client = OpenAI(
       }catch{btn.textContent='失敗'}
     });
   });
+})();
+
+/* ── Contributors ── */
+(function(){
+  const grid = document.getElementById('contributors-grid');
+  if(!grid) return;
+
+  const footer = document.getElementById('contributors-footer');
+  const source = grid.dataset.source || 'dashboard/data/contributors.json';
+  const weightRank = {GOD:100,MR:80,LR:70,UR:60,SSR:50,SR:40,'S+':30,S:25,'A+':20,A:15,'B+':10,B:5};
+  const escMap = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'};
+  const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => escMap[ch]);
+  const rankOf = weight => weightRank[weight] || 0;
+  const weightClass = weight => String(weight || 'B')
+    .replace(/\+/g,'-plus')
+    .replace(/[^\w-]/g,'');
+
+  function groupContributors(entries){
+    const byLogin = new Map();
+    for(const entry of entries){
+      if(!entry || !entry.login) continue;
+      const login = String(entry.login);
+      if(!byLogin.has(login)) byLogin.set(login,{login,prs:[],topWeight:'B',latest:null});
+      const group = byLogin.get(login);
+      group.prs.push(entry);
+      if(rankOf(entry.weight) > rankOf(group.topWeight)) group.topWeight = entry.weight;
+      if(!group.latest || String(entry.mergedAt || '') > String(group.latest.mergedAt || '')) group.latest = entry;
+    }
+    return [...byLogin.values()]
+      .map(group => {
+        group.prs.sort((a,b) => String(b.mergedAt || '').localeCompare(String(a.mergedAt || '')) || Number(b.pr || 0) - Number(a.pr || 0));
+        return group;
+      })
+      .sort((a,b) => rankOf(b.topWeight) - rankOf(a.topWeight) || String(b.latest?.mergedAt || '').localeCompare(String(a.latest?.mergedAt || '')));
+  }
+
+  function prLabel(entry){
+    const pr = Number(entry?.pr || 0);
+    return pr > 0 ? `PR #${pr}` : 'Project';
+  }
+
+  function renderContributors(entries){
+    const groups = groupContributors(entries);
+    if(!groups.length) throw new Error('contributors list is empty');
+
+    grid.innerHTML = groups.map(group => {
+      const latest = group.latest || {};
+      const summary = latest.summary || latest.title || '';
+      const prs = group.prs.slice(0,4).map(prLabel).join(' · ');
+      const extra = group.prs.length > 4 ? ` · +${group.prs.length - 4}` : '';
+      const loginRaw = String(group.login);
+      const login = esc(loginRaw);
+      const loginPath = encodeURIComponent(loginRaw);
+      const badge = esc(group.topWeight || latest.weight || 'B');
+      const badgeTitle = esc(latest.weightLabel || latest.title || group.topWeight || '');
+      return `<a class="contrib-card" href="https://github.com/${loginPath}" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/${loginPath}.png?size=128" alt="@${login}" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@${login} <span class="contrib-weight contrib-weight-${weightClass(group.topWeight)}" title="${badgeTitle}">${badge}</span></div>
+            <div class="contrib-prs">${esc(prs + extra)}</div>
+          </div>
+        </div>
+        <div class="contrib-summary">${esc(summary)}</div>
+      </a>`;
+    }).join('');
+
+    if(footer){
+      const names = groups
+        .filter(group => group.login !== 'dwgx')
+        .slice(0,9)
+        .map(group => {
+          const loginRaw = String(group.login);
+          return `<a href="https://github.com/${encodeURIComponent(loginRaw)}">@${esc(loginRaw)}</a>`;
+        })
+        .join(' · ');
+      footer.innerHTML = `Contributors: ${names}${names ? ' · ' : ''}<a href="#contributors" style="opacity:.7">完整名單 ↑</a>`;
+    }
+  }
+
+  fetch(source,{cache:'no-cache'})
+    .then(response => {
+      if(!response.ok) throw new Error(`contributors fetch failed: ${response.status}`);
+      return response.json();
+    })
+    .then(data => renderContributors(Array.isArray(data?.contributors) ? data.contributors : []))
+    .catch(() => {
+      grid.innerHTML = '<div class="contrib-loading">貢獻者名單載入失敗，請查看 <a href="https://github.com/dwgx/WindsurfAPI/pulls">Pull requests</a>。</div>';
+    });
 })();
 
 /* ── Reveal ── */

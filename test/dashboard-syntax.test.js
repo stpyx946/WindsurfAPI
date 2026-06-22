@@ -22,6 +22,19 @@ for (const skin of ['src/dashboard/index.html', 'src/dashboard/index-sketch.html
   });
 }
 
+test('docs/index.html inline scripts are syntactically valid', () => {
+  const html = readFileSync(join(root, 'docs/index.html'), 'utf8');
+  const scripts = [...html.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/gi)]
+    .map((match, index) => ({ index, attrs: match[1] || '', source: match[2] || '' }))
+    .filter(({ attrs }) => !/\bsrc\s*=/.test(attrs))
+    .filter(({ attrs }) => !/\btype\s*=\s*["']module["']/i.test(attrs));
+
+  assert.ok(scripts.length > 0, 'expected at least one non-module inline script in docs/index.html');
+  for (const { index, source } of scripts) {
+    assert.doesNotThrow(() => new Function(source), `inline script #${index} in docs/index.html should parse`);
+  }
+});
+
 test('dashboard system prompt editor escapes prompt keys before rendering or routing', () => {
   const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
   assert.match(html, /const safeKey = this\.esc\(key\)/);
@@ -87,4 +100,28 @@ test('recent merged PR contributors are represented in dashboard and README cred
     assert.match(readme, new RegExp(`@${login}[\\s\\S]*PR #${pr}`));
     assert.match(readmeEn, new RegExp(`@${login}[\\s\\S]*PR #${pr}`));
   }
+});
+
+test('docs homepage renders contributors from the published dashboard JSON', () => {
+  const html = readFileSync(join(root, 'docs/index.html'), 'utf8');
+  const contributorsSection = html.slice(
+    html.indexOf('<section class="contributors-section"'),
+    html.indexOf('<!-- ── Footer ── -->'),
+  );
+
+  assert.match(html, /id="contributors-grid" data-source="dashboard\/data\/contributors\.json"/);
+  assert.match(html, /fetch\(source,\{cache:'no-cache'\}\)/);
+  assert.match(html, /function renderContributors\(entries\)/);
+  assert.match(html, /id="contributors-footer"/);
+  assert.doesNotMatch(contributorsSection, /href="https:\/\/github\.com\/aict666"/);
+  assert.doesNotMatch(contributorsSection, /PR #192/);
+});
+
+test('docs contributor JSON mirrors the canonical dashboard contributor data', () => {
+  const source = readFileSync(join(root, 'src/dashboard/data/contributors.json'), 'utf8');
+  const published = readFileSync(join(root, 'docs/dashboard/data/contributors.json'), 'utf8');
+  const parsed = JSON.parse(published);
+
+  assert.deepEqual(JSON.parse(source), parsed);
+  assert.equal(published, source);
 });

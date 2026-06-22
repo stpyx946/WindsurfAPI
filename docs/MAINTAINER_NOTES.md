@@ -124,6 +124,7 @@ resets. They are not release notes.
 - Do not revert unrelated user or generated changes in the worktree.
 - After merging an external PR, update contributor surfaces in the same
   maintenance pass: `src/dashboard/data/contributors.json`, `README.md`, and
-  `README.en.md`. The static `docs/index.html` contributor section is a separate
-  curated homepage surface; update it only when intentionally refreshing that
-  page layout.
+  `README.en.md`. Then run `npm run sync:contributors` so
+  `docs/dashboard/data/contributors.json` stays byte-for-byte identical to the
+  canonical dashboard data. `docs/index.html` must load contributor cards from
+  that published JSON, not hand-maintain cards.
