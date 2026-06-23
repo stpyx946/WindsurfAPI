@@ -103,7 +103,7 @@ body:
     attributes:
       label: 环境 / Environment
       description: |
-        Node 版本、操作系统、CPU 架构、部署方式、LS binary 来源（WindsurfAPI release / Windsurf 桌面端 / Exafunction release / 自定义 WINDSURFAPI_LS_RELEASE / 其他）
+        Node 版本、操作系统、CPU 架构、部署方式、LS binary 来源（WindsurfAPI release / dwgx/windsurf-ls-release public mirror / Windsurf 桌面端 / Exafunction release / 自定义 WINDSURFAPI_LS_RELEASE / 其他）
         Node version, OS, CPU arch, deployment mode, and LS binary source.
       placeholder: |
         Node: v20.x

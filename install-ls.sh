@@ -2,7 +2,7 @@
 # Install / update the Windsurf language server binary.
 #
 # Usage:
-#   ./install-ls.sh                        # auto: our release → Windsurf desktop LS release → Exafunction fallback
+#   ./install-ls.sh                        # auto: WindsurfAPI release → maintained LS mirror → Exafunction fallback
 #   ./install-ls.sh /path/to/local.bin     # install a local file
 #   ./install-ls.sh --file /path/to.bin    # same as above
 #   ./install-ls.sh --url <direct-url>     # install from a custom URL
@@ -72,20 +72,20 @@ elif [[ $# -ge 2 && "$1" == "--url" ]]; then
   log "Downloading from: $url"
   curl -fL --progress-bar -o "$TMP_TARGET" "$url"
 else
-  # Try our own GitHub release first, then the desktop-extracted LS release,
+  # Try our own GitHub release first, then the maintained public LS mirror,
   # then the older Exafunction/codeium release as a last resort.
   our_url="${OUR_RELEASE}/${ASSET}"
   log "Trying WindsurfAPI release: $our_url"
   if curl -fL --progress-bar -o "$TMP_TARGET" "$our_url" 2>/dev/null; then
     log "Downloaded from WindsurfAPI release"
   else
-    log "Not found in our release, trying maintained Windsurf LS mirror..."
+    log "Not found in WindsurfAPI release, trying maintained Windsurf LS mirror..."
     ws_url="${WINDSURF_LS_RELEASE}/${ASSET}"
-    log "Trying Windsurf desktop LS release: $ws_url"
+    log "Trying maintained Windsurf LS mirror: $ws_url"
     if curl -fL --progress-bar -o "$TMP_TARGET" "$ws_url"; then
-      log "Downloaded from Windsurf desktop LS release"
+      log "Downloaded from maintained Windsurf LS mirror"
     else
-      log "Not found in Windsurf desktop LS release, falling back to Exafunction..."
+      log "Not found in maintained Windsurf LS mirror, falling back to Exafunction..."
       if command -v jq >/dev/null 2>&1; then
         url="$(curl -fsSL "$EXAFUNCTION_API" | jq -r \
           --arg asset "$ASSET" '.assets[] | select(.name == $asset) | .browser_download_url')"

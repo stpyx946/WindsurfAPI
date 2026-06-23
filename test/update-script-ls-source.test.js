@@ -41,11 +41,11 @@ describe('update.sh language-server source selection', () => {
     );
   });
 
-  test('install-ls.sh defaults to the maintained Windsurf desktop LS mirror', () => {
+  test('install-ls.sh defaults to the maintained public Windsurf LS mirror', () => {
     assert.match(
       INSTALL_LS,
       /dwgx\/windsurf-ls-release/,
-      'install-ls.sh should default to the maintained Windsurf desktop LS release mirror'
+      'install-ls.sh should default to the maintained public Windsurf LS release mirror'
     );
     assert.doesNotMatch(
       INSTALL_LS,
@@ -59,7 +59,7 @@ describe('update.sh language-server source selection', () => {
     );
     assert.match(
       INSTALL_LS,
-      /Trying Windsurf desktop LS release: \$ws_url/,
+      /Trying maintained Windsurf LS mirror: \$ws_url/,
       'install-ls.sh should print the fallback URL so large macOS downloads do not look hung'
     );
   });

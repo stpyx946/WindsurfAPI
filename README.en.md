@@ -135,6 +135,11 @@ cd WindsurfAPI
 # Language Server binary — auto-detects Linux/macOS, one-click download + chmod
 bash install-ls.sh
 
+# Download chain: WindsurfAPI release → public LS mirror
+#   https://github.com/dwgx/windsurf-ls-release/releases/latest/download
+# → Exafunction/codeium fallback. For a private mirror or rollback, set:
+#   WINDSURFAPI_LS_RELEASE=https://github.com/<owner>/<repo>/releases/latest/download bash install-ls.sh
+
 # Default install paths:
 #   Linux x64:           /opt/windsurf/language_server_linux_x64
 #   Linux arm64:         /opt/windsurf/language_server_linux_arm
@@ -147,9 +152,9 @@ bash install-ls.sh
 #   bash install-ls.sh --url https://example.com/language_server_linux_x64
 
 # ⚠️ Can't see opus-4.7 / other new models?
-# The public Exafunction/codeium release is stuck at v2.12.5 (Jan 2026)
-# and does not ship 4.7. To get 4.7, copy the LS binary out of the
-# Windsurf desktop app bundle:
+# The default download chain now uses the dwgx/windsurf-ls-release public mirror.
+# If the mirror does not cover your platform yet, copy the LS binary out of
+# the Windsurf desktop app bundle:
 #
 #   macOS:   "$HOME/Library/Application Support/Windsurf/resources/app/extensions/windsurf/bin/language_server_macos_arm"
 #   Linux:   "$HOME/.windsurf/bin/language_server_linux_x64"
@@ -444,7 +449,7 @@ Huge thanks to the following folks who sent pull requests or systematically audi
 - [@The-five-stooges](https://github.com/The-five-stooges) — [PR #188](https://github.com/dwgx/WindsurfAPI/pull/188)
   Sticky session streaming-path fix + body.user multi-user isolation + stickyNoFallback / stickyBindByUserOnly toggles.
 - [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
-  Routed `update.sh` LS binary updates through `install-ls.sh`, aligned the WindsurfAPI / Windsurf desktop LS / Exafunction source chain, and fixed macOS `grep -P` compatibility.
+  Routed `update.sh` LS binary updates through `install-ls.sh`, aligned the WindsurfAPI release / public LS mirror / Exafunction source chain, and fixed macOS `grep -P` compatibility.
 - [@MatrixNeoKozak](https://github.com/MatrixNeoKozak) — [PR #195](https://github.com/dwgx/WindsurfAPI/pull/195)
   Made malformed JSON sent to the dashboard API return HTTP 400 instead of a 200 response with `ok:false`, so UI and automation callers can rely on status-code semantics for bad request bodies.
 - [@brandonedley](https://github.com/brandonedley) — [PR #201](https://github.com/dwgx/WindsurfAPI/pull/201)

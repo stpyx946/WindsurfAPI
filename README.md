@@ -133,6 +133,11 @@ cd WindsurfAPI
 # Language Server 二进制 —— 自动检测 Linux/macOS，一键下载 + chmod
 bash install-ls.sh
 
+# 下载链：WindsurfAPI release → 公开 LS mirror
+#   https://github.com/dwgx/windsurf-ls-release/releases/latest/download
+# → Exafunction/codeium fallback。需要私有镜像或回滚时可设置：
+#   WINDSURFAPI_LS_RELEASE=https://github.com/<owner>/<repo>/releases/latest/download bash install-ls.sh
+
 # 默认安装路径：
 #   Linux x64:          /opt/windsurf/language_server_linux_x64
 #   Linux arm64:        /opt/windsurf/language_server_linux_arm
@@ -145,8 +150,8 @@ bash install-ls.sh
 #   bash install-ls.sh --url https://example.com/language_server_linux_x64
 
 # ⚠️ 看不到 opus-4.7 / 其他新模型？
-# Exafunction/codeium 公开 release 最新停在 v2.12.5（2026-01），不含 4.7。
-# 要 4.7，把 Windsurf 桌面端本体里的 LS binary 拷过来：
+# 默认下载链已接入 dwgx/windsurf-ls-release 公开 mirror。
+# 如果 mirror 暂未覆盖你的平台，仍可把 Windsurf 桌面端本体里的 LS binary 拷过来：
 #
 #   macOS:   "$HOME/Library/Application Support/Windsurf/resources/app/extensions/windsurf/bin/language_server_macos_arm"
 #   Linux:   "$HOME/.windsurf/bin/language_server_linux_x64"
@@ -447,7 +452,7 @@ A: 不能。长 thinking / 长输出在约 236-243 秒断流，是 Windsurf prov
 - [@The-five-stooges](https://github.com/The-five-stooges) — [PR #188](https://github.com/dwgx/WindsurfAPI/pull/188)
   Sticky session 流式路径修复 + body.user 多用户隔离机制 + stickyNoFallback / stickyBindByUserOnly 双开关。
 - [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
-  `update.sh` 通过 `install-ls.sh` 更新 LS binary，统一 WindsurfAPI / Windsurf 桌面 LS / Exafunction 下载链，并修复 macOS `grep -P` 兼容性。
+  `update.sh` 通过 `install-ls.sh` 更新 LS binary，统一 WindsurfAPI release / 公开 LS mirror / Exafunction 下载链，并修复 macOS `grep -P` 兼容性。
 - [@MatrixNeoKozak](https://github.com/MatrixNeoKozak) — [PR #195](https://github.com/dwgx/WindsurfAPI/pull/195)
   Dashboard API malformed JSON 现在返回 HTTP 400，不再用 200 包着 `ok:false`，让前端和自动化调用方能按状态码正确处理请求体格式错误。
 - [@brandonedley](https://github.com/brandonedley) — [PR #201](https://github.com/dwgx/WindsurfAPI/pull/201)

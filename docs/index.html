@@ -761,7 +761,7 @@ client = OpenAI(
       </details>
       <details class="faq-item">
         <summary>看不到最新模型（opus-4.7、gpt-5.3 之類）怎麼辦？</summary>
-        <div class="a">Exafunction 公開 release 停在 v2.12.5（2026-01），不含 4.7。從 Windsurf 桌面端 App 裡把 LS binary 拷出來即可：<br>
+        <div class="a">預設下載鏈已接入 <code>dwgx/windsurf-ls-release</code> 公開 mirror；若 mirror 暫未覆蓋你的平台，再從 Windsurf 桌面端 App 裡把 LS binary 拷出來：<br>
         &bull; macOS：<code>~/Library/Application Support/Windsurf/.../language_server_macos_arm</code><br>
         &bull; Linux：<code>~/.windsurf/bin/language_server_linux_x64</code><br>
         拷過去後 <code>/v1/models</code> 會自動從雲端 discover 最新目錄。</div>
