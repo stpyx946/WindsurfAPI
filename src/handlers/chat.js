@@ -697,6 +697,21 @@ function isOpus47ThinkingAutoRouteEnabled() {
   return process.env.WINDSURFAPI_OPUS47_THINKING_UIDS === '1';
 }
 
+/**
+ * Has this account been probed at all? "Probe pending" messaging must only
+ * fire for genuinely fresh accounts. An account can carry a resolved tier
+ * (e.g. 'expired') from the canary sweep while GetUserStatus came back empty
+ * (userStatusLastFetched=0) — keying solely off userStatusLastFetched
+ * mislabeled those as "just added, tier detection pending" and sent users to
+ * re-probe when the real cause was plan/tier. lastProbed>0 OR a landed
+ * GetUserStatus OR any resolved (non-'unknown') tier all mean "probed".
+ */
+export function accountIsProbed(a) {
+  return (a?.lastProbed || 0) > 0
+    || (a?.userStatusLastFetched || 0) > 0
+    || (!!a?.tier && a.tier !== 'unknown');
+}
+
 export function resolveEffectiveModelKey(modelKey, wantThinking) {
   if (!wantThinking || !modelKey || modelKey.includes('thinking')) return modelKey;
   const thinkingModelKey = modelKey + '-thinking';
@@ -2087,7 +2102,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
     a.status === 'active' && (a.availableModels || []).includes(routingModelKey)
   );
   if (!anyEligible) {
-    const hasUnprobedActive = accounts.some(a => a.status === 'active' && !a.userStatusLastFetched);
+    // #117 follow-up: "probe pending" should only describe a genuinely fresh
+    // account — never one that's already been probed. An account can have a
+    // resolved tier (e.g. 'expired') from the canary sweep while GetUserStatus
+    // still returned empty (userStatusLastFetched=0); keying solely off
+    // userStatusLastFetched mislabeled those as "账号刚添加还未完成 tier 检测",
+    // sending users to re-probe when the real cause is plan/tier. Treat an
+    // account as probed once lastProbed>0, GetUserStatus landed, or tier resolved.
+    const hasUnprobedActive = accounts.some(a => a.status === 'active' && !accountIsProbed(a));
     // v2.0.71 (#117 follow-up): list models the pool actually CAN serve so
     // the caller's dashboard / test harness can fall back instead of just
     // showing "model_not_entitled" with no hint. Build the union of
