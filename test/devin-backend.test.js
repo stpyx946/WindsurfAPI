@@ -13,6 +13,8 @@ import {
   getOrganization,
   buildEventStreamRequest,
   createSession,
+  listSessionsV3,
+  getSessionV3,
   sendPrompt,
 } from '../src/devin-backend.js';
 import { VERSION } from '../src/version.js';
@@ -50,6 +52,7 @@ function mockFetch(jsonBody, { ok = true, status = 200 } = {}) {
 
 const baseCfg = () => ({
   baseUrl: 'https://app.devin.ai/api',
+  restBaseUrl: 'https://api.devin.ai',
   token: 'devin-session-token$abc123',
   orgId: 'org-acme',
   enabled: true,
@@ -198,16 +201,104 @@ describe('devin-backend SSE request builder', () => {
   });
 });
 
-describe('devin-backend write surface (unverified — must stay stubbed)', () => {
-  it('createSession throws not_implemented (never fakes a route)', async () => {
-    await assert.rejects(() => createSession(baseCfg(), { prompt: 'hi' }), (e) => {
-      assert.equal(e.status, 501);
-      assert.equal(e.type, 'not_implemented');
+describe('devin-backend createSession (verified v3 REST)', () => {
+  it('POSTs to api.devin.ai/v3/organizations/{org}/sessions with bearer auth', async () => {
+    const session = { session_id: 'abc123', url: 'https://app.devin.ai/sessions/abc123', status: 'new' };
+    const { fetchImpl, calls } = mockFetch(session);
+    const out = await createSession(baseCfg(), { prompt: 'hello', fetchImpl });
+    assert.deepEqual(out, session);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].url, 'https://api.devin.ai/v3/organizations/org-acme/sessions');
+    assert.equal(calls[0].init.method, 'POST');
+    assert.equal(calls[0].init.headers.Authorization, 'Bearer devin-session-token$abc123');
+    assert.deepEqual(JSON.parse(calls[0].init.body), { prompt: 'hello' });
+  });
+
+  it('whitelists only verified fields, dropping unknown extras', async () => {
+    const { fetchImpl, calls } = mockFetch({ session_id: 's' });
+    await createSession(baseCfg(), {
+      prompt: 'p', title: 't', tags: ['a'], max_acu_limit: 5,
+      playbook_id: 'pb', knowledge_ids: ['k'], secret_ids: ['s'],
+      bogus: 'nope', model: 'x',
+      fetchImpl,
+    });
+    const sent = JSON.parse(calls[0].init.body);
+    assert.deepEqual(sent, {
+      prompt: 'p', title: 't', tags: ['a'], max_acu_limit: 5,
+      playbook_id: 'pb', knowledge_ids: ['k'], secret_ids: ['s'],
+    });
+    assert.equal('bogus' in sent, false);
+    assert.equal('model' in sent, false);
+  });
+
+  it('rejects a missing or non-string prompt before any network call', async () => {
+    const { fetchImpl, calls } = mockFetch({});
+    await assert.rejects(() => createSession(baseCfg(), { fetchImpl }), (e) => {
+      assert.equal(e.status, 400);
+      assert.equal(e.type, 'bad_request');
+      return true;
+    });
+    await assert.rejects(() => createSession(baseCfg(), { prompt: 123, fetchImpl }), (e) => e.status === 400);
+    await assert.rejects(() => createSession(baseCfg(), { prompt: '   ', fetchImpl }), (e) => e.status === 400);
+    assert.equal(calls.length, 0, 'no network on validation failure');
+  });
+
+  it('surfaces FastAPI 422 detail on validation error', async () => {
+    const detail = [{ type: 'missing', loc: ['body', 'prompt'], msg: 'Field required' }];
+    const { fetchImpl } = mockFetch({ detail }, { ok: false, status: 422 });
+    await assert.rejects(() => createSession(baseCfg(), { prompt: 'x', fetchImpl }), (e) => {
+      assert.equal(e.status, 422);
+      assert.deepEqual(e.detail, detail);
       return true;
     });
   });
 
-  it('sendPrompt throws not_implemented (never fakes a route)', async () => {
+  it('surfaces 403 token-scope detail', async () => {
+    const { fetchImpl } = mockFetch({ detail: 'This endpoint is not accessible with a Windsurf session token' }, { ok: false, status: 403 });
+    await assert.rejects(() => createSession(baseCfg(), { prompt: 'x', fetchImpl }), (e) => {
+      assert.equal(e.status, 403);
+      assert.match(e.detail, /Windsurf session token/);
+      return true;
+    });
+  });
+});
+
+describe('devin-backend v3 reads (poll session status)', () => {
+  it('listSessionsV3 builds session_ids query and hits the rest base', async () => {
+    const body = { items: [{ session_id: 'a' }], end_cursor: null, has_next_page: false, total: 1 };
+    const { fetchImpl, calls } = mockFetch(body);
+    const out = await listSessionsV3(baseCfg(), { sessionIds: ['a', 'b'], fetchImpl });
+    assert.deepEqual(out, body);
+    assert.equal(calls[0].url, 'https://api.devin.ai/v3/organizations/org-acme/sessions?session_ids=a&session_ids=b');
+    assert.equal(calls[0].init.method, 'GET');
+  });
+
+  it('listSessionsV3 supports limit', async () => {
+    const { fetchImpl, calls } = mockFetch({ items: [] });
+    await listSessionsV3(baseCfg(), { limit: 5, fetchImpl });
+    assert.equal(calls[0].url, 'https://api.devin.ai/v3/organizations/org-acme/sessions?limit=5');
+  });
+
+  it('getSessionV3 returns the matching item by session_id', async () => {
+    const body = { items: [{ session_id: 'x', status: 'running' }, { session_id: 'y' }] };
+    const { fetchImpl } = mockFetch(body);
+    const out = await getSessionV3(baseCfg(), 'x', { fetchImpl });
+    assert.equal(out.session_id, 'x');
+    assert.equal(out.status, 'running');
+  });
+
+  it('getSessionV3 returns null when no items', async () => {
+    const { fetchImpl } = mockFetch({ items: [] });
+    assert.equal(await getSessionV3(baseCfg(), 'z', { fetchImpl }), null);
+  });
+
+  it('getSessionV3 requires a session id', async () => {
+    await assert.rejects(() => getSessionV3(baseCfg(), '', {}), (e) => e.status === 400);
+  });
+});
+
+describe('devin-backend sendPrompt (ACP path — REST stub until P3)', () => {
+  it('sendPrompt throws not_implemented (prompts go over ACP, not v3 REST)', async () => {
     await assert.rejects(() => sendPrompt(baseCfg(), 'sid', { prompt: 'hi' }), (e) => {
       assert.equal(e.status, 501);
       assert.equal(e.type, 'not_implemented');

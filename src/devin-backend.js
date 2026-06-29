@@ -23,6 +23,11 @@
 import { VERSION } from './version.js';
 
 const DEFAULT_BASE_URL = 'https://app.devin.ai/api';
+// Verified live REST base (P0, 2026-06-29): api.devin.ai/v3/organizations/{org}/...
+// is a standard FastAPI surface reachable with the Windsurf session token. This is
+// the CONFIRMED write/read API, distinct from the dao-derived app.devin.ai/api base
+// above. See memory: devin-write-endpoint-cracked-2026-06-29.
+const DEFAULT_REST_BASE_URL = 'https://api.devin.ai';
 
 /**
  * Build the runtime config from env. Pure — no I/O, safe to call anytime.
@@ -39,8 +44,12 @@ export function getDevinBackendConfig(env = process.env) {
   const baseUrl = String(env.DEVIN_BACKEND_BASE_URL || DEFAULT_BASE_URL)
     .trim()
     .replace(/\/+$/, '');
+  const restBaseUrl = String(env.DEVIN_BACKEND_REST_BASE_URL || DEFAULT_REST_BASE_URL)
+    .trim()
+    .replace(/\/+$/, '');
   return {
     baseUrl,
+    restBaseUrl,
     token: String(env.DEVIN_BACKEND_TOKEN || env.WINDSURF_API_KEY || '').trim(),
     orgId: String(env.DEVIN_BACKEND_ORG_ID || '').trim(),
     enabled: env.DEVIN_BACKEND_ENABLED === '1',
@@ -100,21 +109,26 @@ function joinUrl(baseUrl, path) {
  * Low-level JSON request helper. Injectable `fetchImpl` keeps tests offline.
  * Returns parsed JSON on 2xx; throws a tagged Error otherwise.
  */
-async function requestJson(cfg, method, path, { body, extraHeaders, fetchImpl } = {}) {
+async function requestJson(cfg, method, path, { body, extraHeaders, fetchImpl, baseUrl } = {}) {
   const fetchFn = fetchImpl || globalThis.fetch;
   if (typeof fetchFn !== 'function') {
     throw Object.assign(new Error('fetch is not available'), { status: 500, type: 'backend_misconfigured' });
   }
-  const url = joinUrl(cfg.baseUrl, path);
+  const url = joinUrl(baseUrl || cfg.baseUrl, path);
   const headers = buildDevinHeaders(cfg, extraHeaders);
   const init = { method, headers };
   if (body !== undefined) init.body = typeof body === 'string' ? body : JSON.stringify(body);
 
   const res = await fetchFn(url, init);
   if (!res.ok) {
+    // Capture FastAPI {"detail": ...} when present — it carries the validation/
+    // permission reason (e.g. 422 field errors, 403 token-scope message).
+    let detail;
+    try { detail = (await res.json())?.detail; } catch { /* non-JSON body */ }
     const err = new Error(`Devin backend ${method} ${path} failed: ${res.status}`);
-    err.status = res.status === 401 || res.status === 403 ? res.status : 502;
+    err.status = res.status === 401 || res.status === 403 ? res.status : (res.status === 422 ? 422 : 502);
     err.type = 'backend_error';
+    if (detail !== undefined) err.detail = detail;
     throw err;
   }
   return res.json();
@@ -187,18 +201,91 @@ export function buildEventStreamRequest(cfg, devinId) {
 }
 
 // ---------------------------------------------------------------------------
-// WRITE surface — UNVERIFIED. Stubs only. Do NOT implement with guessed routes.
+// VERIFIED WRITE/READ surface — api.devin.ai/v3 (P0, 2026-06-29)
 // ---------------------------------------------------------------------------
 //
-// A real reverse proxy needs to CREATE a session and SEND a prompt to run the
-// agent. dao-devin-export is an export-only tool and exposes NO write endpoint,
-// and no other verified source documents one. The route, request shape, and
-// streaming contract are all unknown.
+// createSession is the standard FastAPI endpoint confirmed live with the
+// Windsurf session token. Field schema verified by 422 probing (no session
+// created during probing — an int-typed prompt is rejected pre-creation):
+//   prompt        string   REQUIRED
+//   title         string   optional
+//   tags          string[] optional
+//   max_acu_limit int      optional
+//   playbook_id   string   optional
+//   knowledge_ids string[] optional
+//   secret_ids    string[] optional
+// Any other field is ignored by the server.
 //
-// These stubs preserve the intended call signatures so the rest of the codebase
-// can be wired up, but they throw rather than guess. To implement: capture Devin
-// Desktop's network traffic (create-session + send-prompt) and replace the TODOs
-// with the observed route + payload, then add real (mocked) tests.
+// sendPrompt is NOT a v3 REST endpoint: POST /sessions/{id}/messages exists but
+// returns 403 for a Windsurf session token. Prompts/streaming go over ACP
+// (src/devin-acp.js, live-verified). sendPrompt therefore delegates to ACP and
+// is intentionally left throwing here until P3 wires the ACP path through.
+
+const V3_SESSION_FIELDS = ['prompt', 'title', 'tags', 'max_acu_limit', 'playbook_id', 'knowledge_ids', 'secret_ids'];
+
+/** Org segment for v3: the API expects the full `org-XXXX` form. */
+function v3OrgPath(cfg) {
+  return `/v3/organizations/${orgPathSegment(cfg.orgId)}/sessions`;
+}
+
+/**
+ * Create a new agent session via the verified v3 REST endpoint.
+ *   POST https://api.devin.ai/v3/organizations/{org}/sessions
+ *
+ * @param {object} cfg   backend config from getDevinBackendConfig()
+ * @param {object} opts  { prompt (required), title?, tags?, max_acu_limit?,
+ *                         playbook_id?, knowledge_ids?, secret_ids? }
+ * @returns {Promise<object>} full session object (session_id, url, status, ...)
+ */
+export async function createSession(cfg, opts = {}) {
+  const prompt = opts?.prompt;
+  if (typeof prompt !== 'string' || !prompt.trim()) {
+    throw Object.assign(new Error('createSession requires a non-empty string prompt'), {
+      status: 400,
+      type: 'bad_request',
+    });
+  }
+  // Whitelist known fields only; the server ignores extras but we keep the body
+  // tight and predictable.
+  const body = {};
+  for (const f of V3_SESSION_FIELDS) {
+    if (opts[f] !== undefined) body[f] = opts[f];
+  }
+  return requestJson(cfg, 'POST', v3OrgPath(cfg), {
+    body,
+    baseUrl: cfg.restBaseUrl,
+    fetchImpl: opts.fetchImpl,
+  });
+}
+
+/**
+ * Read sessions via the verified v3 REST endpoint (Windsurf token is read-capable
+ * here). Used to poll a created session's status/result.
+ *   GET https://api.devin.ai/v3/organizations/{org}/sessions?session_ids={id}
+ *   GET .../sessions?limit={n}
+ *
+ * @returns {Promise<{items: object[], end_cursor: any, has_next_page: boolean, total: number}>}
+ */
+export async function listSessionsV3(cfg, { sessionIds, limit, fetchImpl } = {}) {
+  const params = new URLSearchParams();
+  if (Array.isArray(sessionIds)) for (const id of sessionIds) params.append('session_ids', String(id));
+  else if (sessionIds) params.append('session_ids', String(sessionIds));
+  if (limit) params.set('limit', String(limit));
+  const qs = params.toString();
+  return requestJson(cfg, 'GET', `${v3OrgPath(cfg)}${qs ? `?${qs}` : ''}`, {
+    baseUrl: cfg.restBaseUrl,
+    fetchImpl,
+  });
+}
+
+/** Convenience: fetch a single session by id via v3, or null if not found. */
+export async function getSessionV3(cfg, sessionId, { fetchImpl } = {}) {
+  const id = String(sessionId || '').trim();
+  if (!id) throw Object.assign(new Error('sessionId is required'), { status: 400, type: 'bad_request' });
+  const res = await listSessionsV3(cfg, { sessionIds: id, fetchImpl });
+  const items = Array.isArray(res?.items) ? res.items : [];
+  return items.find(s => s?.session_id === id) || items[0] || null;
+}
 
 const NOT_IMPLEMENTED = (name) => Object.assign(
   new Error(`${name} is not implemented: Devin backend write endpoint is unverified`),
@@ -206,37 +293,17 @@ const NOT_IMPLEMENTED = (name) => Object.assign(
 );
 
 /**
- * Create a new agent session.
- * @param {object} cfg     backend config from getDevinBackendConfig()
- * @param {object} opts    { prompt?, model?, ... } — shape TBD
- * @returns {Promise<{sessionId: string}>}
+ * Send a prompt to an existing session. NOT a v3 REST endpoint — prompts go over
+ * ACP (POST /sessions/{id}/messages returns 403 for Windsurf tokens). P3 wires
+ * this through src/devin-acp.js; until then it throws rather than guess a route.
  *
- * TODO(unverified): 需逆向 Devin Desktop 网络请求确认写端点
- *   - route + method (likely POST /org-{bare}/… or /sessions — UNCONFIRMED)
- *   - request body shape (prompt / model / repo / snapshot fields — UNKNOWN)
- *   - response shape (where the new session/devin id lives — UNKNOWN)
- */
-// eslint-disable-next-line no-unused-vars
-export async function createSession(cfg, opts = {}) {
-  throw NOT_IMPLEMENTED('createSession');
-}
-
-/**
- * Send a prompt/message to an existing session and stream the agent's reply.
  * @param {object} cfg        backend config
  * @param {string} sessionId  id from createSession()
- * @param {object} opts       { prompt, ... } — shape TBD
- * @returns {Promise<{text: string, raw?: any}>}  (or an async stream — TBD)
- *
- * TODO(unverified): 需逆向 Devin Desktop 网络请求确认写端点
- *   - send route + method (UNCONFIRMED)
- *   - whether the reply comes back on this response or only via the
- *     /events/{devinId}/stream SSE channel (buildEventStreamRequest) — UNKNOWN
- *   - prompt payload shape and how model selection is passed — UNKNOWN
+ * @param {object} opts       { prompt, ... }
  */
 // eslint-disable-next-line no-unused-vars
 export async function sendPrompt(cfg, sessionId, opts = {}) {
   throw NOT_IMPLEMENTED('sendPrompt');
 }
 
-export const __testing = { joinUrl, requestJson, DEFAULT_BASE_URL };
+export const __testing = { joinUrl, requestJson, DEFAULT_BASE_URL, DEFAULT_REST_BASE_URL, V3_SESSION_FIELDS, v3OrgPath };
