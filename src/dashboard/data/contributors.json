@@ -28,6 +28,15 @@
       "summary": "baily-zhang 累计 #36 #45 #61 #62 四个 PR 跨 fingerprint / dashboard / Opus 多模态 / inline-script regression 四个领域，每条都质量过硬。其中 #61 单条把 Opus 4.7 多模态调用从不可用救回来 — 图片 / 二进制 block 历史只留占位符不嵌 base64、Claude Code 长 SP 压缩去 billing header、Opus 4.7 多模态工具请求禁用 user-message tool fallback、窄范围 cascade reuse + 严格账号绑定避免 retry 全量重放、fingerprint 不再 hash 图片 base64 五件事一次办完。配合 #36 #45 #62 累积已是反代复用机制的实质 maintainer。这条记录升级到 LR (Legendary Rare) 反映项目级架构跳跃。"
     },
     {
+      "login": "baily-zhang",
+      "pr": 64,
+      "weight": "S",
+      "weightLabel": "Cascade transport 坏会话恢复 · 又一次根因修复",
+      "mergedAt": "2026-04-25",
+      "title": "fix: recover from canceled cascade panel transport",
+      "summary": "baily-zhang 在 #36 / #45 / #61 / #62 之后又一次根因修复。Claude Code / OpenCode 这类重客户端的部分请求会在 InitializeCascadePanelState 阶段收到 \"The pending stream has been canceled\"，随后代理持续 502 —— 账号本身健康，token / 额度 / 模型权限都没问题，坏的是 Cascade / 本地 LS 的 HTTP/2 transport 会话进了坏状态。新加 isCascadeTransportError() 识别 pending stream has been canceled / ECONNRESET / ERR_HTTP2 / session closed / stream closed / panel state；warmup 或聊天阶段一旦命中，resetCascadeTransportState() 主动 closeSessionForPort + 清掉复用中的 workspaceInit 和 sessionId，避免后续请求继续写坏会话；不再吞掉 warmupCascade() 的 transport 失败，避免日志显示初始化成功、实际会话已坏的误导态；把这类错误统一归类成 upstream_transient_error，在多账号重试链路里按瞬态上游错误退避，而不是误判成限流或模型不可用。补了回归测试验证流式错误能保留 upstream_transient_error。108 行新增跨 client.js / chat.js / stream-error.test.js。"
+    },
+    {
       "login": "sandleft",
       "pr": 72,
       "weight": "S",
@@ -145,6 +154,33 @@
       "summary": "14 个 commit 把所有硬编码中文改成 I18n.t() 调用，补齐 en.json / zh-CN.json 缺键，加 check-i18n.js 扫 JavaScript 里的 I18n.t() key 确保 locale 里都有对应翻译。让 Dashboard 真正能中英双语切换，不是翻了一半的半成品。"
     },
     {
+      "login": "smeinecke",
+      "pr": 90,
+      "weight": "B+",
+      "weightLabel": "添加账号表单内联代理 · 与批量导入对齐",
+      "mergedAt": "2026-04-29",
+      "title": "Add proxy support for add account by token",
+      "summary": "Account Pool 的\"添加账号\"表单加了可选 proxy 字段（protocol://[user:pass@]host:port 格式），API Key / Auth Token 两种加号方式都能用。之前单账号添加只能先用全局代理建号、再单独给这个号配 per-account proxy，管理多个不同代理的账号时很烦；批量导入早就支持 inline proxy，这次把单账号添加补到 feature parity。复用现有校验链：格式错返 ERR_PROXY_FORMAT_INVALID，私有 IP 默认拦 ERR_PROXY_PRIVATE_IP（除非开了 ALLOW_PRIVATE_PROXY_HOSTS），SOCKS5 带 auth 也能正确解析；空字段则省略 proxy 走全局代理。账号建好即设代理、立刻为该代理 spawn LS。dashboard/api.js + 中英 i18n + index.html，加完即清。"
+    },
+    {
+      "login": "smeinecke",
+      "pr": 88,
+      "weight": "B+",
+      "weightLabel": "本地代理测试开关 · ALLOW_PRIVATE_PROXY_HOSTS",
+      "mergedAt": "2026-04-29",
+      "title": "feat: add ALLOW_PRIVATE_PROXY_HOSTS config for local proxy testing",
+      "summary": "smeinecke 在 #43 i18n 基础设施（A）之后又出手，这次是个 security-aware 的 opt-in 配置。Dashboard 测代理默认走 assertPublicUrlHost() 只允许公网地址 + 全套 SSRF 防护，本地跑 192.168.x.x / 10.x.x.x / localhost 的私有代理就过不去。新加 validateHostFormat() helper 镜像 resolvePublicAddresses() 的结构但去掉私有段拒绝 —— 仍然校验 DNS/IP 格式，只是跳过 SSRF guard；ALLOW_PRIVATE_PROXY_HOSTS=1 时 testProxy() 切到它，默认仍是公网 only 保持安全。config.js + .env.example + setup.sh + 中英 README 一条线全部接上。给跑本地代理的人开了一道明确的、需要显式打开的口子，而不是默认放开。"
+    },
+    {
+      "login": "smeinecke",
+      "pr": 89,
+      "weight": "B",
+      "weightLabel": "登录流 i18n 修复 + 错误码命名标准化",
+      "mergedAt": "2026-04-29",
+      "title": "Fix missing/broken i18n",
+      "summary": "修掉 Dashboard 登录流里 error code 直接以裸串显示的问题 —— 像 ERR_NO_PASSWORD_SET 这类直接糊在 toast 和登录历史里，没翻成人话。这个 PR 把 toasts / result 显示 / login history 三处的错误码全接上 i18n，登录历史表显示翻译后消息 + tooltip 保留原始 code。同时统一错误码命名向已有的 ERR_PROXY_PRIVATE_IP 看齐：ERR_PRIVATE_IP → ERR_PROXY_PRIVATE_IP、ERR_PRIVATE_HOST → ERR_PROXY_PRIVATE_HOST，net-safety.js 和 ssrf.test.js 同步改名，补上缺失的 ERR_PROXY_PRIVATE_HOST 翻译键到 en.json / zh-CN.json。顺手把语言切换按钮的 tooltip 改成动态显示目标语言（Switch to English / 切换到中文）。"
+    },
+    {
       "login": "baily-zhang",
       "pr": 36,
       "weight": "S",
@@ -197,6 +233,15 @@
       "mergedAt": "2026-05-12",
       "title": "feat: sticky session + auto-restart crashed LS",
       "summary": "两个 PR 一起出手。#162 从零搭建了 sticky session 机制：(callerKey, modelKey) → accountId 绑定 + 可配 TTL + LRU eviction，让多轮对话留在同一个上游账号上避免 cascade_id 跨账号失效。#163 给 LS 崩溃加了指数退避自动重启，process exit / SIGTERM / unresponsive 三种场景都兜住，防止单个 LS 挂掉拖垮整个账号池。另外在 #164 提供了源码级根因分析指出 SectionOverrideConfig 在 NO_TOOL 模式下抑制 tool_calling_section 的架构性问题。"
+    },
+    {
+      "login": "you922",
+      "pr": 163,
+      "weight": "A",
+      "weightLabel": "LS 崩溃自愈机制 · 指数退避自动重启",
+      "mergedAt": "2026-05-12",
+      "title": "feat: auto-restart crashed language server with exponential backoff",
+      "summary": "和 #162 sticky session 一起出手的第二个 PR（#162 那条已经把 you922 标过 S）。LS 二进制偶发因内存压力 / 上游协议变更 / 瞬态错误崩掉，老逻辑只 log 崩溃 + 清理，后续所有打到这个 LS 的请求一路 ECONNRESET / ERR_HTTP2_CONNECT 挂着，直到手动重启或下个请求触发 ensureLs()（#157 报的就是这个）。新加 scheduleLsRestart() 挂进 proc.on('exit')：指数退避 1s→2s→4s→8s（base delay 可配），max 3 次重试封死 permanent error 的无限循环，per-key _restartAttempts Map 防重复定时器，setTimeout 用 .unref() 不阻塞 Node 进程退出，再加 _intentionalShutdown Set 让 stopLanguageServer / restartLsForProxy 的主动关闭不会误触自动重启，getRestartStats() 暴露重启计数给监控。LS_AUTO_RESTART=0 可回退旧行为。让单个 LS 挂掉不再拖垮整个账号池。"
     },
     {
       "login": "Fermiz",
@@ -278,6 +323,15 @@
       "mergedAt": "2026-06-22",
       "title": "feat: add GLM 5.2 and Kimi K2.7 catalog entries",
       "summary": "PR #201 把 GLM 5.2 和 Kimi K2.7 补进模型 catalog，同时同步 README、英文 README、package description、模型文档生成检查和 catalog correctness 测试。模型新增最怕只改一处导致 dashboard、docs、测试互相漂移，这个 PR 把代码、文档和校验一起补齐，是后续普通模型 catalog 更新可以参考的提交形态。"
+    },
+    {
+      "login": "lovivi",
+      "pr": 204,
+      "weight": "B+",
+      "weightLabel": "glm-5.2 工具协议方言探针 · 首次贡献",
+      "mergedAt": "2026-06-28",
+      "title": "fix(tool-emulation): use gpt_native dialect for glm-5.2",
+      "summary": "首次贡献就解了 glm-5.2 的工具调用哑火。glm 系列默认走 glm47 那套 XML tool-call 标记，但 glm-5.2 直接无视标记、用纯文本作答，工具调用根本 emit 不出来。lovivi 在 pickToolDialect 里给 glm-5.2 和它的 glm-5-2-* SKU 别名单独切到 gpt_native 的 function_call JSON dialect —— 这套是模型稳定 emit、parser 也能正确解析的；老 GLM 维持 glm47 不动，没经验证不乱动。顺手加了 WINDSURFAPI_FORCE_TOOL_DIALECT 环境变量（限定 glm47/openai_json_xml/kimi_k2/gpt_native 四值）方便测试时强制方言。10 行精准改动，是新模型上线后\"工具协议方言对不上\"这类长尾问题的标准排查范式。"
     }
   ]
 }

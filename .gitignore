@@ -51,3 +51,4 @@ package-lock.json
 *.pem
 .docker-data/
 PR-FLOW.md
+.workflow-results/
