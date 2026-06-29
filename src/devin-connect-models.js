@@ -47,6 +47,12 @@ const SELECTOR_MAP = new Map(Object.entries({
   'claude-haiku-4.5': 'MODEL_PRIVATE_11',
 
   // ── OpenAI (paid) ──
+  // The catalog advertises bare `gpt-5.5` as the alias for gpt-5-5-low, so the
+  // bare form must resolve too — otherwise a client sending the catalog's own
+  // alias normalizes to `gpt-5-5`, misses the map, and silently degrades to the
+  // free selector (mapped:false). Keep the bare + suffixed forms in lockstep.
+  'gpt-5-5': 'gpt-5-5-low',
+  'gpt-5.5': 'gpt-5-5-low',
   'gpt-5-5-low': 'gpt-5-5-low',
   'gpt-5.5-low': 'gpt-5-5-low',
   'gpt-5-2': 'MODEL_GPT_5_2_NONE',
@@ -57,6 +63,12 @@ const SELECTOR_MAP = new Map(Object.entries({
   'gpt-5-2-xhigh': 'MODEL_GPT_5_2_XHIGH',
 
   // ── Google (paid) ──
+  // Catalog advertises the family alias as `gemini-3.0-flash` (with the .0),
+  // which normalizes to `gemini-3-0-flash`. Keep both that and the shorter
+  // `gemini-3-flash` form pointing at the MEDIUM default so the catalog's own
+  // alias resolves instead of degrading to free.
+  'gemini-3-0-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
+  'gemini-3.0-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
   'gemini-3-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
   'gemini-3-flash-minimal': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL',
   'gemini-3-flash-low': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW',

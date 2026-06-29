@@ -31,6 +31,7 @@
 
 import { readFileSync } from 'fs';
 import { fetchCatalog, fetchUserStatus } from '../src/devin-connect-catalog.js';
+import { resolveConnectSelector } from '../src/devin-connect-models.js';
 
 const baseUrl = (process.env.BASE_URL || process.env.WINDSURFAPI_BASE_URL || 'http://127.0.0.1:3003').replace(/\/+$/, '');
 const apiKey = process.env.API_KEY || process.env.WINDSURFAPI_API_KEY || 'test';
@@ -119,6 +120,7 @@ function record(stage, ok, detail) {
 // ─── Stage 0: entitlement preflight (zero-billable) ─────────────────────────
 const token = resolveToken();
 let isPaid = false;
+let liveCatalog = null;
 if (!token) {
   record('preflight', false, { note: 'no devin session token (set CONNECT_SMOKE_TOKEN or persist an account)' });
 } else {
@@ -126,6 +128,7 @@ if (!token) {
     const status = await fetchUserStatus({ token });
     isPaid = status.isPaid;
     const catalog = await fetchCatalog({ token });
+    liveCatalog = catalog;
     const byProvider = catalog.reduce((acc, m) => { (acc[m.provider] ||= []).push(m.selector); return acc; }, {});
     record('preflight', true, {
       note: `tier=${status.plan} paid=${status.isPaid} models=${catalog.length}`,
@@ -135,6 +138,38 @@ if (!token) {
     });
   } catch (err) {
     record('preflight', false, { note: `${err.code || 'ERR'}: ${err.message}` });
+  }
+}
+
+// ─── Stage 0b: catalog drift diff (zero-billable) ───────────────────────────
+// Compare the LIVE catalog against the committed snapshot + the resolver. New
+// or renamed selectors that the SELECTOR_MAP can't resolve are surfaced here so
+// the map + fixture get refreshed before a client silently degrades to free.
+if (liveCatalog) {
+  try {
+    const snap = JSON.parse(readFileSync(new URL('../test/fixtures/devin-catalog-snapshot.json', import.meta.url), 'utf8'));
+    const snapSelectors = new Set(snap.models.map((m) => m.selector));
+    const liveSelectors = new Set(liveCatalog.map((m) => m.selector));
+    const added = [...liveSelectors].filter((s) => !snapSelectors.has(s));
+    const removed = [...snapSelectors].filter((s) => !liveSelectors.has(s));
+    // Resolvability: every live selector AND its advertised alias must map
+    // without degrading to the free default.
+    const unresolved = [];
+    for (const m of liveCatalog) {
+      for (const name of [m.selector, m.alias].filter(Boolean)) {
+        const { mapped } = resolveConnectSelector(name);
+        if (!mapped) unresolved.push(name);
+      }
+    }
+    const drift = added.length || removed.length || unresolved.length;
+    record('catalog-drift', !drift, {
+      note: drift
+        ? `DRIFT: +${added.length} -${removed.length} unresolved=${unresolved.length} — refresh snapshot + SELECTOR_MAP`
+        : `in sync with snapshot (${liveCatalog.length} models, all resolvable)`,
+      added, removed, unresolved,
+    });
+  } catch (err) {
+    record('catalog-drift', false, { note: `diff failed: ${err.message}` });
   }
 }
 

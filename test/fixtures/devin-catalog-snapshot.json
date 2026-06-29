@@ -1,0 +1,31 @@
+{
+  "_comment": "Committed snapshot of the live GetCliModelConfigs catalog, calibrated 2026-06-30 against the free account (<redacted>). Each entry is {selector, alias, provider}. NOTE: aliases are non-unique FAMILY names — e.g. gpt-5.2 covers LOW/MEDIUM/NONE/HIGH/XHIGH, gemini-3.0-flash covers MINIMAL/LOW/MEDIUM/HIGH, claude-opus-4.5 covers base+thinking. An alias resolves to ONE curated default variant, so the drift test only asserts an alias resolves to SOME real catalog selector, not its exact row. The offline drift test (test/devin-connect-catalog-drift.test.js) asserts every selector resolves to itself and every alias resolves (mapped) to a real catalog selector. Refresh with: npm run smoke:devin-connect (preflight + catalog-drift stage print the live catalog). See memory devin-catalog-userstatus-wire-2026-06-30.",
+  "_calibratedAt": "2026-06-30",
+  "_count": 24,
+  "models": [
+    { "selector": "claude-opus-4-8-medium", "alias": "claude-opus-4.8", "provider": "anthropic" },
+    { "selector": "glm-5-2", "alias": "glm-5.2", "provider": "zhipu" },
+    { "selector": "gpt-5-5-low", "alias": "gpt-5.5", "provider": "openai" },
+    { "selector": "claude-sonnet-4-6-thinking", "alias": "claude-sonnet-4.6", "provider": "anthropic" },
+    { "selector": "kimi-k2-7", "alias": "kimi-k2.7", "provider": "moonshot" },
+    { "selector": "swe-1-6", "alias": "swe-1.6", "provider": "cognition" },
+    { "selector": "swe-1-6-fast", "alias": "swe-1.6-fast", "provider": "cognition" },
+    { "selector": "swe-1-6-slow", "alias": "swe-1.6-slow", "provider": "cognition" },
+    { "selector": "MODEL_GPT_5_2_LOW", "alias": "gpt-5.2", "provider": "openai" },
+    { "selector": "MODEL_GPT_5_2_MEDIUM", "alias": "gpt-5.2", "provider": "openai" },
+    { "selector": "MODEL_CLAUDE_4_5_OPUS", "alias": "claude-opus-4.5", "provider": "anthropic" },
+    { "selector": "MODEL_CLAUDE_4_5_OPUS_THINKING", "alias": "claude-opus-4.5", "provider": "anthropic" },
+    { "selector": "MODEL_SWE_1_5", "alias": "", "provider": "cognition" },
+    { "selector": "MODEL_PRIVATE_11", "alias": "", "provider": "anthropic" },
+    { "selector": "MODEL_PRIVATE_2", "alias": "claude-sonnet-4.5", "provider": "anthropic" },
+    { "selector": "MODEL_PRIVATE_3", "alias": "claude-sonnet-4.5", "provider": "anthropic" },
+    { "selector": "MODEL_GPT_5_2_NONE", "alias": "gpt-5.2", "provider": "openai" },
+    { "selector": "MODEL_GPT_5_2_HIGH", "alias": "gpt-5.2", "provider": "openai" },
+    { "selector": "MODEL_GPT_5_2_XHIGH", "alias": "gpt-5.2", "provider": "openai" },
+    { "selector": "MODEL_SWE_1_5_SLOW", "alias": "", "provider": "cognition" },
+    { "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL", "alias": "gemini-3.0-flash", "provider": "google" },
+    { "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW", "alias": "gemini-3.0-flash", "provider": "google" },
+    { "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM", "alias": "gemini-3.0-flash", "provider": "google" },
+    { "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH", "alias": "gemini-3.0-flash", "provider": "google" }
+  ]
+}
