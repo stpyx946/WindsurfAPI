@@ -187,3 +187,97 @@ describe('streamChatCompletion (SSE)', () => {
     assert.deepEqual(contentDeltas, ['a', 'b', 'c']);
   });
 });
+
+// Tool emulation: the connect models have no native function-calling, so the
+// adapter parses <tool_call>{...}</tool_call> markup out of the answer (the
+// same machinery the Cascade path uses) and surfaces OpenAI tool_calls.
+describe('toChatCompletion tool emulation', () => {
+  const TOOL_ANSWER = '<tool_call>{"name": "get_weather", "arguments": {"city": "Paris"}}</tool_call>';
+
+  it('extracts a tool_call and sets finish_reason=tool_calls, content=null', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: TOOL_ANSWER },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'swe-1-6-slow', messages: [] }, { emulateTools: true });
+    const msg = body.choices[0].message;
+    assert.equal(body.choices[0].finish_reason, 'tool_calls');
+    assert.equal(msg.content, null);
+    assert.equal(msg.tool_calls.length, 1);
+    assert.equal(msg.tool_calls[0].type, 'function');
+    assert.equal(msg.tool_calls[0].function.name, 'get_weather');
+    assert.deepEqual(JSON.parse(msg.tool_calls[0].function.arguments), { city: 'Paris' });
+    assert.ok(msg.tool_calls[0].id, 'has an id');
+  });
+
+  it('leaves a plain answer untouched when emulateTools is on but no markup present', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'just a normal answer' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'm', messages: [] }, { emulateTools: true });
+    assert.equal(body.choices[0].finish_reason, 'stop');
+    assert.equal(body.choices[0].message.content, 'just a normal answer');
+    assert.equal('tool_calls' in body.choices[0].message, false);
+  });
+
+  it('does NOT parse tool markup when emulateTools is off (passes through as text)', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: TOOL_ANSWER },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'm', messages: [] }); // no emulateTools
+    assert.equal(body.choices[0].finish_reason, 'stop');
+    assert.equal(body.choices[0].message.content, TOOL_ANSWER);
+  });
+});
+
+describe('streamChatCompletion tool emulation', () => {
+  function collectSend() {
+    const frames = [];
+    return { send: (d) => frames.push(d), frames };
+  }
+
+  it('emits a tool_calls delta and finishes with finish_reason=tool_calls', async () => {
+    // Split the markup across deltas to exercise the streaming parser's
+    // cross-chunk buffering.
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: '<tool_call>{"name": "search", ' },
+      { type: 'content', text: '"arguments": {"q": "cats"}}</tool_call>' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { send, frames } = collectSend();
+    const result = await streamChatCompletion({ model: 'swe-1-6-slow', messages: [] }, send, { emulateTools: true });
+
+    const toolFrame = frames.find(f => f.choices[0]?.delta?.tool_calls);
+    assert.ok(toolFrame, 'a tool_calls delta was emitted');
+    const tc = toolFrame.choices[0].delta.tool_calls[0];
+    assert.equal(tc.index, 0);
+    assert.equal(tc.type, 'function');
+    assert.equal(tc.function.name, 'search');
+    assert.deepEqual(JSON.parse(tc.function.arguments), { q: 'cats' });
+
+    const finish = frames.find(f => f.choices[0]?.finish_reason);
+    assert.equal(finish.choices[0].finish_reason, 'tool_calls');
+    assert.equal(result.finish_reason, 'tool_calls');
+    assert.equal(result.toolCalls.length, 1);
+
+    // The tool markup must NOT leak into content deltas.
+    const leaked = frames.map(f => f.choices[0]?.delta?.content || '').join('');
+    assert.equal(leaked.includes('<tool_call>'), false, 'markup leaked to content');
+  });
+
+  it('streams normal text untouched when emulateTools is on but no tool markup', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'hello ' },
+      { type: 'content', text: 'world' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { send, frames } = collectSend();
+    const result = await streamChatCompletion({ model: 'm', messages: [] }, send, { emulateTools: true });
+    const text = frames.map(f => f.choices[0]?.delta?.content || '').join('');
+    assert.equal(text, 'hello world');
+    assert.equal(result.finish_reason, 'stop');
+    assert.equal(result.toolCalls.length, 0);
+  });
+});

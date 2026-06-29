@@ -241,6 +241,47 @@ if (!realCalls) {
       note: `[FREE ACCOUNT] ${paidModel} → status=${r5.status} (expected clean 402/401, got error="${compact(r5.body?.error?.message || r5.text, 100)}")`,
     });
   }
+
+  // Stage 6: tool/function calling (text-emulation). Works on the free swe-1.6
+  // model — tool defs are injected into the prompt and <tool_call> markup is
+  // parsed back into OpenAI tool_calls. A weather query with a tool defined
+  // should come back as a tool_calls turn, not a prose answer.
+  const weatherTool = [{
+    type: 'function',
+    function: {
+      name: 'get_weather',
+      description: 'Get the current weather for a city.',
+      parameters: {
+        type: 'object',
+        properties: { city: { type: 'string', description: 'City name' } },
+        required: ['city'],
+      },
+    },
+  }];
+  const r6 = await postJson('/v1/chat/completions', {
+    model: freeModel, stream: false, tools: weatherTool, tool_choice: 'auto',
+    messages: [{ role: 'user', content: 'What is the weather in Tokyo right now? Use the tool.' }],
+  });
+  const m6 = r6.body?.choices?.[0]?.message;
+  const tc6 = m6?.tool_calls?.[0];
+  const calledWeather = tc6?.function?.name === 'get_weather';
+  record('tool-call-nonstream', r6.status === 200 && calledWeather, {
+    note: `status=${r6.status} finish=${r6.body?.choices?.[0]?.finish_reason} tool=${tc6?.function?.name || 'none'} args=${compact(tc6?.function?.arguments || '', 60)}`,
+  });
+
+  // Stage 7: tool calling over SSE — the parser must surface a tool_calls delta.
+  const r7 = await postSSE('/v1/chat/completions', {
+    model: freeModel, stream: true, tools: weatherTool, tool_choice: 'auto',
+    messages: [{ role: 'user', content: 'Check the weather in Berlin. Use the tool.' }],
+  });
+  const toolDelta = r7.dataLines
+    .filter((l) => l && l !== '[DONE]')
+    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
+    .find((o) => o?.choices?.[0]?.delta?.tool_calls);
+  const streamToolName = toolDelta?.choices?.[0]?.delta?.tool_calls?.[0]?.function?.name;
+  record('tool-call-stream', r7.status === 200 && streamToolName === 'get_weather', {
+    note: `status=${r7.status} streamedTool=${streamToolName || 'none'}`,
+  });
 }
 
 // ─── Summary ────────────────────────────────────────────────────────────────

@@ -19,6 +19,7 @@
 
 import { randomUUID } from 'crypto';
 import { streamChat as realStreamChat, isRetryable } from './devin-connect.js';
+import { ToolCallStreamParser, parseToolCallsFromText } from './handlers/tool-emulation.js';
 import { log } from './config.js';
 
 // streamChat is injectable so the adapter can be unit-tested without touching
@@ -48,9 +49,12 @@ function nowSeconds() {
  * @param {string} [opts.id]            response id (default chatcmpl-…)
  * @param {number} [opts.created]       unix seconds (default now)
  * @param {string} [opts.displayModel]  model name echoed back to the client
+ * @param {boolean} [opts.emulateTools] when true, parse <tool_call> markup out of
+ *                                      the buffered answer and surface OpenAI
+ *                                      tool_calls (text-emulation, swe-1.6 etc).
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400 } = {}) {
+export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false } = {}) {
   const model = displayModel || params.model;
 
   // Non-stream path buffers the whole answer, so a transient failure (network
@@ -81,9 +85,36 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
     }
   }
 
+  // Tool emulation: the connect models have no native function-calling slot, so
+  // tool defs were injected into the prompt (normalizeMessagesForCascade) and
+  // the model answers with <tool_call>…</tool_call> markup. Pull those back out
+  // into OpenAI tool_calls, mirroring the Cascade non-stream path
+  // (handlers/chat.js buildToolCalls).
+  let toolCalls = [];
+  if (emulateTools) {
+    const parsed = parseToolCallsFromText(content, {
+      modelKey: params.model, provider: null, route: 'devin_connect',
+    });
+    if (parsed.toolCalls.length) {
+      content = parsed.text;
+      toolCalls = parsed.toolCalls;
+    }
+  }
+
   // OpenAI convention: content is a string (may be empty), never undefined.
   const message = { role: 'assistant', content: content || '' };
   if (reasoning) message.reasoning_content = reasoning;
+  if (toolCalls.length) {
+    message.tool_calls = toolCalls.map((tc, i) => ({
+      id: tc.id || `call_${i}_${Date.now().toString(36)}`,
+      type: 'function',
+      function: { name: tc.name || 'unknown', arguments: tc.argumentsJson || tc.arguments || '{}' },
+    }));
+    // content is null when the turn is a tool call (the inline text is usually
+    // a hallucinated preview the caller shouldn't show).
+    message.content = null;
+    finishReason = 'tool_calls';
+  }
 
   const body = {
     id,
@@ -113,7 +144,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
  * @returns {Promise<{content:string, reasoning:string, finish_reason:string, usage:object|null}>}
  *          the assembled result, so callers can cache it after streaming.
  */
-export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel } = {}) {
+export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false } = {}) {
   const model = displayModel || params.model;
   const base = { id, object: OBJECT_CHUNK, created, model };
 
@@ -126,17 +157,55 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   let finishReason = 'stop';
   let usage = null;
 
+  // Tool emulation: run content deltas through the same streaming parser the
+  // Cascade path uses. It strips <tool_call> markup from the text deltas and
+  // surfaces fully-closed calls; we emit each as an OpenAI tool_calls delta
+  // (whole arguments at once, keyed by index — matching Cascade, not
+  // token-by-token argument streaming). finish_reason flips to tool_calls.
+  const toolParser = emulateTools
+    ? new ToolCallStreamParser({ modelKey: params.model, provider: null, route: 'devin_connect' })
+    : null;
+  const collectedToolCalls = [];
+  const emitToolCalls = (calls) => {
+    for (const tc of calls || []) {
+      const idx = collectedToolCalls.length;
+      collectedToolCalls.push(tc);
+      send({ ...base, choices: [{ index: 0, delta: {
+        tool_calls: [{
+          index: idx,
+          id: tc.id || `call_${idx}_${Date.now().toString(36)}`,
+          type: 'function',
+          function: { name: tc.name || 'unknown', arguments: tc.argumentsJson || '{}' },
+        }],
+      }, finish_reason: null }] });
+    }
+  };
+
   for await (const ev of streamChatImpl(params)) {
     if (ev.type === 'reasoning') {
       reasoning += ev.text;
       send({ ...base, choices: [{ index: 0, delta: { reasoning_content: ev.text }, finish_reason: null }] });
     } else if (ev.type === 'content') {
       content += ev.text;
-      send({ ...base, choices: [{ index: 0, delta: { content: ev.text }, finish_reason: null }] });
+      if (toolParser) {
+        const { text, toolCalls } = toolParser.feed(ev.text);
+        if (text) send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
+        emitToolCalls(toolCalls);
+      } else {
+        send({ ...base, choices: [{ index: 0, delta: { content: ev.text }, finish_reason: null }] });
+      }
     } else if (ev.type === 'finish') {
       if (ev.reason) finishReason = ev.reason;
       if (ev.usage) usage = ev.usage;
     }
+  }
+
+  // Drain any tool_call still buffered at end-of-stream, plus the trailing text.
+  if (toolParser) {
+    const { text, toolCalls } = toolParser.flush();
+    if (text) send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
+    emitToolCalls(toolCalls);
+    if (collectedToolCalls.length) finishReason = 'tool_calls';
   }
 
   // 4. Terminal finish chunk.
@@ -147,7 +216,7 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     send({ ...base, choices: [], usage });
   }
 
-  return { content, reasoning, finish_reason: finishReason, usage };
+  return { content, reasoning, finish_reason: finishReason, usage, toolCalls: collectedToolCalls };
 }
 
 export const __testing = { newId, nowSeconds, OBJECT_COMPLETION, OBJECT_CHUNK };

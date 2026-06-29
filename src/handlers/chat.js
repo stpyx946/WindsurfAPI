@@ -1807,14 +1807,25 @@ async function _handleChatCompletionsInner(body, context = {}) {
   if (selectBackend({ modelInfo }).flow === 'devin_connect') {
     const reqModelName = reqModel || config.defaultModel;
     const { selector, mapped } = resolveConnectSelector(reqModelName);
-    log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}`);
+    // Tool calling: connect selectors have no native function-calling slot, so
+    // we emulate exactly like the Cascade path — inject the tool protocol into
+    // the prompt (normalizeMessagesForCascade folds role:tool history and
+    // prepends a preamble) and parse <tool_call> markup back out downstream
+    // (toChatCompletion / streamChatCompletion with emulateTools). Run the
+    // rewrite BEFORE the connect call so no role:'tool' message survives to
+    // devin-connect.js's non-protocol [tool result] text wrapper.
+    const emulateTools = Array.isArray(effectiveTools) && effectiveTools.length > 0;
+    const connectMessages = emulateTools
+      ? normalizeMessagesForCascade(messages, effectiveTools, { modelKey: reqModelName, provider: null, route: 'devin_connect' })
+      : messages;
+    log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}${emulateTools ? ` tools=${effectiveTools.length}` : ''}`);
     const ccId = genId();
     const ccCreated = Math.floor(Date.now() / 1000);
     const ccStart = Date.now();
     // Acquire a pooled account for rotation + quota accounting. null ⇒ the
     // connect client falls back to the env token (single-token deploys).
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
-    const connectParams = { messages, model: selector };
+    const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
     // Thread the client's abort signal into the upstream HTTP request so a
     // disconnected/cancelled caller tears down the in-flight connect call
@@ -1836,7 +1847,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
           const send = (data) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
           let streamErr = null;
           try {
-            await streamChatCompletion(connectParams, send, { id: ccId, created: ccCreated, displayModel: reqModelName });
+            await streamChatCompletion(connectParams, send, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
           } catch (err) {
             streamErr = err;
             log.error(`Chat[${reqId}]: DEVIN_CONNECT stream error: ${err.message}`);
@@ -1849,7 +1860,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       };
     }
     try {
-      const out = await toChatCompletion(connectParams, { id: ccId, created: ccCreated, displayModel: reqModelName });
+      const out = await toChatCompletion(connectParams, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
       finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: null });
       return out;
     } catch (err) {
