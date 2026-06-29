@@ -18,7 +18,8 @@
  */
 
 import { randomUUID } from 'crypto';
-import { streamChat as realStreamChat } from './devin-connect.js';
+import { streamChat as realStreamChat, isRetryable } from './devin-connect.js';
+import { log } from './config.js';
 
 // streamChat is injectable so the adapter can be unit-tested without touching
 // the network — mirrors the __set…ForTest convention in windsurf-api.js.
@@ -49,19 +50,34 @@ function nowSeconds() {
  * @param {string} [opts.displayModel]  model name echoed back to the client
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel } = {}) {
+export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400 } = {}) {
   const model = displayModel || params.model;
+
+  // Non-stream path buffers the whole answer, so a transient failure (network
+  // blip, 5xx, rate limit) can be retried cleanly — a discarded partial buffer
+  // never duplicates tokens. Terminal errors (MODEL_BLOCKED / UNAUTHORIZED)
+  // are not retryable and throw straight through for the handler to map.
   let content = '';
   let reasoning = '';
   let finishReason = 'stop';
   let usage = null;
-
-  for await (const ev of streamChatImpl(params)) {
-    if (ev.type === 'content') content += ev.text;
-    else if (ev.type === 'reasoning') reasoning += ev.text;
-    else if (ev.type === 'finish') {
-      if (ev.reason) finishReason = ev.reason;
-      if (ev.usage) usage = ev.usage;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      content = ''; reasoning = ''; finishReason = 'stop'; usage = null;
+      for await (const ev of streamChatImpl(params)) {
+        if (ev.type === 'content') content += ev.text;
+        else if (ev.type === 'reasoning') reasoning += ev.text;
+        else if (ev.type === 'finish') {
+          if (ev.reason) finishReason = ev.reason;
+          if (ev.usage) usage = ev.usage;
+        }
+      }
+      break;
+    } catch (err) {
+      if (!isRetryable(err) || attempt >= maxRetries) throw err;
+      const backoff = retryBaseMs * 2 ** attempt;
+      log.warn(`DEVIN_CONNECT: retryable error (${err.code || err.message}); retry ${attempt + 1}/${maxRetries} in ${backoff}ms`);
+      await new Promise((r) => setTimeout(r, backoff));
     }
   }
 

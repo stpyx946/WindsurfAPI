@@ -236,6 +236,45 @@ export function decodeFrame(payload) {
   };
 }
 
+/**
+ * Classify an upstream error body/code into a stable, caller-mappable shape.
+ * Two cases matter for routing decisions in chat.js:
+ *   - a free-tier account asking for a paid selector → "/upgrade to access..."
+ *     surfaces as code MODEL_BLOCKED so the handler returns 402, not a bare 502.
+ *   - auth failures (permission_denied / 401) → code UNAUTHORIZED.
+ * Everything else keeps its upstream code (or UPSTREAM_ERROR).
+ *
+ * @param {string} text   raw body or trailer message
+ * @param {string|null} code  upstream code if already known
+ * @param {number|null} status  HTTP status if a non-200 was seen
+ * @returns {{code: string, message: string}}
+ */
+export function classifyUpstreamError(text, code = null, status = null) {
+  const body = String(text || '').trim();
+  if (/\/upgrade|upgrade to access|insufficient.*(credit|quota|entitlement)/i.test(body)) {
+    return { code: 'MODEL_BLOCKED', message: body || 'model requires a paid Devin entitlement' };
+  }
+  if (status === 401 || status === 403 || /permission_denied|unauthenticated|invalid.*token/i.test(body) || code === 'permission_denied') {
+    return { code: 'UNAUTHORIZED', message: body || 'DEVIN_CONNECT: authentication failed' };
+  }
+  if (status === 429 || /rate.?limit|too many requests|resource_exhausted/i.test(body) || code === 'resource_exhausted') {
+    return { code: 'RATE_LIMITED', message: body || 'DEVIN_CONNECT: rate limited' };
+  }
+  return { code: code || 'UPSTREAM_ERROR', message: body || `DEVIN_CONNECT upstream error${status ? ` (HTTP ${status})` : ''}` };
+}
+
+/** Transient codes worth a retry (network blips / server-side internal). */
+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'TIMEOUT', 'unavailable', 'internal', 'RATE_LIMITED']);
+
+/** True when an error should be retried (vs surfaced immediately). */
+export function isRetryable(err) {
+  if (!err) return false;
+  if (err.code && RETRYABLE_CODES.has(err.code)) return true;
+  // HTTP 5xx (except 501) are transient; 4xx are not.
+  if (typeof err.status === 'number') return err.status >= 500 && err.status !== 501;
+  return false;
+}
+
 /** Map the upstream finish enum to the OpenAI finish_reason vocabulary. */
 export function mapFinishReason(finish) {
   if (finish == null) return null;
@@ -302,6 +341,23 @@ export async function* streamChat({
     }),
     signal,
   }, (res) => {
+    // Non-200: the body is an error payload (JSON/text), NOT connect frames.
+    // Buffer it and classify, so callers get a stable code (MODEL_BLOCKED for
+    // free-tier /upgrade, UNAUTHORIZED, RATE_LIMITED) instead of an opaque
+    // frame-parse failure from feeding an error body to StreamingFrameParser.
+    if (res.statusCode && res.statusCode !== 200) {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        const body = Buffer.concat(chunks).toString('utf8');
+        const { code, message } = classifyUpstreamError(body, null, res.statusCode);
+        streamError = Object.assign(new Error(message), { code, status: res.statusCode });
+        done = true;
+        pump();
+      });
+      res.on('error', (err) => { streamError = err; done = true; pump(); });
+      return;
+    }
     const parser = new StreamingFrameParser();
     res.on('data', (chunk) => {
       parser.push(chunk);
@@ -316,10 +372,9 @@ export async function* streamChat({
             try {
               const parsed = JSON.parse(text);
               if (parsed?.error) {
-                streamError = Object.assign(
-                  new Error(`DEVIN_CONNECT upstream: ${parsed.error.code || 'error'}: ${parsed.error.message || text}`),
-                  { code: parsed.error.code, upstream: parsed.error },
-                );
+                const { code, message } = classifyUpstreamError(
+                  parsed.error.message || text, parsed.error.code || null, null);
+                streamError = Object.assign(new Error(message), { code, upstream: parsed.error });
               }
             } catch { /* non-JSON trailer — leave as success */ }
           }
@@ -397,6 +452,33 @@ export async function chat(params) {
     else if (ev.type === 'finish') { finish_reason = ev.reason; usage = ev.usage; }
   }
   return { content, reasoning, finish_reason, usage };
+}
+
+/**
+ * Non-stream completion with bounded retry on transient failures. Safe to retry
+ * because chat() buffers the whole answer — a mid-stream blip discards a partial
+ * buffer and starts clean (no duplicated tokens). Non-retryable errors
+ * (MODEL_BLOCKED, UNAUTHORIZED) throw immediately so the caller can map them.
+ *
+ * @param {object} params  see streamChat
+ * @param {number} [params.maxRetries=2]
+ * @param {number} [params.retryBaseMs=400]
+ */
+export async function chatWithRetry(params = {}) {
+  const { maxRetries = 2, retryBaseMs = 400 } = params;
+  let lastErr = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await chat(params);
+    } catch (err) {
+      lastErr = err;
+      if (!isRetryable(err) || attempt === maxRetries) throw err;
+      const backoff = retryBaseMs * 2 ** attempt;
+      log.warn(`DEVIN_CONNECT: retryable error (${err.code || err.message}); retry ${attempt + 1}/${maxRetries} in ${backoff}ms`);
+      await new Promise((r) => setTimeout(r, backoff));
+    }
+  }
+  throw lastErr;
 }
 
 export const __testing = {

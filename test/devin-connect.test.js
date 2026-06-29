@@ -5,6 +5,8 @@ import {
   buildGetChatMessageRequest,
   decodeFrame,
   mapFinishReason,
+  classifyUpstreamError,
+  isRetryable,
   __testing,
 } from '../src/devin-connect.js';
 import {
@@ -232,5 +234,63 @@ describe('mapFinishReason', () => {
   });
   it('returns null when no finish signal was seen', () => {
     assert.equal(mapFinishReason(null), null);
+  });
+});
+
+describe('classifyUpstreamError', () => {
+  it('maps a free-tier /upgrade rejection to MODEL_BLOCKED', () => {
+    const r = classifyUpstreamError('Please /upgrade to access claude-opus-4-8');
+    assert.equal(r.code, 'MODEL_BLOCKED');
+  });
+  it('maps "upgrade to access" prose to MODEL_BLOCKED', () => {
+    assert.equal(classifyUpstreamError('You must upgrade to access this model').code, 'MODEL_BLOCKED');
+  });
+  it('maps insufficient credit/quota to MODEL_BLOCKED', () => {
+    assert.equal(classifyUpstreamError('insufficient credits remaining').code, 'MODEL_BLOCKED');
+  });
+  it('maps HTTP 401 to UNAUTHORIZED', () => {
+    assert.equal(classifyUpstreamError('', null, 401).code, 'UNAUTHORIZED');
+  });
+  it('maps permission_denied code to UNAUTHORIZED', () => {
+    assert.equal(classifyUpstreamError('nope', 'permission_denied').code, 'UNAUTHORIZED');
+  });
+  it('maps HTTP 429 to RATE_LIMITED', () => {
+    assert.equal(classifyUpstreamError('', null, 429).code, 'RATE_LIMITED');
+  });
+  it('maps resource_exhausted text to RATE_LIMITED', () => {
+    assert.equal(classifyUpstreamError('resource_exhausted: too many requests').code, 'RATE_LIMITED');
+  });
+  it('falls back to the upstream code, else UPSTREAM_ERROR', () => {
+    assert.equal(classifyUpstreamError('boom', 'weird_code').code, 'weird_code');
+    assert.equal(classifyUpstreamError('boom').code, 'UPSTREAM_ERROR');
+  });
+  it('prefers MODEL_BLOCKED even on a non-200 status', () => {
+    // an /upgrade message returned with a 403 is still an entitlement issue
+    assert.equal(classifyUpstreamError('/upgrade required', null, 403).code, 'MODEL_BLOCKED');
+  });
+});
+
+describe('isRetryable', () => {
+  it('retries transient network codes', () => {
+    for (const code of ['ECONNRESET', 'ETIMEDOUT', 'TIMEOUT', 'EPIPE']) {
+      assert.equal(isRetryable({ code }), true, code);
+    }
+  });
+  it('retries RATE_LIMITED and upstream internal/unavailable', () => {
+    assert.equal(isRetryable({ code: 'RATE_LIMITED' }), true);
+    assert.equal(isRetryable({ code: 'internal' }), true);
+    assert.equal(isRetryable({ code: 'unavailable' }), true);
+  });
+  it('retries HTTP 5xx (except 501) and not 4xx', () => {
+    assert.equal(isRetryable({ status: 500 }), true);
+    assert.equal(isRetryable({ status: 503 }), true);
+    assert.equal(isRetryable({ status: 501 }), false);
+    assert.equal(isRetryable({ status: 429 }), false); // status-only 429: code path handles it
+    assert.equal(isRetryable({ status: 400 }), false);
+  });
+  it('does not retry terminal codes', () => {
+    assert.equal(isRetryable({ code: 'MODEL_BLOCKED' }), false);
+    assert.equal(isRetryable({ code: 'UNAUTHORIZED' }), false);
+    assert.equal(isRetryable(null), false);
   });
 });

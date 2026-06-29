@@ -69,6 +69,49 @@ describe('toChatCompletion (non-stream)', () => {
     assert.equal(body.id, 'chatcmpl-fixed');
     assert.equal(body.created, 123);
   });
+
+  it('retries a transient failure then succeeds (no token duplication)', async () => {
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      if (calls === 1) {
+        // fail AFTER yielding a partial — the retry must discard it cleanly.
+        yield { type: 'content', text: 'PARTIAL' };
+        throw Object.assign(new Error('reset'), { code: 'ECONNRESET' });
+      }
+      yield { type: 'content', text: 'clean answer' };
+      yield { type: 'finish', reason: 'stop', usage: null };
+    });
+    const { body } = await toChatCompletion({ model: 'm', messages: [] }, { retryBaseMs: 1 });
+    assert.equal(calls, 2);
+    assert.equal(body.choices[0].message.content, 'clean answer'); // no leading PARTIAL
+  });
+
+  it('does not retry a terminal MODEL_BLOCKED error', async () => {
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      throw Object.assign(new Error('/upgrade required'), { code: 'MODEL_BLOCKED' });
+    });
+    await assert.rejects(
+      toChatCompletion({ model: 'm', messages: [] }, { retryBaseMs: 1 }),
+      /upgrade/,
+    );
+    assert.equal(calls, 1); // one attempt, no retry
+  });
+
+  it('gives up after maxRetries on a persistent transient error', async () => {
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      throw Object.assign(new Error('down'), { code: 'ETIMEDOUT' });
+    });
+    await assert.rejects(
+      toChatCompletion({ model: 'm', messages: [] }, { maxRetries: 2, retryBaseMs: 1 }),
+      /down/,
+    );
+    assert.equal(calls, 3); // initial + 2 retries
+  });
 });
 
 describe('streamChatCompletion (SSE)', () => {

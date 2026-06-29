@@ -328,6 +328,23 @@ export function chatStreamError(message, type = 'upstream_error', code = null) {
   return { error: { message: sanitizeText(message || 'Upstream stream error'), type, code } };
 }
 
+/**
+ * Map a DEVIN_CONNECT classified error code (from devin-connect.js
+ * classifyUpstreamError) to the OpenAI-shaped HTTP status + error type. A
+ * free-tier account hitting a paid selector returns MODEL_BLOCKED, which must
+ * read as 402 (payment/entitlement) rather than a generic 502.
+ */
+export function connectErrorToHttp(code) {
+  switch (code) {
+    case 'MODEL_BLOCKED': return { status: 402, type: 'model_blocked' };
+    case 'UNAUTHORIZED': return { status: 401, type: 'authentication_error' };
+    case 'RATE_LIMITED': return { status: 429, type: 'rate_limit_error' };
+    case 'NO_TOKEN': return { status: 401, type: 'authentication_error' };
+    case 'TIMEOUT': return { status: 504, type: 'timeout_error' };
+    default: return { status: 502, type: 'upstream_error' };
+  }
+}
+
 export function finishPartialStreamAfterError({ id, created, model, send, res }) {
   if (typeof send === 'function') {
     send({
@@ -1777,8 +1794,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
     try {
       return await toChatCompletion(connectParams, { id: ccId, created: ccCreated, displayModel: reqModelName });
     } catch (err) {
-      log.error(`Chat[${reqId}]: DEVIN_CONNECT error: ${err.message}`);
-      return { status: 502, body: { error: { message: err.message, type: 'upstream_error', code: err.code || null } } };
+      // Map the classified upstream code to the right HTTP status/type so a
+      // free-tier /upgrade rejection reads as 402 model_blocked, an auth failure
+      // as 401, and a rate limit as 429 — not a blanket 502.
+      const { status, type } = connectErrorToHttp(err.code);
+      log.error(`Chat[${reqId}]: DEVIN_CONNECT error (${err.code || 'UPSTREAM_ERROR'} -> ${status}): ${err.message}`);
+      return { status, body: { error: { message: err.message, type, code: err.code || null } } };
     }
   }
 

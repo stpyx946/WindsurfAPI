@@ -5,6 +5,7 @@ import { isCascadeTransportError } from '../src/client.js';
 import { addAccountByKey, getApiKey, removeAccount } from '../src/auth.js';
 import {
   chatStreamError,
+  connectErrorToHttp,
   finishPartialStreamAfterError,
   handleChatCompletions,
   isUpstreamDeadlineExceeded,
@@ -277,5 +278,25 @@ describe('stream error protocol', () => {
       if (previousProtocol == null) delete process.env.GRPC_PROTOCOL;
       else process.env.GRPC_PROTOCOL = previousProtocol;
     }
+  });
+});
+
+describe('connectErrorToHttp (DEVIN_CONNECT error mapping)', () => {
+  it('maps MODEL_BLOCKED to 402 model_blocked', () => {
+    assert.deepEqual(connectErrorToHttp('MODEL_BLOCKED'), { status: 402, type: 'model_blocked' });
+  });
+  it('maps UNAUTHORIZED and NO_TOKEN to 401 authentication_error', () => {
+    assert.deepEqual(connectErrorToHttp('UNAUTHORIZED'), { status: 401, type: 'authentication_error' });
+    assert.deepEqual(connectErrorToHttp('NO_TOKEN'), { status: 401, type: 'authentication_error' });
+  });
+  it('maps RATE_LIMITED to 429 rate_limit_error', () => {
+    assert.deepEqual(connectErrorToHttp('RATE_LIMITED'), { status: 429, type: 'rate_limit_error' });
+  });
+  it('maps TIMEOUT to 504 timeout_error', () => {
+    assert.deepEqual(connectErrorToHttp('TIMEOUT'), { status: 504, type: 'timeout_error' });
+  });
+  it('falls back to 502 upstream_error for unknown/null codes', () => {
+    assert.deepEqual(connectErrorToHttp('UPSTREAM_ERROR'), { status: 502, type: 'upstream_error' });
+    assert.deepEqual(connectErrorToHttp(null), { status: 502, type: 'upstream_error' });
   });
 });
