@@ -58,6 +58,12 @@ describe('cacheKey', () => {
       cacheKey({ ...base, thinking: { type: 'disabled' } })
     );
   });
+
+  it('separates output-affecting params (stop, seed)', () => {
+    const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
+    assert.notEqual(cacheKey({ ...base, stop: ['END'] }), cacheKey(base));
+    assert.notEqual(cacheKey({ ...base, seed: 1 }), cacheKey({ ...base, seed: 2 }));
+  });
 });
 
 describe('cacheGet / cacheSet', () => {

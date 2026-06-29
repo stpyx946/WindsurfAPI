@@ -69,7 +69,9 @@ function ipUaFingerprint(req) {
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
   const hasUserInBody = !!(body && typeof body.user === 'string');
-  log.info('[caller-key] body.user=%s subKey=%s', hasUserInBody ? body.user : '(none)', bodySubKey || '(none)');
+  // Don't log the raw body.user — OpenAI's `user` field is often an end-user
+  // email or stable account id (PII). bodySubKey is already its hash.
+  log.info('[caller-key] hasUser=%s subKey=%s', hasUserInBody ? 'yes' : 'no', bodySubKey || '(none)');
   if (apiKey) {
     const base = `api:${sha256Hex(apiKey).slice(0, 32)}`;
     if (bodySubKey) return `${base}:user:${bodySubKey}`;

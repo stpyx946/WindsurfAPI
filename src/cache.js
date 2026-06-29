@@ -110,6 +110,15 @@ function normalize(body) {
     temperature: body.temperature ?? null,
     top_p: body.top_p ?? null,
     max_tokens: body.max_tokens ?? null,
+    // Output-affecting params — omitting these served a response generated
+    // under a different stop/seed/penalty config for an otherwise-identical
+    // body. `stop` is set from Anthropic stop_sequences in messages.js.
+    stop: body.stop ?? null,
+    seed: body.seed ?? null,
+    frequency_penalty: body.frequency_penalty ?? null,
+    presence_penalty: body.presence_penalty ?? null,
+    logit_bias: body.logit_bias || null,
+    n: body.n ?? null,
   };
 }
 

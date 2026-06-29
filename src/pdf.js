@@ -94,8 +94,14 @@ function extractTextOps(stream) {
       currentLine += decodePdfString(m[1]);
     }
 
-    // [...] TJ — show strings with spacing
-    const tjArrayMatches = block.matchAll(/\[((?:[^[\]]*|\([^)]*\))*)\]\s*TJ/gi);
+    // [...] TJ — show strings with spacing.
+    // Linear regex (single negated class, no nested quantifier) — the old
+    // /\[((?:[^[\]]*|\([^)]*\))*)\]\s*TJ/ form was catastrophic-backtracking
+    // ReDoS: an unclosed '[' in attacker PDF content hung the event loop for
+    // tens of seconds (single-request DoS, proxy ingests untrusted PDFs). The
+    // tradeoff is a TJ array containing a literal ']' inside a (...) string is
+    // skipped — rare, and text extraction is best-effort anyway.
+    const tjArrayMatches = block.matchAll(/\[([^\]]*)\]\s*TJ/gi);
     for (const m of tjArrayMatches) {
       const inner = m[1];
       const parts = inner.matchAll(/\(([^)]*)\)|(-?\d+(?:\.\d+)?)/g);
