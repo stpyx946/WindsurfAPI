@@ -13,6 +13,7 @@ scripts/*
 !scripts/sync-docs-contributors.mjs
 !scripts/secret-scan.mjs
 !scripts/run-test-shard.mjs
+!scripts/cascade-survival-probe.mjs
 src/get-token.js
 src/test-cascade.js
 src/runtime-config.json
