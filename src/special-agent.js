@@ -14,7 +14,7 @@ import { randomUUID } from 'crypto';
 import { getApiKey, releaseAccount } from './auth.js';
 import { config, log } from './config.js';
 import { recordRequest } from './dashboard/stats.js';
-import { sanitizeText } from './sanitize.js';
+import { sanitizeText, PathSanitizeStream } from './sanitize.js';
 import { runDevinAcpProcess } from './devin-acp.js';
 
 const SPECIAL_BACKEND = 'special_agent';
@@ -396,6 +396,87 @@ function streamFromText({ id, created, model, messages, text, reasoning = '' }) 
   };
 }
 
+/**
+ * Live SSE stream for ACP mode: the runner is driven INSIDE the handler so each
+ * agent_message_chunk is forwarded the moment it arrives (real streaming, not
+ * collect-then-slice). The handler owns the account lifecycle and request
+ * accounting because it runs after handleSpecialAgentChatCompletion returns.
+ *
+ * Deltas are sanitized incrementally with PathSanitizeStream so no sensitive
+ * literal can leak across a chunk boundary. Reasoning chunks are forwarded as
+ * reasoning_content only when explicitly opted in.
+ */
+function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, runner, signal, onDone }) {
+  return {
+    status: 200,
+    stream: true,
+    headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
+    handler: async (res) => {
+      const send = data => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+      const msgSanitizer = new PathSanitizeStream();
+      const showReasoning = exposeReasoning();
+      let emittedText = '';
+      let emittedReasoning = false;
+
+      send({ id, object: 'chat.completion.chunk', created, model,
+        choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
+
+      const onChunk = ({ kind, text }) => {
+        if (kind === 'message') {
+          const safe = msgSanitizer.feed(text);
+          if (safe) {
+            emittedText += safe;
+            send({ id, object: 'chat.completion.chunk', created, model,
+              choices: [{ index: 0, delta: { content: safe }, finish_reason: null }] });
+          }
+        } else if (kind === 'thought' && showReasoning) {
+          emittedReasoning = true;
+          send({ id, object: 'chat.completion.chunk', created, model,
+            choices: [{ index: 0, delta: { reasoning_content: text }, finish_reason: null }] });
+        }
+      };
+
+      let ok = true;
+      try {
+        const result = await runner(prompt, { modelKey, apiKey: acct?.apiKey || '', apiServerUrl: acct?.apiServerUrl || '', signal, onChunk });
+        const tail = msgSanitizer.flush();
+        if (tail) {
+          emittedText += tail;
+          send({ id, object: 'chat.completion.chunk', created, model,
+            choices: [{ index: 0, delta: { content: tail }, finish_reason: null }] });
+        }
+        // Fallback for runners that return text/reasoning without streaming via
+        // onChunk (non-chunking runners or test mocks): emit the returned value
+        // so the stream is never empty when the runner produced output.
+        if (showReasoning && !emittedReasoning && result?.reasoning) {
+          send({ id, object: 'chat.completion.chunk', created, model,
+            choices: [{ index: 0, delta: { reasoning_content: sanitizeText(result.reasoning) }, finish_reason: null }] });
+        }
+        if (!emittedText && result?.text) {
+          const safe = sanitizeText(result.text);
+          emittedText = safe;
+          send({ id, object: 'chat.completion.chunk', created, model,
+            choices: [{ index: 0, delta: { content: safe }, finish_reason: null }] });
+        }
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [], usage: estimateTokens(messages, emittedText) });
+      } catch (err) {
+        ok = false;
+        // Headers are already sent (200), so surface the failure as a terminal
+        // SSE error event rather than an HTTP status the client can no longer see.
+        send({ error: { type: err?.type || 'backend_error', message: sanitizeText(err?.message || 'Special-agent stream failed') } });
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      } finally {
+        if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
+        if (onDone) onDone(ok);
+      }
+    },
+  };
+}
+
 async function checkoutAccount(callerKey) {
   if (process.env.DEVIN_CLI_USE_ACCOUNT_POOL === '0') return null;
   return getApiKey([], null, callerKey);
@@ -441,6 +522,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
   }
 
   let acct = null;
+  let handedOff = false;
   try {
     if (process.env.DEVIN_CLI_USE_ACCOUNT_POOL !== '0') {
       const checkout = deps.checkoutAccount || checkoutAccount;
@@ -453,6 +535,25 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     const runner = mode === 'acp'
       ? (deps.runDevinAcp || runDevinAcp)
       : (deps.runDevinPrint || runDevinPrint);
+
+    // Live streaming is only meaningful for ACP, whose runner emits chunks via
+    // onChunk. Print mode has no incremental output, so it keeps the buffered
+    // streamFromText path. The live streamer runs the runner itself, so it owns
+    // the account release + request accounting via onDone.
+    if (body?.stream && mode === 'acp') {
+      const releaser = deps.releaseAccount || releaseAccount;
+      const stream = streamLiveAcp({
+        id, created, model, messages, prompt, modelKey, acct, runner,
+        signal: route?.signal || null,
+        onDone: (ok) => {
+          recordRequest(model, ok, Date.now() - started, acct?.id || null);
+          if (acct?.apiKey) releaser(acct.apiKey);
+        },
+      });
+      handedOff = true;
+      return stream;
+    }
+
     const result = await runner(prompt, {
       modelKey,
       apiKey: acct?.apiKey || '',
@@ -474,7 +575,9 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       backend: 'devin-cli',
     });
   } finally {
-    if (acct?.apiKey) {
+    // The live streamer owns the account when handedOff: it releases in onDone
+    // after the stream completes. Releasing here would pull the key mid-stream.
+    if (!handedOff && acct?.apiKey) {
       const releaser = deps.releaseAccount || releaseAccount;
       releaser(acct.apiKey);
     }

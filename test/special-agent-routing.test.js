@@ -391,6 +391,70 @@ describe('special-agent model routing', () => {
     assert.doesNotMatch(joined, /reasoning_content/);
     assert.doesNotMatch(joined, /hidden-thought/);
   });
+
+  it('streams real ACP chunks incrementally as they arrive (onChunk)', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    delete process.env.DEVIN_ACP_EXPOSE_REASONING;
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('stream it')],
+    }, {
+      specialAgent: {
+        // A chunking runner: emits three message deltas via onChunk, like real ACP.
+        runDevinAcp: async (prompt, opts) => {
+          opts.onChunk({ kind: 'message', text: 'Hel' });
+          opts.onChunk({ kind: 'message', text: 'lo ' });
+          opts.onChunk({ kind: 'message', text: 'world' });
+          return { text: 'Hello world' };
+        },
+      },
+    });
+
+    const writes = [];
+    const res = { writableEnded: false, write(c) { writes.push(String(c)); }, end() { this.writableEnded = true; } };
+    await result.handler(res);
+
+    // Each delta is its own SSE chunk (real streaming, not one buffered blob).
+    const contentDeltas = writes
+      .filter(w => w.includes('"content"') && !w.includes('"role"'))
+      .map(w => JSON.parse(w.replace(/^data: /, '')).choices[0].delta.content);
+    assert.deepEqual(contentDeltas, ['Hel', 'lo ', 'world']);
+    const joined = writes.join('');
+    assert.match(joined, /finish_reason":"stop"/);
+    assert.match(joined, /data: \[DONE\]/);
+  });
+
+  it('emits a terminal SSE error event when a live ACP stream fails mid-flight', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('stream it')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (prompt, opts) => {
+          opts.onChunk({ kind: 'message', text: 'partial' });
+          throw Object.assign(new Error('high demand for this model'), { status: 502, type: 'backend_error' });
+        },
+      },
+    });
+
+    const writes = [];
+    const res = { writableEnded: false, write(c) { writes.push(String(c)); }, end() { this.writableEnded = true; } };
+    await result.handler(res);
+    const joined = writes.join('');
+    assert.match(joined, /"content":"partial"/); // what arrived before the error is preserved
+    assert.match(joined, /"error"/);
+    assert.match(joined, /high demand/);
+    assert.match(joined, /data: \[DONE\]/);
+  });
 });
 
 describe('special-agent wrapper routes', () => {

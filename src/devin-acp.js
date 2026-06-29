@@ -84,17 +84,26 @@ const THOUGHT_CHUNK_KINDS = new Set([
   'agent_reasoning_chunk',
 ]);
 
-function collectAcpTextFromNotification(obj, buffers) {
+function collectAcpTextFromNotification(obj, buffers, onChunk) {
   if (obj?.method !== 'session/update') return;
   const { kind, text } = extractAcpUpdate(obj.params || {});
   if (!text) return;
-  if (MESSAGE_CHUNK_KINDS.has(kind)) buffers.message.push(text);
-  else if (THOUGHT_CHUNK_KINDS.has(kind)) buffers.thought.push(text);
+  if (MESSAGE_CHUNK_KINDS.has(kind)) {
+    buffers.message.push(text);
+    // Real-time fan-out: fire the chunk as it arrives so callers can stream it
+    // verbatim. Buffers are still filled, so getText() remains the source of
+    // truth for non-streaming callers. onChunk is optional — when absent the
+    // behaviour is identical to before (collect-then-return).
+    if (onChunk) { try { onChunk({ kind: 'message', text }); } catch { /* never let a consumer error kill the pump */ } }
+  } else if (THOUGHT_CHUNK_KINDS.has(kind)) {
+    buffers.thought.push(text);
+    if (onChunk) { try { onChunk({ kind: 'thought', text }); } catch { /* ignore consumer error */ } }
+  }
   // Any other update kind (tool calls, plans, status) is not part of the
   // text/reasoning split and is ignored here on purpose.
 }
 
-function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
+function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onChunk }) {
   const child = spawn(command, args, {
     env,
     windowsHide: true,
@@ -149,7 +158,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
       if (!line.trim()) continue;
       const obj = parseJsonLine(line);
       if (!obj) continue;
-      collectAcpTextFromNotification(obj, buffers);
+      collectAcpTextFromNotification(obj, buffers, onChunk);
       if (obj.method === 'session/request_permission' && obj.id != null) {
         writeJsonLine(child, {
           jsonrpc: '2.0',
@@ -235,7 +244,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
   };
 }
 
-export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null } = {}) {
+export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null } = {}) {
   if (!apiKey) {
     throw Object.assign(new Error('Devin ACP mode requires an upstream Windsurf account apiKey.'), {
       status: 503,
@@ -252,6 +261,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     signal,
     timeoutMs: runTimeoutMs(),
     outputLimit: outputLimitBytes(),
+    onChunk,
   });
 
   try {
