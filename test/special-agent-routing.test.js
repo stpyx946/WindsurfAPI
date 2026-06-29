@@ -482,6 +482,71 @@ describe('special-agent wrapper routes', () => {
     assert.equal(text, 'MESSAGES_OK');
   });
 
+  it('streams live ACP chunks through /v1/messages as Anthropic SSE', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleMessages({
+      model: 'swe-1.6',
+      max_tokens: 128,
+      stream: true,
+      messages: [{ role: 'user', content: 'stream via anthropic' }],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (prompt, opts) => {
+          opts.onChunk({ kind: 'message', text: 'Hel' });
+          opts.onChunk({ kind: 'message', text: 'lo' });
+          return { text: 'Hello' };
+        },
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.stream, true);
+    const writes = [];
+    const res = { writableEnded: false, write(c) { writes.push(String(c)); }, end() { this.writableEnded = true; }, on() {} };
+    await result.handler(res);
+    const joined = writes.join('');
+
+    // The ACP message chunks must arrive as Anthropic text deltas, framed by
+    // the standard event sequence Claude Code expects.
+    assert.match(joined, /event: message_start/);
+    assert.match(joined, /event: content_block_delta/);
+    assert.match(joined, /"text":"Hel"/);
+    assert.match(joined, /"text":"lo"/);
+    assert.match(joined, /event: message_stop/);
+  });
+
+  it('surfaces a mid-stream ACP failure as an Anthropic error event', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleMessages({
+      model: 'swe-1.6',
+      max_tokens: 128,
+      stream: true,
+      messages: [{ role: 'user', content: 'will fail' }],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (prompt, opts) => {
+          opts.onChunk({ kind: 'message', text: 'partial' });
+          throw Object.assign(new Error('high demand for this model'), { status: 502, type: 'backend_error' });
+        },
+      },
+    });
+
+    assert.equal(result.status, 200);
+    const writes = [];
+    const res = { writableEnded: false, write(c) { writes.push(String(c)); }, end() { this.writableEnded = true; }, on() {} };
+    await result.handler(res);
+    const joined = writes.join('');
+    assert.match(joined, /"text":"partial"/); // delivered before the failure
+    assert.match(joined, /event: error/);
+    assert.match(joined, /high demand/);
+  });
+
   it('Responses route forwards special-agent context through chat', async () => {
     process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
     process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
