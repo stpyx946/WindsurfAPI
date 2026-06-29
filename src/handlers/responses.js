@@ -451,11 +451,17 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   if (text) output.push(textMessageItem(msgId, text));
   for (const tc of (message.tool_calls || [])) output.push(functionCallItem(tc, 'completed', requestedTools));
 
+  // A turn that ends by emitting function calls is `completed` in the OpenAI
+  // Responses API — `incomplete` is reserved for truncation (length /
+  // content_filter). The streaming path always sends response.completed, so
+  // map non-stream the same way to keep agent loops (Codex etc.) consistent.
+  const truncated = finishReason === 'length' || finishReason === 'content_filter';
   return {
     id: responseId,
     object: 'response',
     created_at: chatBody.created || Math.floor(Date.now() / 1000),
-    status: finishReason === 'stop' ? 'completed' : 'incomplete',
+    status: truncated ? 'incomplete' : 'completed',
+    ...(truncated ? { incomplete_details: { reason: finishReason === 'length' ? 'max_output_tokens' : 'content_filter' } } : {}),
     model: requestedModel || chatBody.model,
     output,
     usage: mapUsage(chatBody.usage || {}),

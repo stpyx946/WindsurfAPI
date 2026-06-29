@@ -214,11 +214,25 @@ describe('chatToResponse', () => {
       }],
       usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
     }, 'claude-sonnet-4.6', 'resp_test', 'msg_test');
-    assert.equal(response.status, 'incomplete');
+    // A tool-call turn is `completed`, not `incomplete` — `incomplete` is
+    // reserved for truncation (length/content_filter), matching the stream path.
+    assert.equal(response.status, 'completed');
+    assert.equal(response.incomplete_details, undefined);
     assert.equal(response.output[0].type, 'function_call');
     assert.equal(response.output[0].call_id, 'call_1');
     assert.equal(response.output[0].name, 'Bash');
     assert.equal(response.output[0].arguments, '{"command":"pwd"}');
+  });
+
+  it('maps a truncated (length) completion to status incomplete with details', () => {
+    const response = chatToResponse({
+      created: 123,
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'partial' }, finish_reason: 'length' }],
+      usage: { input_tokens: 5, output_tokens: 100, total_tokens: 105 },
+    }, 'claude-sonnet-4.6', 'resp_test', 'msg_test');
+    assert.equal(response.status, 'incomplete');
+    assert.deepEqual(response.incomplete_details, { reason: 'max_output_tokens' });
   });
 
   it('preserves flattened metadata for custom, web_search, and namespace tools', async () => {
