@@ -732,6 +732,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
 
   const candidates = [];
   for (const a of accounts) {
+    maybeRecoverErrorAccount(a, now); // AP-RISK-1: half-open trial after TTL
     if (a.status !== 'active') continue;
     if (excludeKeys.includes(a.apiKey)) continue;
     if (isAccountInMaintenance(a)) continue;
@@ -1082,6 +1083,29 @@ export function refundReservation(apiKey, timestamp) {
 }
 
 /**
+ * AP-RISK-1: half-open recovery for error'd accounts. An account disabled by
+ * a transient error streak (status='error') has no other path back to 'active'
+ * — it's never selected, so it never gets a success to clear it, so the pool
+ * shrinks monotonically under upstream wobble. After a cooldown TTL we flip it
+ * back to 'active' for a half-open trial: the next request either succeeds
+ * (reportSuccess clears errorCount) or fails (reportError re-disables it).
+ * 'banned' accounts are intentionally NOT auto-recovered — those stay manual.
+ */
+function errorRecoveryTtlMs() {
+  const raw = Number(process.env.WINDSURFAPI_ERROR_RECOVERY_MS);
+  return Number.isFinite(raw) && raw >= 1000 ? raw : 15 * 60 * 1000;
+}
+
+function maybeRecoverErrorAccount(account, now) {
+  if (!account || account.status !== 'error') return;
+  const since = account.erroredAt || account._errorAt || 0;
+  if (!since || (now - since) < errorRecoveryTtlMs()) return;
+  account.status = 'active';
+  account.errorCount = 0;
+  log.info(`Account ${safeAccountRef(account)} half-open recovery after ${Math.round((now - since) / 60000)}m in error state`);
+}
+
+/**
  * Check if an account is rate-limited for a specific model.
  */
 function isRateLimitedForModel(account, modelKey, now) {
@@ -1114,8 +1138,13 @@ export function reportError(apiKey, { windowMs = 30 * 60 * 1000 } = {}) {
   // a months-old failure count into a fresh blip.
   account.errorCount = (now - last < windowMs) ? (account.errorCount || 0) + 1 : 1;
   account._errorAt = now;
-  if (account.errorCount >= 3) {
+  if (account.errorCount >= 3 && account.status !== 'error') {
     account.status = 'error';
+    account.erroredAt = now;
+    // AP-BUG-1: persist the status flip so a restart doesn't resurrect a
+    // known-bad key (reportBanSignal already saves on its flip; this mirrors
+    // it). Only saves when the status actually changes, not on every error.
+    saveAccounts();
     log.warn(`Account ${safeAccountRef(account)} disabled after ${account.errorCount} errors in ${Math.round(windowMs / 60000)}m`);
   }
 }
@@ -2061,9 +2090,22 @@ async function refreshAllFirebaseTokens({ skipBusy = false } = {}) {
         log.info(`Firebase refresh: ${safeAccountRef(a)} got new API key`);
         a.apiKey = apiKey;
       }
+      a._refreshFailStreak = 0;
       saveAccounts();
     } catch (e) {
       log.warn(`Firebase refresh ${safeAccountRef(a)} failed: ${e.message}`);
+      // AP-RISK-4: a refresh failure means the stored token may be dead. If we
+      // do nothing, the account stays 'active' and keeps getting selected with
+      // a stale/expired key, burning user-visible failures. Count consecutive
+      // failures and downgrade after a streak (a one-off network blip still
+      // gets retried next cycle). A real success resets the streak above.
+      a._refreshFailStreak = (a._refreshFailStreak || 0) + 1;
+      if (a._refreshFailStreak >= 3 && a.status === 'active') {
+        a.status = 'error';
+        a.erroredAt = Date.now();
+        saveAccounts();
+        log.warn(`Account ${safeAccountRef(a)} downgraded to error after ${a._refreshFailStreak} consecutive Firebase refresh failures`);
+      }
     }
   }
 }
