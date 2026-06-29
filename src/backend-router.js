@@ -46,6 +46,23 @@ function devinCliMode(env = process.env) {
 }
 
 /**
+ * DEVIN_ONLY kill-switch. When set, Cascade is fully retired and EVERY request
+ * — regardless of model — is routed through the Devin CLI special-agent
+ * backend. This is the "Devin is the only core" mode for after the Cascade
+ * upstream is decommissioned. Defaults OFF, so behaviour is unchanged until an
+ * operator flips it.
+ *
+ * NOTE (unverified, needs live probe): routing a model like claude-4.5-sonnet
+ * here makes Devin the *nominal* backend, but the current ACP path only passes
+ * the requested model name as a prompt hint (devin-acp.js session/prompt) — it
+ * does NOT switch Devin's underlying core to that model. Whether Devin can
+ * actually serve a specific model is an open question gated on a live probe.
+ */
+function devinOnlyEnabled(env = process.env) {
+  return String(env.DEVIN_ONLY || '').trim() === '1';
+}
+
+/**
  * Select the backend for a request. Pure function — no I/O, no mutation.
  *
  * @param {object} params
@@ -54,6 +71,17 @@ function devinCliMode(env = process.env) {
  * @returns {{ backend: string, reason: string, flow: 'special_agent'|'cascade'|'legacy' }}
  */
 export function selectBackend({ modelInfo = null, env = process.env } = {}) {
+  // DEVIN_ONLY: Cascade is retired — force every request onto Devin. This wins
+  // over all model-based routing below. The sub-mode (acp/print) still comes
+  // from DEVIN_CLI_MODE so the existing runner selection is preserved.
+  if (devinOnlyEnabled(env)) {
+    return {
+      backend: devinCliMode(env),
+      reason: 'devin_only',
+      flow: 'special_agent',
+    };
+  }
+
   if (isSpecialAgentInfo(modelInfo)) {
     return {
       backend: devinCliMode(env),
@@ -81,4 +109,4 @@ export function usesCascadeFlow(selection) {
   return selection?.flow === 'cascade';
 }
 
-export const __testing = { isSpecialAgentInfo, devinCliMode };
+export const __testing = { isSpecialAgentInfo, devinCliMode, devinOnlyEnabled };

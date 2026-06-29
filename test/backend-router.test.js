@@ -74,3 +74,62 @@ describe('backend-router selectBackend — behaviour parity with legacy', () => 
     }
   });
 });
+
+// DEVIN_ONLY: Cascade retired — every request is forced onto Devin regardless
+// of the model. This is the "Devin is the only core" kill-switch.
+describe('backend-router selectBackend — DEVIN_ONLY (Cascade retired)', () => {
+  it('forces a cascade model (claude) onto Devin when DEVIN_ONLY=1', () => {
+    const sel = selectBackend({
+      modelInfo: { modelUid: 'MODEL_CLAUDE_4_5_SONNET', enumValue: 200 },
+      env: { DEVIN_ONLY: '1' },
+    });
+    assert.equal(sel.flow, 'special_agent');
+    assert.equal(sel.reason, 'devin_only');
+    assert.equal(sel.backend, BACKEND.DEVIN_PRINT); // default sub-mode
+    assert.ok(!usesCascadeFlow(sel), 'no longer a cascade flow');
+  });
+
+  it('honours DEVIN_CLI_MODE=acp under DEVIN_ONLY', () => {
+    const sel = selectBackend({
+      modelInfo: { modelUid: 'MODEL_GPT_5' },
+      env: { DEVIN_ONLY: '1', DEVIN_CLI_MODE: 'acp' },
+    });
+    assert.equal(sel.flow, 'special_agent');
+    assert.equal(sel.backend, BACKEND.DEVIN_ACP);
+  });
+
+  it('forces even a legacy (no uid, no enum) model onto Devin', () => {
+    const sel = selectBackend({ modelInfo: { enumValue: 0 }, env: { DEVIN_ONLY: '1' } });
+    assert.equal(sel.flow, 'special_agent');
+    assert.equal(sel.reason, 'devin_only');
+  });
+
+  it('forces null modelInfo onto Devin (defensive)', () => {
+    const sel = selectBackend({ modelInfo: null, env: { DEVIN_ONLY: '1' } });
+    assert.equal(sel.flow, 'special_agent');
+    assert.equal(sel.reason, 'devin_only');
+  });
+
+  it('DEVIN_ONLY wins over a special_agent model too (same flow, devin_only reason)', () => {
+    const sel = selectBackend({ modelInfo: { backend: 'special_agent' }, env: { DEVIN_ONLY: '1' } });
+    assert.equal(sel.flow, 'special_agent');
+    assert.equal(sel.reason, 'devin_only');
+  });
+
+  it('DEVIN_ONLY=0 / unset leaves legacy routing intact (cascade still selected)', () => {
+    const off = selectBackend({ modelInfo: { modelUid: 'MODEL_CLAUDE_4_5_SONNET' }, env: { DEVIN_ONLY: '0' } });
+    assert.equal(off.flow, 'cascade');
+    const unset = selectBackend({ modelInfo: { modelUid: 'MODEL_CLAUDE_4_5_SONNET' }, env: {} });
+    assert.equal(unset.flow, 'cascade');
+  });
+
+  it('only the exact value "1" enables DEVIN_ONLY (truthy-string guard)', () => {
+    for (const v of ['true', 'yes', '2', 'on', ' ']) {
+      const sel = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_ONLY: v } });
+      assert.equal(sel.flow, 'cascade', `DEVIN_ONLY=${JSON.stringify(v)} must NOT enable`);
+    }
+    // surrounding whitespace around "1" is tolerated
+    const padded = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_ONLY: ' 1 ' } });
+    assert.equal(padded.flow, 'special_agent');
+  });
+});

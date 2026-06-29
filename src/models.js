@@ -602,6 +602,11 @@ export function getTierModels(tier) {
 }
 
 function isSpecialAgentCatalogEnabled() {
+  // DEVIN_ONLY retires Cascade and makes Devin the only backend, so the
+  // special-agent models must stay listed. Routing itself is handled in
+  // backend-router.selectBackend() (DEVIN_ONLY short-circuits there); this
+  // only keeps the catalog/listing consistent with that mode.
+  if (String(process.env.DEVIN_ONLY || '').trim() === '1') return true;
   const backend = String(process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND || '').trim().toLowerCase();
   return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
 }

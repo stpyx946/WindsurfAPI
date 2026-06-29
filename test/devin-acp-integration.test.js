@@ -33,6 +33,7 @@ const ENV_KEYS = [
   'DEVIN_TIMEOUT_MS',
   'DEVIN_OUTPUT_LIMIT_BYTES',
   'DEVIN_CLI_WORKDIR',
+  'DEVIN_ONLY',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
 const originalModelAccess = getModelAccessConfig();
@@ -306,4 +307,72 @@ rl.on('line', line => {
     assert.equal(result.status, 503);
     assert.equal(result.body.error.type, 'backend_unavailable');
   });
+
+  // GAP-ACP-01: a clean exit (code 0) WHILE a request is in flight must settle
+  // the pending promise instead of silently dropping it. Before the fix, the
+  // close handler called cleanup() on code 0, clearing the pending map without
+  // rejecting — the awaiting caller hung until the (already cleared) timeout
+  // that never fires, permanently leaking the concurrency slot. The proof:
+  // the call RETURNS (with a 502, well under the timeout) and the account is
+  // released, rather than hanging until DEVIN_TIMEOUT_MS.
+  it('GAP-ACP-01: a clean process exit mid-prompt settles the request and releases the slot', async () => {
+    // Fake completes the handshake, then on session/prompt exits 0 WITHOUT
+    // ever sending the result frame.
+    installAcpBackend(`
+import readline from 'node:readline';
+const rl = readline.createInterface({ input: process.stdin });
+function send(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, authMethods: [{ id: 'windsurf-api-key' }] } }); return; }
+  if (msg.method === 'authenticate') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
+  if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } }); return; }
+  if (msg.method === 'session/prompt') { process.exit(0); }
 });
+`, { timeoutMs: 10_000 });
+
+    let released = false;
+    const started = Date.now();
+    const result = await handleChatCompletions(
+      { model: 'swe-1.6', messages: [{ role: 'user', content: 'clean exit' }] },
+      poolContext({ id: 'a', apiKey: 'k', apiServerUrl: '' }, { releaseAccount: () => { released = true; } }),
+    );
+    const elapsed = Date.now() - started;
+    assert.equal(result.status, 502, 'clean exit before result maps to 502');
+    assert.equal(result.body.error.type, 'backend_error');
+    assert.ok(released, 'account slot was released (not leaked)');
+    assert.ok(elapsed < 9_000, `returned in ${elapsed}ms, well under the 10s timeout (did not hang)`);
+  });
+});
+
+// DEVIN_ONLY end-to-end: Cascade is retired, so a model that would normally
+// take the Cascade Connect-RPC flow (e.g. claude-sonnet-4.6) must instead run
+// through the real Devin ACP runner — with no WINDSURFAPI_SPECIAL_AGENT_BACKEND
+// set, because DEVIN_ONLY alone enables the whole path. This proves the single
+// kill-switch actually re-routes normal models, not just the special-agent
+// catalog. (It does NOT prove Devin serves claude as claude — the model name
+// only reaches the prompt hint; true model selection is gated on a live probe.)
+describe('ACP integration — DEVIN_ONLY routes a normal (Cascade) model into Devin', () => {
+  it('forces claude-sonnet-4.6 through the real ACP runner under DEVIN_ONLY=1', async () => {
+    process.env.DEVIN_ONLY = '1';
+    // Deliberately do NOT set WINDSURFAPI_SPECIAL_AGENT_BACKEND — DEVIN_ONLY
+    // must enable the backend on its own.
+    delete process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND;
+    delete process.env.DEVIN_CLI_ENABLED;
+    installAcpBackend(ECHO_FAKE);
+
+    const result = await handleChatCompletions(
+      { model: 'claude-sonnet-4.6', messages: [{ role: 'user', content: 'devin-only ping' }] },
+      poolContext({ id: 'a', apiKey: 'pool-key-claude', apiServerUrl: 'https://srv.example' }),
+    );
+
+    assert.equal(result.status, 200, 'claude routed into Devin returns 200');
+    const content = result.body.choices[0].message.content;
+    // The ECHO fake proves the request reached the ACP authenticate + prompt
+    // frames — i.e. it went through Devin, not Cascade.
+    assert.match(content, /KEY=pool-key-claude/);
+    assert.match(content, /PROMPT<[\s\S]*Model requested by caller: claude-sonnet-4\.6[\s\S]*devin-only ping[\s\S]*>/);
+    assert.equal(result.body.model, 'claude-sonnet-4.6', 'response echoes the requested model id');
+  });
+});
+
