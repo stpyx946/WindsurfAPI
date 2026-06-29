@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { addAccountByKey, getApiKey, getRpmStats, removeAccount } from '../src/auth.js';
+import { addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList } from '../src/auth.js';
 import { finalizeConnectAccount } from '../src/handlers/chat.js';
 import { getStats } from '../src/dashboard/stats.js';
 
@@ -77,5 +77,34 @@ describe('finalizeConnectAccount', () => {
       { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('aborted'), { name: 'AbortError' }) },
     ));
     assert.equal(getStats().errorCount, before + 1);
+  });
+
+  // The health-budget contract: an account's errorCount (the signal that
+  // eventually evicts it from rotation) must only move on genuine account
+  // faults — not on a tier wall a client triggered by naming a paid selector.
+  function errorCountOf(id) {
+    return getAccountList().find((a) => a.id === id)?.errorCount ?? 0;
+  }
+
+  it('does NOT penalize the account error budget on MODEL_BLOCKED (tier wall)', () => {
+    const acct = seed('blocked');
+    const before = errorCountOf(acct.id);
+    // Free account asked for claude-* → upstream "/upgrade" → MODEL_BLOCKED.
+    // That's an entitlement wall, not a bad token; the account stays healthy.
+    finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'claude-opus-4.8', startTime: Date.now() - 5, err: Object.assign(new Error('/upgrade to access this model'), { code: 'MODEL_BLOCKED' }) },
+    );
+    assert.equal(errorCountOf(acct.id), before, 'MODEL_BLOCKED must not bump errorCount');
+  });
+
+  it('DOES penalize the account error budget on UNAUTHORIZED (bad token)', () => {
+    const acct = seed('unauth');
+    const before = errorCountOf(acct.id);
+    finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'swe-1-6-slow', startTime: Date.now() - 5, err: Object.assign(new Error('bad token'), { code: 'UNAUTHORIZED' }) },
+    );
+    assert.equal(errorCountOf(acct.id), before + 1, 'UNAUTHORIZED is a real account fault');
   });
 });

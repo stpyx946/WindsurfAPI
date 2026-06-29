@@ -1514,6 +1514,11 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     // release without penalizing the account's error budget.
     const aborted = err.name === 'AbortError' || err.code === 'ABORT_ERR';
     if (aborted) { /* no penalty */ }
+    // MODEL_BLOCKED is a tier/entitlement wall (free account asked for a paid
+    // selector → upstream "/upgrade"), NOT an account-health problem. Penalizing
+    // it would demote a perfectly good free account toward eviction every time a
+    // client names claude-*/gpt-* — so release cleanly, same as a success.
+    else if (err.code === 'MODEL_BLOCKED') { /* no penalty — tier wall, not a fault */ }
     else if (err.code === 'UNAUTHORIZED') reportError(acct.apiKey);
     else if (err.code === 'RATE_LIMITED') markRateLimited(acct.apiKey, 5 * 60 * 1000, null);
     else reportError(acct.apiKey);
