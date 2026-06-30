@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList } from '../src/auth.js';
+import { addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList, __setReloginDeps, __resetReloginState } from '../src/auth.js';
 import { finalizeConnectAccount } from '../src/handlers/chat.js';
 import { getStats } from '../src/dashboard/stats.js';
 
@@ -65,6 +65,51 @@ describe('finalizeConnectAccount', () => {
       { id: acct.id, apiKey: acct.apiKey },
       { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('rl'), { code: 'RATE_LIMITED' }) },
     ));
+  });
+
+  it('fires a background re-login on UNAUTHORIZED when auto-relogin is configured', async () => {
+    const acct = seed('relogin-trigger');
+    acct.email = `relogin-${acct.id}@example.com`;
+    acct.method = 'email';
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    __resetReloginState();
+    let loginCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'pw',
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$RECOVERED' }; },
+    });
+    finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('401'), { code: 'UNAUTHORIZED' }) },
+    );
+    // finalize fires re-login fire-and-forget; let the microtask/import settle.
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(loginCalls, 1, 'UNAUTHORIZED triggered exactly one re-login');
+    assert.equal(acct.apiKey, 'devin-session-token$RECOVERED', 'fresh token swapped in');
+    __setReloginDeps(null);
+    __resetReloginState();
+    delete process.env.DEVIN_CONNECT_AUTO_RELOGIN;
+  });
+
+  it('does not re-login on UNAUTHORIZED when auto-relogin is off', async () => {
+    const acct = seed('relogin-off');
+    acct.email = `off-${acct.id}@example.com`;
+    delete process.env.DEVIN_CONNECT_AUTO_RELOGIN;
+    __resetReloginState();
+    let loginCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'pw',
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'x' }; },
+    });
+    finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('401'), { code: 'UNAUTHORIZED' }) },
+    );
+    await new Promise(r => setTimeout(r, 30));
+    assert.equal(loginCalls, 0);
+    __setReloginDeps(null);
   });
 
   it('does not penalize the account on a client abort', () => {

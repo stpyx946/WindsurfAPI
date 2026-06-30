@@ -1852,14 +1852,38 @@ async function _handleChatCompletionsInner(body, context = {}) {
           'X-Accel-Buffering': 'no',
         },
         handler: async (res) => {
-          const send = (data) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+          let emitted = false;
+          const send = (data) => {
+            if (!res.writableEnded) { emitted = true; res.write(`data: ${JSON.stringify(data)}\n\n`); }
+          };
           let streamErr = null;
           try {
             await streamChatCompletion(connectParams, send, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
           } catch (err) {
-            streamErr = err;
-            log.error(`Chat[${reqId}]: DEVIN_CONNECT stream error: ${err.message}`);
-            send(chatStreamError(err.message, 'upstream_error', err.code || null));
+            // UNAUTHORIZED before any chunk reached the client → the session_id
+            // is likely dead. Re-login and replay the stream once on the fresh
+            // token. Only safe while emitted===false; once bytes are on the wire
+            // a retry would duplicate content, so we surface the error instead.
+            if (err.code === 'UNAUTHORIZED' && ccAcct && !emitted) {
+              const freshKey = await reLoginAccount(ccAcct.id, { force: true }).catch(() => false);
+              if (freshKey && !emitted) {
+                log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, replaying stream once`);
+                try {
+                  await streamChatCompletion({ ...connectParams, token: freshKey }, send, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
+                } catch (retryErr) {
+                  streamErr = retryErr;
+                  log.error(`Chat[${reqId}]: DEVIN_CONNECT stream retry error: ${retryErr.message}`);
+                  send(chatStreamError(retryErr.message, 'upstream_error', retryErr.code || null));
+                }
+              } else {
+                streamErr = err;
+                send(chatStreamError(err.message, 'upstream_error', err.code || null));
+              }
+            } else {
+              streamErr = err;
+              log.error(`Chat[${reqId}]: DEVIN_CONNECT stream error: ${err.message}`);
+              send(chatStreamError(err.message, 'upstream_error', err.code || null));
+            }
           } finally {
             finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: streamErr });
             if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
@@ -1872,6 +1896,26 @@ async function _handleChatCompletionsInner(body, context = {}) {
       finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: null });
       return out;
     } catch (err) {
+      // A dead session_id surfaces as UNAUTHORIZED. Since nothing has been sent
+      // to the client yet (non-streaming), we can recover transparently: force a
+      // re-login, and if it mints a fresh token, retry the request once on it.
+      if (err.code === 'UNAUTHORIZED' && ccAcct) {
+        const freshKey = await reLoginAccount(ccAcct.id, { force: true }).catch(() => false);
+        if (freshKey) {
+          log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, retrying once`);
+          try {
+            const retryParams = { ...connectParams, token: freshKey };
+            const out = await toChatCompletion(retryParams, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
+            finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: null });
+            return out;
+          } catch (retryErr) {
+            finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: retryErr });
+            const { status, type } = connectErrorToHttp(retryErr.code);
+            log.error(`Chat[${reqId}]: DEVIN_CONNECT retry-after-relogin error (${retryErr.code || 'UPSTREAM_ERROR'} -> ${status}): ${retryErr.message}`);
+            return { status, body: { error: { message: retryErr.message, type, code: retryErr.code || null } } };
+          }
+        }
+      }
       finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err });
       // Map the classified upstream code to the right HTTP status/type so a
       // free-tier /upgrade rejection reads as 402 model_blocked, an auth failure
