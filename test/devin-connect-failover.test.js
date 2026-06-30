@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount, getAccountList, getApiKey, releaseAccount,
+  markRateLimited,
   __setReloginDeps, __resetReloginState,
 } from '../src/auth.js';
 import {
@@ -240,5 +241,83 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     assert.equal(seen.length, 1, 'no failover after a byte is on the wire');
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'partial'), 'emitted the partial chunk');
     assert.ok(frames.some(f => f !== '[DONE]' && f.error), 'surfaced an error frame');
+  });
+});
+
+describe('DEVIN_CONNECT pool exhaustion (P0-2)', () => {
+  it('returns a clean 429 with retry_after when the whole pool is rate-limited', async () => {
+    const a = seed('exhaust-1');
+    const b = seed('exhaust-2');
+    // Whole pool rate-limited → acquire would yield nothing. Must NOT silently
+    // fall back to the un-accounted env token; must return a fast 429.
+    markRateLimited(a.apiKey, 5 * 60 * 1000);
+    markRateLimited(b.apiKey, 5 * 60 * 1000);
+    let upstreamHits = 0;
+    __setConnectDeps({ toChatCompletion: async () => { upstreamHits++; return { status: 200, body: {} }; } });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 429);
+    assert.equal(result.body.error.type, 'rate_limit_exceeded');
+    assert.ok(result.body.error.retry_after_ms > 0, 'carries a retry_after hint');
+    assert.ok(result.headers['Retry-After'], 'sets the Retry-After header');
+    assert.equal(upstreamHits, 0, 'never touched upstream on an exhausted pool');
+  });
+
+  it('still falls back to the env token when the pool is genuinely EMPTY (single-token deploy)', async () => {
+    // No accounts seeded. getAccountCount().total === 0 → exhaustion guard is
+    // skipped and the connect client uses the env token, preserving the
+    // single-token deploy story.
+    const prevToken = process.env.DEVIN_CONNECT_TOKEN;
+    process.env.DEVIN_CONNECT_TOKEN = 'devin-session-token$env-fallback';
+    try {
+      __setConnectDeps({
+        toChatCompletion: async () => (
+          { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'ENV_OK' } }] } }
+        ),
+      });
+      const result = await handleChatCompletions(
+        { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+        { callerKey: '' },
+      );
+      // Empty pool must NOT 429 — it serves via the env-token fallback.
+      assert.equal(result.status, 200);
+      assert.equal(result.body.choices[0].message.content, 'ENV_OK');
+    } finally {
+      if (prevToken === undefined) delete process.env.DEVIN_CONNECT_TOKEN;
+      else process.env.DEVIN_CONNECT_TOKEN = prevToken;
+    }
+  });
+});
+
+describe('DEVIN_CONNECT re-login storm guard (P0-1)', () => {
+  it('a burst of concurrent dead-token requests triggers exactly one windsurfLogin', async () => {
+    // The cutover-day scenario: a batch of session tokens dies at once and many
+    // in-flight requests hit the same dead account. The request path must NOT
+    // force-bypass the cooldown — concurrent callers coalesce on auth.js's
+    // inflight promise, so the account re-logs in ONCE, not once-per-request.
+    const a = seed('storm-1');
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    process.env.DEVIN_CONNECT_FAILOVER_MAX = '0'; // single account, no hop
+    let loginCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'stored-password',
+      // Slow + failing: stays inflight through the burst, never recovers, so
+      // every request reaches the re-login decision point under contention.
+      windsurfLogin: async () => { loginCalls++; await new Promise(r => setTimeout(r, 25)); throw new Error('auth1 down'); },
+    });
+    __setConnectDeps({ toChatCompletion: async () => { throw unauthorized(); } });
+
+    const burst = await Promise.all(
+      Array.from({ length: 6 }, () => handleChatCompletions(
+        { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+        { callerKey: '' },
+      )),
+    );
+    assert.ok(burst.every(r => r.status === 401), 'all requests get a clean 401 when recovery fails');
+    assert.equal(loginCalls, 1, 'one Auth1 login for the whole burst — no storm');
   });
 });

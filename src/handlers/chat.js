@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -1510,6 +1510,10 @@ export function __resetConnectDeps() {
 // claude-*-medium) are a different namespace from the Cascade catalog, so the
 // per-account model-allow filter must not exclude otherwise-usable accounts.
 async function acquireConnectAccount(signal, callerKey) {
+  // Empty pool (single-token deploy: only WINDSURF_API_KEY/DEVIN_CONNECT_TOKEN
+  // in env) → there is nothing to wait for. Return null immediately for the
+  // env-token fallback instead of blocking QUEUE_MAX_WAIT_MS on every request.
+  if (getAccountCount().total === 0) return null;
   const tried = [];
   const acct = await waitForAccount(tried, signal, QUEUE_MAX_WAIT_MS, null, callerKey);
   return acct; // may be null → env-token fallback
@@ -1870,8 +1874,32 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const ccId = genId();
     const ccCreated = Math.floor(Date.now() / 1000);
     const ccStart = Date.now();
-    // Acquire a pooled account for rotation + quota accounting. null ⇒ the
-    // connect client falls back to the env token (single-token deploys).
+    // Acquire a pooled account for rotation + quota accounting. null ⇒ either
+    // the pool is empty (single-token deploy → env-token fallback is correct)
+    // OR every account is rate-limited/unavailable (the pool exists but is
+    // exhausted). Those two cases must NOT be conflated: silently serving an
+    // exhausted-pool request on the un-accounted env token hammers one account
+    // toward a ban with zero RPM accounting. Distinguish them and return a
+    // clean 429 for genuine exhaustion instead. (P0-2)
+    //
+    // The check runs BEFORE the queue wait: when the whole pool is rate-limited
+    // there's no point holding the connection for QUEUE_MAX_WAIT_MS (the limit
+    // may be minutes out) — return a fast 429 with an accurate retry_after so
+    // the client backs off. A momentarily-busy (not rate-limited) account still
+    // gets the queue benefit via acquireConnectAccount below.
+    if (getAccountCount().total > 0) {
+      const rl = isAllRateLimited(null);
+      const tu = isAllTemporarilyUnavailable(null);
+      if (rl.allLimited || tu.allUnavailable) {
+        const retryAfterMs = rl.retryAfterMs || tu.retryAfterMs || 60000;
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT pool exhausted (all accounts rate-limited/unavailable) → 429 retry_after=${retryAfterMs}ms`);
+        return {
+          status: 429,
+          headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
+          body: { error: { message: `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${Math.ceil(retryAfterMs / 1000)}s.`, type: 'rate_limit_exceeded', retry_after_ms: retryAfterMs } },
+        };
+      }
+    }
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
     const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
@@ -1915,7 +1943,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
               return { kind: 'ok' };
             } catch (err) {
               if (err.code === 'UNAUTHORIZED' && a && !emitted) {
-                const freshKey = await reLoginAccount(a.id, { force: true }).catch(() => false);
+                // No force: honor the 60s re-login cooldown. Concurrent callers
+                // still coalesce on the inflight promise (auth.js), so a dead
+                // token recovers once; sequential bursts within the window reuse
+                // that result instead of each firing a fresh Auth1 login — the
+                // cutover-day storm guard. force:true is reserved for the
+                // scheduled liveness sweep, which is already interval-throttled.
+                const freshKey = await reLoginAccount(a.id).catch(() => false);
                 if (freshKey && !emitted) {
                   log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, replaying stream once`);
                   try {
@@ -1964,7 +1998,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
         return { kind: 'ok', out };
       } catch (err) {
         if (err.code === 'UNAUTHORIZED' && a) {
-          const freshKey = await reLoginAccount(a.id, { force: true }).catch(() => false);
+          // No force — see the streaming path: honor the 60s cooldown so a
+          // mass token-death event recovers each account once instead of
+          // storming Auth1 with one full login per in-flight request.
+          const freshKey = await reLoginAccount(a.id).catch(() => false);
           if (freshKey) {
             log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, retrying once`);
             try {
