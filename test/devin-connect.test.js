@@ -10,6 +10,7 @@ import {
   streamChat,
   getImageFieldTag,
   extractInlineImages,
+  __setRequestImpl,
   __testing,
 } from '../src/devin-connect.js';
 import {
@@ -305,6 +306,43 @@ describe('streamChat abort / preconditions', () => {
       })(),
       (err) => err.code === 'NO_TOKEN',
     );
+  });
+
+  it('fires the absolute deadline against a hung-but-silent upstream (idle timer would never catch a trickle)', async () => {
+    // Fake transport: accepts the request, never invokes the response callback,
+    // never emits data — i.e. a socket that connected and then hung. The idle
+    // timer is long; only the absolute deadline can end this.
+    let destroyed = false;
+    __setRequestImpl(() => {
+      const req = {
+        destroyed: false,
+        on() { return req; },
+        setTimeout() { return req; },   // swallow the idle timer (never fires)
+        write() {},
+        end() {},
+        destroy() { destroyed = true; req.destroyed = true; },
+      };
+      return req;
+    });
+    try {
+      const t0 = Date.now();
+      await assert.rejects(
+        (async () => {
+          for await (const _ of streamChat({
+            messages: [{ role: 'user', content: 'hi' }],
+            model: 'swe-1-6-slow',
+            token: 'devin-session-token$fake.jwt.sig',
+            timeoutMs: 60000,   // idle timer far away
+            deadlineMs: 50,     // absolute deadline must fire first
+          })) { /* drain */ }
+        })(),
+        (err) => err.code === 'TIMEOUT' && /deadline/.test(err.message),
+      );
+      assert.ok(Date.now() - t0 < 5000, 'ended promptly via the absolute deadline');
+      assert.equal(destroyed, true, 'destroyed the hung request');
+    } finally {
+      __setRequestImpl(null);
+    }
   });
 });
 

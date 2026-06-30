@@ -38,6 +38,11 @@ import { wrapRequest, wrapEnvelope, StreamingFrameParser, connectHeaders } from 
 const HOST = 'server.codeium.com';
 const PATH = '/exa.api_server_pb.ApiServerService/GetChatMessage';
 
+// Transport seam: defaults to https.request. Swappable in tests so the timeout
+// / deadline logic can be exercised against a fake socket without a live call.
+let requestImpl = https.request;
+export function __setRequestImpl(fn) { requestImpl = fn || https.request; }
+
 // ClientMetadata constants observed on every live CLI request. "chisel" is the
 // CLI's internal client name; the version string tracks the Devin CLI build.
 const CLIENT_NAME = 'chisel';
@@ -386,14 +391,25 @@ export function mapFinishReason(finish) {
  *
  * @param {object} params  see buildGetChatMessageRequest, plus:
  * @param {AbortSignal} [params.signal]  abort the in-flight request
- * @param {number} [params.timeoutMs=120000]
+ * @param {number} [params.timeoutMs]  socket IDLE timeout (no-activity); env
+ *   DEVIN_CONNECT_IDLE_TIMEOUT_MS, default 120000.
+ * @param {number} [params.deadlineMs]  ABSOLUTE wall-clock cap from request
+ *   start; env DEVIN_CONNECT_TIMEOUT_MS, default 600000. Guards a hung-but-
+ *   trickling upstream that the idle timer can never catch.
  * @param {object} [params.env]
  * @returns {AsyncGenerator<{type:string, text?:string, reason?:string, usage?:object}>}
  */
 export async function* streamChat({
   messages, model, sessionId, completion,
-  token, signal, timeoutMs = 120000, env = process.env,
+  token, signal, timeoutMs, deadlineMs, env = process.env,
 } = {}) {
+  // Idle timeout: socket inactivity. Absolute deadline: total wall-clock from
+  // request start — this is the one that catches a stream that keeps dribbling
+  // a byte at a time (defeating the idle timer) but never actually completes.
+  const idleTimeoutMs = Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? timeoutMs : (Number(env.DEVIN_CONNECT_IDLE_TIMEOUT_MS) || 120000);
+  const absoluteDeadlineMs = Number.isFinite(deadlineMs) && deadlineMs > 0
+    ? deadlineMs : (Number(env.DEVIN_CONNECT_TIMEOUT_MS) || 600000);
   const sessionToken = token || getConnectToken(env);
   if (!sessionToken) {
     throw Object.assign(new Error('DEVIN_CONNECT: no session token configured'), { code: 'NO_TOKEN' });
@@ -416,7 +432,7 @@ export async function* streamChat({
   let lastUsage = null;
   const pump = () => { if (wake) { const w = wake; wake = null; w(); } };
 
-  const req = https.request({
+  const req = requestImpl({
     hostname: HOST,
     port: 443,
     path: PATH,
@@ -486,37 +502,57 @@ export async function* streamChat({
     done = true;
     pump();
   });
-  req.setTimeout(timeoutMs, () => {
+  req.setTimeout(idleTimeoutMs, () => {
     req.destroy();
-    if (!streamError) streamError = Object.assign(new Error('DEVIN_CONNECT: request timeout'), { code: 'TIMEOUT' });
+    if (!streamError) streamError = Object.assign(new Error('DEVIN_CONNECT: idle timeout (no data)'), { code: 'TIMEOUT' });
     done = true;
     pump();
   });
+  // Absolute wall-clock deadline: a hung upstream that trickles bytes keeps
+  // resetting the idle timer above and would otherwise stream forever. This
+  // fires regardless of activity and is the real backstop against a stuck
+  // request pinning an account's _inflight slot.
+  const deadlineTimer = setTimeout(() => {
+    req.destroy();
+    if (!streamError) streamError = Object.assign(new Error(`DEVIN_CONNECT: absolute deadline ${absoluteDeadlineMs}ms exceeded`), { code: 'TIMEOUT' });
+    done = true;
+    pump();
+  }, absoluteDeadlineMs);
+  // Don't let the deadline timer keep the event loop alive on its own.
+  if (typeof deadlineTimer.unref === 'function') deadlineTimer.unref();
 
   req.write(framed);
   req.end();
 
   // Consumer loop: drain the queue, awaiting more data until the stream ends.
-  while (true) {
-    if (queue.length) { yield queue.shift(); continue; }
-    if (streamError) throw streamError;
-    if (done) {
-      // One terminal event carrying finish_reason + usage for the caller to
-      // close out an OpenAI-shaped response.
-      yield {
-        type: 'finish',
-        reason: mapFinishReason(lastFinish),
-        usage: lastUsage
-          ? {
-              prompt_tokens: lastUsage.prompt,
-              completion_tokens: lastUsage.completion,
-              total_tokens: lastUsage.prompt + lastUsage.completion,
-            }
-          : null,
-      };
-      return;
+  try {
+    while (true) {
+      if (queue.length) { yield queue.shift(); continue; }
+      if (streamError) throw streamError;
+      if (done) {
+        // One terminal event carrying finish_reason + usage for the caller to
+        // close out an OpenAI-shaped response.
+        yield {
+          type: 'finish',
+          reason: mapFinishReason(lastFinish),
+          usage: lastUsage
+            ? {
+                prompt_tokens: lastUsage.prompt,
+                completion_tokens: lastUsage.completion,
+                total_tokens: lastUsage.prompt + lastUsage.completion,
+              }
+            : null,
+        };
+        return;
+      }
+      await new Promise((resolve) => { wake = resolve; });
     }
-    await new Promise((resolve) => { wake = resolve; });
+  } finally {
+    // Clear the deadline timer on EVERY exit (success, error, or early return
+    // when the caller stops consuming) so it never fires against a finished
+    // request or leaks. The idle timer is cleared by req.destroy below.
+    clearTimeout(deadlineTimer);
+    if (!req.destroyed) req.destroy();
   }
 }
 
