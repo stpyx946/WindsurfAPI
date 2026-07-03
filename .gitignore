@@ -3,6 +3,8 @@ node_modules/
 accounts.json
 accounts.creds.json
 accounts.creds.json.tmp
+devin-connect-image-tag.json
+.devin-connect-calibrated.env
 model-access.json
 sshpass.sh
 sshpass2.sh
@@ -17,7 +19,10 @@ scripts/*
 !scripts/run-test-shard.mjs
 !scripts/cascade-survival-probe.mjs
 !scripts/devin-connect-smoke.mjs
+!scripts/devin-connect-paid-verify.mjs
 !scripts/devin-connect-image-calibrate.mjs
+!scripts/devin-connect-login.mjs
+!scripts/devin-connect-calibrate.mjs
 src/get-token.js
 src/test-cascade.js
 src/runtime-config.json
@@ -51,9 +56,9 @@ tmp/
 tmp-testing/
 runtime-config.json
 stats.json
-package-lock.json
 *.png
 *.pem
 .docker-data/
 PR-FLOW.md
 .workflow-results/
+.paid1-session.env
