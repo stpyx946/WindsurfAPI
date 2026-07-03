@@ -351,6 +351,41 @@ describe('decodeFrame', () => {
     assert.deepEqual(d.subDump[28][4], { kind: 'varint', preview: 34 });
   });
 
+  it('subDump recurses one level deeper into nested messages (#28.2 Response Statistics counters)', () => {
+    // PAID-1 2026-07-03 capture: #28 is a "Response Statistics" container whose
+    // real usage/billing counters live in a NESTED message at #28.2, one level
+    // below the flat decode. subDump must descend and attach them under `.fields`.
+    const stats = Buffer.concat([
+      writeVarintField(3, 1200),   // e.g. completion tokens
+      writeVarintField(4, 34),     // e.g. credit_cost
+    ]);
+    const trailer = Buffer.concat([
+      writeStringField(1, 'Response Statistics'), // label string
+      writeMessageField(2, stats),                // nested stats message
+    ]);
+    const payload = Buffer.concat([writeStringField(1, 'bot-1'), writeMessageField(28, trailer)]);
+    const d = decodeFrame(payload, { dumpMeta: true });
+    assert.deepEqual(d.subDump[28][1], { kind: 'string', preview: 'Response Statistics' });
+    // #28.2 marked as a message AND its inner counters decoded under .fields
+    assert.equal(d.subDump[28][2].kind, 'message');
+    assert.deepEqual(d.subDump[28][2].fields[3], { kind: 'varint', preview: 1200 });
+    assert.deepEqual(d.subDump[28][2].fields[4], { kind: 'varint', preview: 34 });
+  });
+
+  it('subDump recursion is depth-capped so a deeply nested / adversarial blob cannot recurse unbounded', () => {
+    // Build 6 levels of nesting; SUB_DUMP_MAX_DEPTH (4) must stop decoding before
+    // the deepest, leaving it as a presence-only "<msg Nb>" with no `.fields`.
+    let buf = Buffer.concat([writeVarintField(1, 7)]);
+    for (let i = 0; i < 6; i++) buf = Buffer.concat([writeMessageField(2, buf)]);
+    const payload = Buffer.concat([writeStringField(1, 'bot-1'), writeMessageField(28, buf)]);
+    const d = decodeFrame(payload, { dumpMeta: true });
+    // walk down .fields; at some point a message node must lack `.fields` (capped)
+    let node = d.subDump[28][2];
+    let depth = 1;
+    while (node && node.fields && node.fields[2]) { node = node.fields[2]; depth++; }
+    assert.ok(depth <= 4, `recursion capped at <=4 levels, got ${depth}`);
+  });
+
   it('subDump skips a sub-message that is not valid protobuf (opaque encrypted blob) without throwing', () => {
     // An opaque/encrypted trailer must never crash the hot decode path — it is
     // silently left as presence-only in the flat dump.

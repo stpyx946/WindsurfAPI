@@ -583,22 +583,46 @@ function decodeToolCalls(fields, tags, toolNames = null) {
  * @param {{field:number,value:Buffer}} f  the top-level sub-message field
  * @param {Object<number,object>} into     accumulator keyed by top-level tag
  */
-function decodeSubMessage(f, into) {
+// How deep to recurse into nested sub-messages when dumping. The recurring #28
+// "Response Statistics" trailer nests the real usage/billing counters one level
+// down (#28.2), and #7.8 nests further — a flat one-level decode would only mark
+// those "<msg Nb>". Depth-capped so a pathological / mis-parsed blob can't recurse
+// unbounded; this is an opt-in (dumpMeta) diagnostic path only.
+const SUB_DUMP_MAX_DEPTH = 4;
+
+// Decode the inner fields of a protobuf sub-message into {tag: {kind, preview}}.
+// A non-printable length-delimited field is itself likely a nested message: recurse
+// (up to SUB_DUMP_MAX_DEPTH) and attach the decoded children under `.fields` while
+// still recording the presence preview, so `#28.2`'s real counters surface in one
+// capture. Returns the bucket, or null if the buffer isn't parseable protobuf.
+function decodeInnerFields(buf, depth) {
   let inner;
-  try { inner = parseFields(f.value); }
-  catch { return; } // not protobuf → leave as opaque (flat dump already noted presence)
-  if (!inner.length) return;
+  try { inner = parseFields(buf); }
+  catch { return null; } // not protobuf → opaque (caller keeps the flat presence note)
+  if (!inner.length) return null;
   const bucket = {};
   for (const sf of inner) {
     if (sf.wireType === 0) bucket[sf.field] = { kind: 'varint', preview: Number(sf.value) };
     else if (sf.wireType === 2) {
       const s = sf.value.toString('utf8');
       if (/^[\x20-\x7e]*$/.test(s) && s.length) bucket[sf.field] = { kind: 'string', preview: s.slice(0, 48) };
-      else bucket[sf.field] = { kind: 'message', preview: `<msg ${sf.value.length}b>` };
+      else {
+        const entry = { kind: 'message', preview: `<msg ${sf.value.length}b>` };
+        if (depth < SUB_DUMP_MAX_DEPTH) {
+          const nested = decodeInnerFields(sf.value, depth + 1);
+          if (nested) entry.fields = nested; // one level deeper decoded
+        }
+        bucket[sf.field] = entry;
+      }
     } else if (sf.wireType === 5) bucket[sf.field] = { kind: 'fixed32', preview: sf.value.toString('hex') };
     else if (sf.wireType === 1) bucket[sf.field] = { kind: 'fixed64', preview: sf.value.toString('hex') };
   }
-  if (Object.keys(bucket).length) into[f.field] = bucket;
+  return Object.keys(bucket).length ? bucket : null;
+}
+
+function decodeSubMessage(f, into) {
+  const bucket = decodeInnerFields(f.value, 1);
+  if (bucket) into[f.field] = bucket;
 }
 
 /**

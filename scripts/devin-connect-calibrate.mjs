@@ -97,7 +97,8 @@ export function resolveOutPath(env = process.env) {
  *   - top string   → actual_model_uid (#47)
  *   - top message  → tool_calls (#49)
  */
-export function classifyTag({ scope, tag, kind, preview, topTag }) {
+export function classifyTag({ scope, tag, kind, preview, topTag, path }) {
+  const loc = path || (topTag != null ? `${topTag}.${tag}` : tag);
   if (scope === 'meta' && kind === 'varint') {
     return { bucket: 'billing/cache', targets: ['billing', 'cache_tokens'], task: '#46',
       detail: `meta varint #${tag}=${preview} — credit_cost / cache token candidate` };
@@ -119,15 +120,15 @@ export function classifyTag({ scope, tag, kind, preview, topTag }) {
     // meta block, so a #28 inner varint must NOT auto-fill DEVIN_CONNECT_BILLING_TAGS.
     // It's surfaced for the operator to inspect, with a dedicated env hint below.
     return { bucket: 'sub-billing', targets: [], task: '#46',
-      detail: `sub #${topTag}.${tag} varint=${preview} — billing/usage/stop-metadata candidate` };
+      detail: `sub #${loc} varint=${preview} — billing/usage/stop-metadata candidate` };
   }
   if (scope === 'sub' && kind === 'string') {
     return { bucket: 'sub-metadata', targets: [], task: '#46/#47',
-      detail: `sub #${topTag}.${tag} string="${preview}" — model-id / stop-reason candidate` };
+      detail: `sub #${loc} string="${preview}" — model-id / stop-reason candidate` };
   }
   if (scope === 'sub') {
     return { bucket: 'sub-nested', targets: [], task: '#46',
-      detail: `sub #${topTag}.${tag} (${kind} ${preview}) — nested sub-message candidate` };
+      detail: `sub #${loc} (${kind} ${preview}) — nested sub-message candidate` };
   }
   return { bucket: 'unknown', targets: [], task: '?', detail: `#${tag} (${kind}) — unrecognized shape` };
 }
@@ -146,9 +147,10 @@ export function aggregateDumps(frameDumps, metaDumps, subDumps) {
   const top = {}, meta = {}, sub = {};
   for (const d of frameDumps || []) for (const [tag, v] of Object.entries(d)) top[tag] = classify(v);
   for (const d of metaDumps || []) for (const [tag, v] of Object.entries(d)) meta[tag] = classify(v);
-  // sub: { <topTag>: { <innerTag>: {kind, preview} } } — decodeSubMessage already
-  // emits the {kind, preview} shape, so merge inner maps as-is (later frames win,
-  // matching top/meta's last-writer semantics).
+  // sub: { <topTag>: { <innerTag>: {kind, preview, fields?} } } — decodeSubMessage
+  // emits the {kind, preview} shape (with a nested `fields` map when an inner field
+  // is itself a decodable message, e.g. #28.2). Merge as-is (later frames win,
+  // matching top/meta's last-writer semantics); nested `fields` ride along.
   for (const d of subDumps || []) for (const [topTag, inner] of Object.entries(d)) {
     sub[topTag] = { ...(sub[topTag] || {}), ...inner };
   }
@@ -174,11 +176,21 @@ export function findCandidates(inventory, baseline = FREE_BASELINE) {
   // trailer's inner structure was never decoded before this harness existed), so
   // all are surfaced for operator inspection. Keyed by both the outer top tag and
   // the inner tag so the report reads "sub #28.3 varint=…".
-  for (const [topTag, inner] of Object.entries(inventory.sub || {})) {
-    for (const [tag, info] of Object.entries(inner)) {
-      candidates.push({ scope: 'sub', topTag: Number(topTag), tag: Number(tag), ...info,
-        ...classifyTag({ scope: 'sub', topTag: Number(topTag), tag: Number(tag), kind: info.kind, preview: info.preview }) });
+  // Walk the sub tree recursively. `path` is the dotted tag chain from the top-level
+  // tag down (e.g. "28.2.3" for the counter nested inside #28's Response Statistics
+  // message). Nested `.fields` maps come from decodeSubMessage recursing into inner
+  // messages; a leaf's own tag is the last path segment.
+  const walkSub = (topTag, node, path) => {
+    for (const [tag, info] of Object.entries(node)) {
+      const p = [...path, Number(tag)];
+      const { fields, ...leaf } = info;
+      candidates.push({ scope: 'sub', topTag, tag: Number(tag), path: p.join('.'), ...leaf,
+        ...classifyTag({ scope: 'sub', topTag, tag: Number(tag), path: p.join('.'), kind: leaf.kind, preview: leaf.preview }) });
+      if (fields) walkSub(topTag, fields, p); // descend into the nested message
     }
+  };
+  for (const [topTag, inner] of Object.entries(inventory.sub || {})) {
+    walkSub(Number(topTag), inner, [Number(topTag)]);
   }
   return { candidates };
 }
@@ -240,10 +252,16 @@ export async function runCalibration({ token, model = DEFAULT_MODEL, prompt = DE
   // them so the operator can decide whether #28 carries the billing/usage fields.
   const subVarints = candidates.filter((c) => c.scope === 'sub' && c.kind === 'varint');
   if (subVarints.length) {
-    const byTop = {};
-    for (const c of subVarints) (byTop[c.topTag] ||= []).push(`${c.tag}=${c.preview}`);
-    for (const [topTag, fields] of Object.entries(byTop)) {
-      envLines.push(`# sub-message #${topTag} inner varints: {${fields.join(', ')}} — inspect for credit_cost/cache/stop-metadata (NOT auto-wired; #7-meta drives billing decode today)`);
+    // Group by the parent path (everything but the leaf tag) so nested counters
+    // read as "#28.2 inner varints: {3=…, 4=…}" — the Response Statistics message.
+    const byParent = {};
+    for (const c of subVarints) {
+      const segs = String(c.path || `${c.topTag}.${c.tag}`).split('.');
+      const parent = segs.slice(0, -1).join('.');
+      (byParent[parent] ||= []).push(`${segs[segs.length - 1]}=${c.preview}`);
+    }
+    for (const [parent, fields] of Object.entries(byParent)) {
+      envLines.push(`# sub-message #${parent} inner varints: {${fields.join(', ')}} — inspect for credit_cost/cache/stop-metadata (NOT auto-wired; #7-meta drives billing decode today)`);
     }
   }
 
@@ -280,9 +298,16 @@ async function selfTest() {
     { 1: 'bot-x', 3: 'PONG', 4: 2, 8: 'claude-opus-4-8', 12: '<msg 47b>' }, // #8 actual_model, #12 tool_calls
   ];
   const metaDumps = [{ 6: 6, 14: 1500, 15: 200 }];          // #14/#15 new varints → billing/cache
-  // #28 trailer inner fields — the recurring usage/billing/stop-metadata block.
-  // (Shape: some varints = candidate billing/usage counters, a string = model/stop.)
-  const subDumps = [{ 28: { 1: { kind: 'string', preview: 'stop' }, 3: { kind: 'varint', preview: 1200 }, 4: { kind: 'varint', preview: 34 } } }];
+  // #28 trailer — the recurring "Response Statistics" container captured on PAID-1
+  // 2026-07-03: #28.1 is the string label, #28.2 is a NESTED message whose inner
+  // varints (#28.2.3, #28.2.4) are the real usage/billing counters, one level down.
+  const subDumps = [{ 28: {
+    1: { kind: 'string', preview: 'Response Statistics' },
+    2: { kind: 'message', preview: '<msg 40b>', fields: {
+      3: { kind: 'varint', preview: 1200 },
+      4: { kind: 'varint', preview: 34 },
+    } },
+  } }];
   const report = await runCalibration({ real: false, deps: { frameDumps, metaDumps, subDumps } });
 
   const buckets = report.candidates.map((c) => c.bucket).sort();
@@ -291,15 +316,18 @@ async function selfTest() {
   assert(report.candidates.filter((c) => c.scope === 'meta' && c.bucket === 'billing/cache').length === 2, 'found 2 billing/cache meta varints');
   assert(!report.candidates.some((c) => c.tag === 6), 'baseline meta #6 not flagged');
   assert(!report.candidates.some((c) => c.scope === 'top' && [1, 3, 4, 9, 17].includes(c.tag)), 'baseline top tags not flagged');
-  // sub-message inner fields surfaced (the #28 decode — the previous session's blocker)
-  assert(report.candidates.filter((c) => c.scope === 'sub' && c.topTag === 28 && c.kind === 'varint').length === 2, 'found 2 sub #28 inner varints');
-  assert(report.candidates.some((c) => c.scope === 'sub' && c.topTag === 28 && c.tag === 1 && c.bucket === 'sub-metadata'), 'found sub #28 string field');
+  // sub-message inner fields surfaced (the #28 decode — the previous session's blocker).
+  // The recursion must reach the NESTED counters at #28.2.3 / #28.2.4 (one level down).
+  assert(report.candidates.filter((c) => c.scope === 'sub' && c.kind === 'varint').length === 2, 'found 2 nested sub varints');
+  assert(report.candidates.some((c) => c.path === '28.2.3' && c.kind === 'varint' && c.preview === 1200), 'reached nested #28.2.3');
+  assert(report.candidates.some((c) => c.path === '28.2.4' && c.kind === 'varint' && c.preview === 34), 'reached nested #28.2.4');
+  assert(report.candidates.some((c) => c.path === '28.1' && c.bucket === 'sub-metadata'), 'found sub #28.1 label string');
 
   // env line generation
   assert(report.envLines.some((l) => l === 'DEVIN_CONNECT_ACTUAL_MODEL_TAG=8'), 'emits actual_model env line');
   assert(report.envLines.some((l) => /outer=12/.test(l)), 'emits tool_call outer candidate');
   assert(report.envLines.some((l) => /14,15/.test(l)), 'emits billing meta candidates');
-  assert(report.envLines.some((l) => /sub-message #28 inner varints/.test(l) && /3=1200/.test(l) && /4=34/.test(l)), 'emits sub #28 informational env hint');
+  assert(report.envLines.some((l) => /sub-message #28\.2 inner varints/.test(l) && /3=1200/.test(l) && /4=34/.test(l)), 'emits nested sub #28.2 informational env hint');
 
   // status table reflects discoveries + already-set env
   const tbl = statusTable(report, {});
