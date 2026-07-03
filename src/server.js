@@ -22,7 +22,7 @@ import {
   configureBindHost, emitNoAuthWarnings, getDroughtSummary, ensureLsForAccount,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
-import { handleMessages, handleCountTokens } from './handlers/messages.js';
+import { handleMessages, handleCountTokens, validateMessagesRequest, validateCountTokensRequest } from './handlers/messages.js';
 import { handleGemini, parseGeminiPath } from './handlers/gemini.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
@@ -82,7 +82,9 @@ export function bodyTooLargePayload(style = 'openai') {
     return { error: 'Request body too large' };
   }
   if (style === 'anthropic') {
-    return { type: 'error', error: { type: 'invalid_request_error', message: 'Request body too large' } };
+    // D1: 413 maps to the dedicated request_too_large type (not
+    // invalid_request_error), aligning with toAnthropicError(413).
+    return { type: 'error', error: { type: 'request_too_large', message: 'Request body too large' } };
   }
   return { error: { message: 'Request body too large', type: 'invalid_request' } };
 }
@@ -483,20 +485,28 @@ async function route(req, res) {
   // Anthropic Messages API — Claude Code compatibility
   if (path === '/v1/messages/count_tokens' && method === 'POST') {
     if (!isAuthenticated()) {
-      return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
+      // D2: no-account gate is a transient capacity condition, not a fatal
+      // server bug. 503 api_error was self-contradictory (503 isn't in the
+      // Anthropic status set; api_error implies 500). 529 overloaded_error is
+      // the official retryable status so SDKs back off and retry.
+      return json(res, 529, { type: 'error', error: { type: 'overloaded_error', message: 'No active accounts available, please retry' } });
     }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (err) {
       if (sendBodyTooLargeIfNeeded(res, err, 'anthropic')) return;
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON' } });
     }
+    // E4: model is required by the official count_tokens API.
+    const invalid = validateCountTokensRequest(body);
+    if (invalid) return json(res, invalid.status, invalid.body);
     const result = handleCountTokens(body);
     return json(res, result.status, result.body);
   }
 
   if (path === '/v1/messages' && method === 'POST') {
     if (!isAuthenticated()) {
-      return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
+      // D2: see count_tokens above — transient capacity → 529 overloaded_error.
+      return json(res, 529, { type: 'error', error: { type: 'overloaded_error', message: 'No active accounts available, please retry' } });
     }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (err) {
@@ -506,6 +516,10 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
+    // C1/C3/C4: enforce max_tokens (required, positive int) and cache_control
+    // validity (ephemeral type, ttl ∈ {5m,1h}, ≤4 breakpoints) at the entry.
+    const invalid = validateMessagesRequest(body);
+    if (invalid) return json(res, invalid.status, invalid.body);
     const token = extractToken(req);
     const callerKey = callerKeyFromRequest(req, token, body);
     const result = await handleMessages(body, {
@@ -568,7 +582,19 @@ async function route(req, res) {
     return;
   }
 
+  // D4: the Anthropic surface (/v1/messages*) must get an Anthropic-shaped
+  // error body, not the OpenAI {error:{message,type}} shape, so SDK clients
+  // parse it correctly instead of choking on an unknown envelope.
+  if (isAnthropicPath(path)) {
+    return json(res, 404, { type: 'error', error: { type: 'not_found_error', message: `${method} ${path} not found` } });
+  }
   json(res, 404, { error: { message: `${method} ${path} not found`, type: 'not_found' } });
+}
+
+// D4: paths under the Anthropic Messages surface. Fallback 404/500 handlers use
+// this to choose the Anthropic error envelope over the default OpenAI one.
+function isAnthropicPath(path) {
+  return typeof path === 'string' && path.startsWith('/v1/messages');
 }
 
 export function startServer() {
@@ -584,7 +610,16 @@ export function startServer() {
       await route(req, res);
     } catch (err) {
       log.error('Handler error:', err);
-      if (!res.headersSent) json(res, 500, { error: { message: 'Internal error', type: 'server_error' } });
+      if (!res.headersSent) {
+        // D4: Anthropic surface gets the Anthropic error envelope; everything
+        // else keeps the OpenAI-shaped {error:{message,type}} body.
+        const path = String(req.url || '').split('?')[0];
+        if (isAnthropicPath(path)) {
+          json(res, 500, { type: 'error', error: { type: 'api_error', message: 'Internal server error' } });
+        } else {
+          json(res, 500, { error: { message: 'Internal error', type: 'server_error' } });
+        }
+      }
     }
   });
 

@@ -62,3 +62,7 @@ stats.json
 PR-FLOW.md
 .workflow-results/
 .paid1-session.env
+# Free-account login/session envs (tokens + credentials) — never commit
+.free*.env
+*-login.env
+*-session.env
