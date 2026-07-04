@@ -13,6 +13,9 @@
  * gap — the mapping is complete and ready for a paid entitlement.
  */
 
+import { readFileSync } from 'node:fs';
+import { log } from './config.js';
+
 // Canonical OpenAI-ish name / alias → upstream selector (#21). Both the
 // dash-form and enum-form selectors are accepted by the API; we prefer the
 // dash-form where the catalog exposed one.
@@ -81,6 +84,19 @@ const SELECTOR_MAP = new Map(Object.entries({
   'kimi-k2-7': 'kimi-k2-7',
 }));
 
+// The set of selectors the live catalog actually exposes (committed snapshot,
+// frame-verified 2026-06-30). A value written to GetChatMessageRequest #21 that
+// is NOT in this set makes the upstream return UPSTREAM_INTERNAL (frame-proven
+// 2026-07-04: bare "claude-opus-4-8" failed, "claude-opus-4-8-medium" 200'd).
+// Used as a last-line existence guard on enum/dash-form passthrough. Loaded the
+// same way other src modules read JSON fixtures (JSON.parse + readFileSync), so
+// this stays a zero-dep ESM module with no import assertion.
+const CATALOG_SELECTORS = new Set(
+  JSON.parse(
+    readFileSync(new URL('../test/fixtures/devin-catalog-snapshot.json', import.meta.url), 'utf8'),
+  ).models.map((m) => m.selector),
+);
+
 // The only selector a free-tier account can actually run. Used as the safe
 // default when DEVIN_CONNECT is enabled but the requested model isn't mapped.
 export const FREE_TIER_SELECTOR = 'swe-1-6-slow';
@@ -106,10 +122,33 @@ export function resolveConnectSelector(model) {
   const norm = raw.toLowerCase().replace(/^[a-z]+\//, '').replace(/\./g, '-');
   if (SELECTOR_MAP.has(norm)) return { selector: SELECTOR_MAP.get(norm), mapped: true };
 
-  // Enum-form selectors are accepted as-is by the API; pass them through.
-  if (/^MODEL_[A-Z0-9_]+$/.test(raw)) return { selector: raw, mapped: true };
+  // Enum-form passthrough — ONLY when the catalog actually exposes it. A blind
+  // MODEL_* passthrough is what re-introduces UPSTREAM_INTERNAL on drift: any
+  // bogus MODEL_DOES_NOT_EXIST would otherwise be written raw to #21.
+  if (/^MODEL_[A-Z0-9_]+$/.test(raw) && CATALOG_SELECTORS.has(raw)) {
+    return { selector: raw, mapped: true };
+  }
 
+  // A verbatim dash-form selector that IS in the catalog but missing from the
+  // map (e.g. a lowercased/prefixed valid enum) should still go through rather
+  // than silently degrade a paid request to the free tier.
+  if (CATALOG_SELECTORS.has(raw)) return { selector: raw, mapped: true };
+
+  // Unmapped: degrade to the always-available free selector, but make it
+  // OBSERVABLE (one-time per distinct model) so a caller ignoring mapped:false
+  // still gets an operator signal that a paid model was downgraded to free.
+  if (!degradeWarned.has(raw)) {
+    degradeWarned.add(raw);
+    log.warn(
+      `[devin-connect] unmapped model "${raw}" not in catalog — degrading to `
+      + `${FREE_TIER_SELECTOR} (paid request downgraded to free tier)`,
+    );
+  }
   return { selector: FREE_TIER_SELECTOR, mapped: false };
 }
 
-export const __testing = { SELECTOR_MAP };
+// Tracks model names we've already warned about so the degrade signal fires
+// once per distinct name rather than on every request (avoids log flooding).
+const degradeWarned = new Set();
+
+export const __testing = { SELECTOR_MAP, CATALOG_SELECTORS, degradeWarned };

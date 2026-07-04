@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { beforeEach } from 'node:test';
 import { resolveConnectSelector, FREE_TIER_SELECTOR, __testing } from '../src/devin-connect-models.js';
 
 // Offline catalog drift guard. The committed snapshot (test/fixtures/
@@ -94,5 +95,67 @@ describe('catalog drift: regression — gpt-5.5 bare alias', () => {
 
   it('dash form gpt-5-5 resolves too', () => {
     assert.equal(resolveConnectSelector('gpt-5-5').selector, 'gpt-5-5-low');
+  });
+});
+
+describe('resolver guard: catalog-existence check on passthrough', () => {
+  beforeEach(() => {
+    // Reset the one-time degrade-warning set so each case observes a fresh warn.
+    __testing.degradeWarned.clear();
+  });
+
+  it('bogus MODEL_* is NOT blindly passed through — degrades to free (mapped:false)', () => {
+    // Regression: line-110 enum passthrough used to mark ANY /^MODEL_[A-Z0-9_]+$/
+    // as mapped:true and write it raw to #21 → UPSTREAM_INTERNAL on drift.
+    const r = resolveConnectSelector('MODEL_DOES_NOT_EXIST');
+    assert.equal(r.mapped, false);
+    assert.equal(r.selector, FREE_TIER_SELECTOR);
+    assert.equal(__testing.CATALOG_SELECTORS.has('MODEL_DOES_NOT_EXIST'), false);
+  });
+
+  it('a real enum-form catalog selector still passes through verbatim', () => {
+    assert.deepEqual(
+      resolveConnectSelector('MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH'),
+      { selector: 'MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH', mapped: true },
+    );
+  });
+
+  it('a verbatim dash-form catalog selector missing from the map still passes (no silent degrade)', () => {
+    // swe-1-6-fast is in the catalog and the map; pick a catalog dash-form and
+    // confirm the CATALOG_SELECTORS fallback returns it verbatim + mapped:true.
+    const r = resolveConnectSelector('kimi-k2-7');
+    assert.equal(r.mapped, true);
+    assert.equal(r.selector, 'kimi-k2-7');
+    assert.notEqual(r.selector, FREE_TIER_SELECTOR);
+  });
+
+  it('an unmapped paid name warns once and degrades to the free tier', () => {
+    const warnings = [];
+    const orig = console.warn;
+    console.warn = (...args) => { warnings.push(args.join(' ')); };
+    try {
+      const r1 = resolveConnectSelector('gpt-9-ultra-paid');
+      const r2 = resolveConnectSelector('gpt-9-ultra-paid'); // same name → no second warn
+      assert.equal(r1.mapped, false);
+      assert.equal(r1.selector, FREE_TIER_SELECTOR);
+      assert.equal(r2.mapped, false);
+    } finally {
+      console.warn = orig;
+    }
+    const degradeWarns = warnings.filter((w) => w.includes('gpt-9-ultra-paid'));
+    assert.equal(degradeWarns.length, 1, 'should warn exactly once per distinct unmapped name');
+    assert.match(degradeWarns[0], /degrading to swe-1-6-slow/);
+  });
+
+  it('SELECTOR_MAP value set is a subset of the catalog (allowlisting internal names)', () => {
+    // Startup self-check: a future map edit pointing at a non-existent selector
+    // must fail here. subagent-default is the one justified internal exception.
+    for (const [name, target] of __testing.SELECTOR_MAP.entries()) {
+      if (NON_CATALOG_TARGETS.has(target)) continue;
+      assert.ok(
+        __testing.CATALOG_SELECTORS.has(target),
+        `SELECTOR_MAP["${name}"] = "${target}" is not in CATALOG_SELECTORS`,
+      );
+    }
   });
 });
