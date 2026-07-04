@@ -2074,7 +2074,16 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // assistant history folding always runs (still needed until the msg gate lands).
     const nativeDefsOn = emulateTools && !!getToolDefTags();
     const nativeCallsOn = !!parseToolCallTagMap();
-    const suppressPreamble = nativeDefsOn && nativeCallsOn;
+    // SOLO calibration mode (DEVIN_CONNECT_TOOL_DEF_SOLO=1, default OFF): force the
+    // preamble OFF whenever the def gate is on, so native #10 tool defs are the
+    // ONLY tool signal reaching the upstream. This is the black-box probe for the
+    // candidate inner tags — if the upstream still understands the tools and emits
+    // a tool_call with the preamble suppressed, the candidate ToolDef tags are
+    // correct. Do NOT enable in production: with unverified inner tags the frame
+    // may be misread. Normal path keeps the preamble unless both gates are on.
+    const soloProbe = nativeDefsOn && String(process.env.DEVIN_CONNECT_TOOL_DEF_SOLO || '') === '1';
+    const suppressPreamble = soloProbe || (nativeDefsOn && nativeCallsOn);
+    if (soloProbe) log.info(`Chat[${reqId}]: DEVIN_CONNECT TOOL_DEF SOLO probe — preamble suppressed, native #10 is the only tool signal`);
     const connectMessages = emulateTools
       ? normalizeMessagesForCascade(messages, effectiveTools, { modelKey: reqModelName, provider: null, route: 'devin_connect', toolChoice: tool_choice, injectUserPreamble: !suppressPreamble })
       : messages;

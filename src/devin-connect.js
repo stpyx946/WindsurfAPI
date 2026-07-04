@@ -170,13 +170,18 @@ function encodeImageData(img) {
 // tools into the prompt (tool-emulation), which works on every model.
 //
 // The OUTER tag is VERIFIED-FROM-BINARY: GetChatMessageRequest.tools lives at
-// #10 (CALIBRATED.proto, a live capture carried ~24 ToolDefs there). So the
-// operator no longer has to supply it — outer defaults to 10. What is still
-// UNCALIBRATED is the ToolDefinition INNER layout (name/description/parameters
-// tag numbers, and whether parameters rides as a JSON string or a nested
-// message). Those stay behind the env gate until a paid capture or static RE
-// pins them — until then getToolDefTags() returns null and tools keep folding
-// into the prompt (tool-emulation), which works on every model.
+// #10 (CALIBRATED.proto, a live capture carried ~24 ToolDefs there).
+//
+// The INNER tags are now VERIFIED-FROM-FRAME too (2026-07-04 paid probe, teams
+// account, claude-opus-4-8): sending a native ToolDef at #10 with inner tags
+// name=1/description=2/parameters=3 and NO prompt preamble, the upstream model
+// correctly understood the tools and emitted native tool_calls (grep_repo with
+// the right args). Two independent fires (def-only, then def+call closed loop)
+// both confirmed. So `10,1,2,3` is the calibrated, working layout — no longer a
+// guess. It STILL stays behind the env gate (default OFF → prompt emulation)
+// because (a) the response decode gate (DEVIN_CONNECT_TOOL_CALL_TAGS) must be on
+// in tandem for the native path to be useful, and (b) enabling by default is a
+// behavior change we roll out deliberately, not implicitly.
 //
 // Accepted forms of DEVIN_CONNECT_TOOL_DEF_TAGS (fail-closed to null on any
 // malformed value — never emit a broken frame):
