@@ -216,14 +216,16 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
     assert.equal(seen.length, 1, 'no failover hop when max=0');
   });
 
-  it('does NOT fail over on a non-auth upstream error (surfaces it directly)', async () => {
+  it('does NOT fail over on a non-account upstream error (CAPACITY surfaces directly)', async () => {
+    // CAPACITY = the MODEL is overloaded, not an account fault. Failing over would
+    // storm every account with the same doomed request, so it must surface as-is.
     seed('err-1');
     seed('err-2');
     const seen = [];
     __setConnectDeps({
       toChatCompletion: async (params) => {
         seen.push(params.token);
-        throw Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' });
+        throw Object.assign(new Error('high demand'), { code: 'CAPACITY' });
       },
     });
 
@@ -231,8 +233,77 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
       { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
       { callerKey: '' },
     );
-    assert.equal(result.status, 429);
-    assert.equal(seen.length, 1, 'a non-auth error is not a failover trigger');
+    assert.equal(result.status, 503);
+    assert.equal(seen.length, 1, 'CAPACITY (model overloaded) is not an account-failover trigger');
+  });
+
+  // R1: QUOTA_EXHAUSTED / RATE_LIMITED are ACCOUNT dry-wells. With a healthy
+  // account still in the pool, the request must fail over to it instead of
+  // surfacing 402/429 while that account sits idle. The old behavior surfaced the
+  // error on the first account — a real correctness bug (pool underutilized).
+  it('R1: fails over to a healthy account when the first hits RATE_LIMITED', async () => {
+    seed('rl-1');
+    seed('rl-2');
+    const seen = [];
+    let call = 0;
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        seen.push(params.token);
+        if (call++ === 0) throw Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' });
+        return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'OK' } }] } };
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 200, 'served by the second, un-throttled account');
+    assert.equal(seen.length, 2, 'RATE_LIMITED on account 1 triggered one failover hop');
+    assert.notEqual(seen[0], seen[1], 'the hop landed on a different account');
+  });
+
+  it('R1: fails over to a healthy account when the first hits QUOTA_EXHAUSTED', async () => {
+    seed('q-1');
+    seed('q-2');
+    const seen = [];
+    let call = 0;
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        seen.push(params.token);
+        if (call++ === 0) throw Object.assign(new Error('out of credit'), { code: 'QUOTA_EXHAUSTED' });
+        return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'OK' } }] } };
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 200, 'served by the second, funded account');
+    assert.equal(seen.length, 2, 'QUOTA_EXHAUSTED on account 1 triggered one failover hop');
+  });
+
+  it('R1: surfaces the account error once the pool is exhausted (all accounts dry)', async () => {
+    // Both accounts are quota-dry → after failover exhausts the pool, the client
+    // gets the real 402 rather than a hang or a misleading 401.
+    seed('qdry-1');
+    seed('qdry-2');
+    const seen = [];
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        seen.push(params.token);
+        throw Object.assign(new Error('out of credit'), { code: 'QUOTA_EXHAUSTED' });
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 402, 'exhausted pool surfaces the real QUOTA_EXHAUSTED status');
+    assert.equal(result.body.error.code, 'QUOTA_EXHAUSTED');
+    assert.equal(seen.length, 2, 'both accounts were tried before surfacing');
   });
 });
 
@@ -289,6 +360,59 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     await result.handler(res);
     const frames = parseFrames(res.body);
     assert.equal(seen.length, 1, 'no failover after a byte is on the wire');
+    assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'partial'), 'emitted the partial chunk');
+    assert.ok(frames.some(f => f !== '[DONE]' && f.error), 'surfaced an error frame');
+  });
+
+  // R1 (stream): a pre-emit RATE_LIMITED on the first account fails over to a
+  // healthy one instead of erroring the stream — replay is safe while !emitted.
+  it('R1 stream: fails over on a pre-emit RATE_LIMITED, then streams from the healthy account', async () => {
+    const a = seed('s-rl-1');
+    seed('s-rl-2');
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params, send) => {
+        seen.push(params.token);
+        if (params.token === a.apiKey) throw Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' });
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] });
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseFrames(res.body);
+    assert.equal(seen.length, 2, 'RATE_LIMITED on account 1 triggered one stream failover hop');
+    assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'OK'), 'streamed from the healthy account');
+    assert.ok(!frames.some(f => f !== '[DONE]' && f.error), 'no error frame — the request was recovered');
+  });
+
+  // R1 guard (stream): once a byte is on the wire, a RATE_LIMITED mid-stream must
+  // NOT hop (a replay would duplicate content) — it surfaces an error frame.
+  it('R1 stream: does NOT fail over on RATE_LIMITED after a chunk was emitted', async () => {
+    seed('s-rlmid-1');
+    seed('s-rlmid-2');
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params, send) => {
+        seen.push(params.token);
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'partial' }, finish_reason: null }] });
+        throw Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' });
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseFrames(res.body);
+    assert.equal(seen.length, 1, 'no failover after a byte is on the wire, even for RATE_LIMITED');
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'partial'), 'emitted the partial chunk');
     assert.ok(frames.some(f => f !== '[DONE]' && f.error), 'surfaced an error frame');
   });
@@ -464,10 +588,13 @@ describe('DEVIN_CONNECT quota vs tier wall (P1 #33)', () => {
     );
     assert.equal(result.status, 402);
     assert.equal(result.body.error.type, 'insufficient_quota');
-    // The dry account must now carry a rate-limit cooldown so getApiKey stops
-    // re-selecting it (the distinguishing penalty vs a tier wall).
+    // R6: the dry account is now cooled on the QUOTA dimension (quotaResetAt),
+    // the same self-healing dimension a proactive credits snapshot uses — not the
+    // transient rateLimitedUntil. Availability reports it distinctly as
+    // 'quota_exhausted' so selection skips it (the distinguishing penalty vs a
+    // tier wall, which stays fully available).
     const avail = getAccountAvailability(a.apiKey, 'swe-1-6-slow');
-    assert.equal(avail.reason, 'rate_limited', 'dry account is cooled down');
+    assert.equal(avail.reason, 'quota_exhausted', 'dry account is cooled on the quota dimension');
     assert.ok(avail.retryAfterMs > 0, 'cooldown carries a retry hint');
   });
 
@@ -634,5 +761,49 @@ describe('DEVIN_CONNECT sampling passthrough (#48)', () => {
       { callerKey: '' },
     );
     assert.equal(hadCompletion, false, 'no completion key when caller specified no sampling controls');
+  });
+});
+
+// O3: newer OpenAI SDKs and the o1/o3/gpt-5 reasoning families send
+// `max_completion_tokens` instead of `max_tokens`. It must be honored as the
+// output cap, and take precedence when both are present.
+describe('O3: max_completion_tokens output cap', () => {
+  function captureCompletion(label, body) {
+    seed(label);
+    let captured = 'unset';
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        captured = params.completion;
+        return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'OK' } }] } };
+      },
+    });
+    return handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }], ...body },
+      { callerKey: '' },
+    ).then((result) => ({ result, get captured() { return captured; } }));
+  }
+
+  it('forwards max_completion_tokens as the connect maxTokens cap', async () => {
+    const { result, captured } = await captureCompletion('o3-mct', { max_completion_tokens: 321 });
+    assert.equal(result.status, 200);
+    assert.deepEqual(captured, { maxTokens: 321 });
+  });
+
+  it('prefers max_completion_tokens over max_tokens when both are sent', async () => {
+    // OpenAI precedence: the modern field wins. A client migrating mid-flight that
+    // sends both must get the o1-style cap, not the legacy one.
+    const { captured } = await captureCompletion('o3-both', { max_completion_tokens: 500, max_tokens: 100 });
+    assert.deepEqual(captured, { maxTokens: 500 });
+  });
+
+  it('still honors legacy max_tokens when max_completion_tokens is absent', async () => {
+    const { captured } = await captureCompletion('o3-legacy', { max_tokens: 77 });
+    assert.deepEqual(captured, { maxTokens: 77 });
+  });
+
+  it('ignores a non-finite max_completion_tokens and falls back to max_tokens', async () => {
+    // A null/garbage modern field must not shadow a valid legacy cap.
+    const { captured } = await captureCompletion('o3-nan', { max_completion_tokens: null, max_tokens: 42 });
+    assert.deepEqual(captured, { maxTokens: 42 });
   });
 });

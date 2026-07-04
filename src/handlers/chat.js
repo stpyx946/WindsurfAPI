@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -43,6 +43,7 @@ import { isRetryable as isConnectRetryable } from '../devin-connect.js';
 import { isRouterModel, assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
+import { systemFingerprint } from '../system-fingerprint.js';
 import { registerSseController } from '../sse-registry.js';
 import {
   recordNativeBridgeAccountGateReject,
@@ -228,6 +229,14 @@ export function filterToolCallsByAllowlist(toolCalls, tools) {
 export function effectiveToolsForToolChoice(tools, toolChoice) {
   if (!Array.isArray(tools) || tools.length === 0) return tools || [];
   if (toolChoice === 'none') return [];
+  // O5: 'required'/'any' (Anthropic-normalized 'any' → 'required') keeps the
+  // FULL tool set available — the "must call ≥1" constraint is enforced in the
+  // preamble (resolveToolChoice) and surfaced in diagnostics, NOT by narrowing
+  // tools[] here. Only a forced {function:{name}} object narrows the set. This
+  // is why 'required' intentionally falls through to `return tools` below —
+  // it must NOT be conflated with the 'none' (empty) branch.
+  // NB: OpenAI 400s on required + empty tools[]; we early-return above instead
+  // (that boundary check belongs to input validation, not O5). TODO(none — FREE).
   let forced = '';
   if (toolChoice && typeof toolChoice === 'object') {
     forced = toolChoice.function?.name || toolChoice.name || '';
@@ -249,7 +258,17 @@ export function summarizeToolRoutingDiagnostics({ tools, effectiveTools, toolCho
     : '';
   const reasons = [];
 
+  // O5: classify tool_choice so 'required' is never silently equated to 'auto'
+  // in logs/diag. String 'required'/'any' → must call ≥1 tool; forced object →
+  // must call the named tool (surfaced separately via forcedName below).
+  const toolChoiceMode = forcedName
+    ? 'forced'
+    : (toolChoice === 'required' || toolChoice === 'any')
+      ? 'required'
+      : (toolChoice === 'none' ? 'none' : 'auto');
+
   if (toolChoice === 'none') reasons.push('tool_choice_none');
+  if (toolChoiceMode === 'required') reasons.push('tool_choice_required');
   if (forcedName && requested.length && !requested.includes(forcedName)) reasons.push('forced_tool_not_declared');
   if (requested.length && effective.length === 0 && toolChoice !== 'none') reasons.push('effective_tools_empty');
   if (toolRouting?.nativeDecision?.reason) reasons.push(toolRouting.nativeDecision.reason);
@@ -268,6 +287,7 @@ export function summarizeToolRoutingDiagnostics({ tools, effectiveTools, toolCho
     preambleTier: preambleBudget?.tier || null,
     preambleBytes: preambleBudget?.finalBytes ?? null,
     forcedName,
+    toolChoiceMode,
     reasons: [...new Set(reasons)],
   };
 }
@@ -349,6 +369,83 @@ export function connectErrorToHttp(code) {
     case 'TIMEOUT': return { status: 504, type: 'timeout_error' };
     default: return { status: 502, type: 'upstream_error' };
   }
+}
+
+// R1: which classified upstream errors describe an ACCOUNT-specific dry-well
+// that a *different* pooled account could satisfy — so the request should fail
+// over instead of surfacing 402/429 to the client while healthy accounts sit
+// idle. QUOTA_EXHAUSTED (out of credit) and RATE_LIMITED (this account throttled)
+// are per-account: finalizeConnectAccount already cools the offending account, so
+// the next hop lands on a funded/un-throttled one. Deliberately EXCLUDED:
+//   - CAPACITY / UPSTREAM_INTERNAL: the MODEL is overloaded or the backend hiccuped
+//     — not an account fault. Failing over would storm every account with the same
+//     doomed request; these are handled by in-place replay + short soft cooldown.
+//   - MODEL_BLOCKED: a tier/entitlement wall shared by every account of that tier
+//     (free→paid selector) — the next account would reject identically.
+//   - UNAUTHORIZED: already handled by the dead-token failover path (kind:'dead').
+export function isAccountFailoverError(code) {
+  return code === 'QUOTA_EXHAUSTED' || code === 'RATE_LIMITED';
+}
+
+// O10: official OpenAI error `type` vocabulary. Anything outside this set that
+// reaches an OpenAI-family client (/v1/chat/completions, /v1/responses) is
+// normalized to the closest official value at the egress boundary. The INTERNAL
+// vocabulary (rate_limit_exceeded, upstream_transient_error, ...) is left intact
+// everywhere it doubles as classification input for the retry loop,
+// shouldAutoFallback, toAnthropicError (messages.js) and geminiError (gemini.js).
+export const OFFICIAL_OPENAI_ERROR_TYPES = new Set([
+  'invalid_request_error', 'authentication_error', 'permission_error',
+  'not_found_error', 'rate_limit_error', 'insufficient_quota',
+  'api_error', 'server_error',
+]);
+
+const INTERNAL_TO_OPENAI_TYPE = {
+  invalid_request: 'invalid_request_error',
+  auth_error: 'api_error',
+  not_found: 'not_found_error',
+  rate_limit_exceeded: 'rate_limit_error',
+  pool_exhausted: 'api_error',
+  ls_pool_exhausted: 'api_error',
+  ls_unavailable: 'api_error',
+  upstream_error: 'api_error',
+  upstream_transient_error: 'api_error',
+  upstream_internal_error: 'api_error',
+  upstream_deadline_exceeded: 'api_error',
+  timeout_error: 'api_error',
+  capacity_error: 'api_error',
+  model_blocked: 'permission_error',
+  model_not_available: 'api_error',
+  payload_too_large: 'invalid_request_error',
+  unsupported_media: 'invalid_request_error',
+  unsupported_tool_boundary: 'invalid_request_error',
+  fabricated_tool_result: 'api_error',
+  policy_blocked: 'invalid_request_error',
+  backend_error: 'api_error',
+  backend_unavailable: 'api_error',
+  backend_pool_exhausted: 'api_error',
+};
+
+export function normalizeOpenAIErrorType(type, status) {
+  if (typeof type === 'string' && OFFICIAL_OPENAI_ERROR_TYPES.has(type)) return type;
+  if (type && Object.prototype.hasOwnProperty.call(INTERNAL_TO_OPENAI_TYPE, type)) {
+    return INTERNAL_TO_OPENAI_TYPE[type];
+  }
+  const s = Number(status) || 500;
+  if (s === 401) return 'authentication_error';
+  if (s === 403) return 'permission_error';
+  if (s === 404) return 'not_found_error';
+  if (s === 429) return 'rate_limit_error';
+  if (s >= 500) return 'api_error';
+  return 'invalid_request_error';
+}
+
+// Mutate-in-place the error type of an OpenAI-shaped {error:{type}} body. No-op
+// on success bodies (no .error) and on already-official types.
+export function normalizeOpenAIErrorBody(body, status) {
+  if (body && body.error && typeof body.error === 'object' && 'type' in body.error) {
+    body.error.type = normalizeOpenAIErrorType(body.error.type, status);
+  }
+  return body;
 }
 
 export function finishPartialStreamAfterError({ id, created, model, send, res }) {
@@ -1337,6 +1434,21 @@ function estimateTokens(messages) {
   return Math.max(1, Math.ceil(chars / 4));
 }
 
+// O11: estimate reasoning (thinking) tokens with the same chars/4 heuristic used
+// for completion tokens, so a client that reads
+// usage.completion_tokens_details.reasoning_tokens sees a non-zero value whenever
+// the model actually produced thinking content (previously hardcoded 0 even with
+// visible reasoning). OpenAI's invariant is reasoning_tokens ⊆ completion_tokens,
+// so the estimate is clamped to the reported completion count — never larger than
+// the whole, and never negative.
+function estimateReasoningTokens(thinkingText, completionTokens) {
+  const t = typeof thinkingText === 'string' ? thinkingText : '';
+  if (!t.length) return 0;
+  const est = Math.ceil(t.length / 4);
+  const cap = Number.isFinite(completionTokens) ? Math.max(0, completionTokens) : est;
+  return Math.min(est, cap);
+}
+
 function cachedUsage(messages, completionText) {
   const prompt = estimateTokens(messages);
   const completion = Math.max(1, Math.ceil((completionText || '').length / 4));
@@ -1462,7 +1574,10 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
       input_tokens: promptTokens,
       output_tokens: outputTokens,
       prompt_tokens_details: { cached_tokens: cacheRead },
-      completion_tokens_details: { reasoning_tokens: 0 },
+      // O11: reasoning_tokens is a subset of completion_tokens (here == the
+      // upstream outputTokens, which already accounts for thinking output), so
+      // clamp the estimate to it.
+      completion_tokens_details: { reasoning_tokens: estimateReasoningTokens(thinkingText, outputTokens) },
       cache_creation_input_tokens: cacheWrite,
       cache_read_input_tokens: cacheRead,
       cache_creation: cacheCreationSplit,
@@ -1486,7 +1601,9 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
     input_tokens: prompt,
     output_tokens: completion,
     prompt_tokens_details: { cached_tokens: 0 },
-    completion_tokens_details: { reasoning_tokens: 0 },
+    // O11: completion here already folds thinkingText into the chars/4 estimate,
+    // so reasoning_tokens is the thinking portion of that same total (⊆ completion).
+    completion_tokens_details: { reasoning_tokens: estimateReasoningTokens(thinkingText, completion) },
   };
 }
 
@@ -1573,9 +1690,13 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // The account ran out of credit/quota — unlike a tier wall this IS an
       // account-specific dry-well. Cool it down so getApiKey stops re-selecting
       // it and serving 402 to every client; failover moves to a funded account.
-      // Reuse the rate-limit cooldown (longer: quota refills on a billing cycle,
-      // but a 30-min cooldown bounds the re-probe rate without hard-disabling).
-      markRateLimited(acct.apiKey, 30 * 60 * 1000, null);
+      // R6: write the cooldown to the QUOTA dimension (quotaResetAt) — the same
+      // self-healing dimension a proactive credits snapshot uses — not the
+      // transient rateLimitedUntil. This keeps the reactive-402 and proactive-
+      // snapshot views of "is this account quota-dry?" consistent; a later
+      // balance-recovery snapshot then clears it. 30-min cooldown default bounds
+      // the re-probe rate without a hard disable (quota refills per billing cycle).
+      markQuotaExhausted(acct.apiKey, 30 * 60 * 1000);
       bumpConnect('quota_exhausted');
     }
     else if (err.code === 'UNAUTHORIZED') {
@@ -1774,11 +1895,19 @@ async function _handleChatCompletionsInner(body, context = {}) {
   markQuietWindowRequest();
   const {
     stream = false,
-    max_tokens,
     tools,
     tool_choice,
     response_format,
   } = body;
+  // O3: honor `max_completion_tokens`, the field newer OpenAI SDKs and the o1/o3/
+  // gpt-5 reasoning families send in place of `max_tokens` (which those models
+  // reject outright). Accept either for compatibility and prefer the modern name
+  // when both are present, matching OpenAI's own precedence. Everything downstream
+  // (the connect CompletionConfig at ~1975, cache key) reads this resolved value,
+  // so the two spellings converge to one output cap on every backend path.
+  const max_tokens = Number.isFinite(body.max_completion_tokens)
+    ? body.max_completion_tokens
+    : body.max_tokens;
   const effectiveTools = effectiveToolsForToolChoice(tools, tool_choice);
   // v2.0.66: merge reasoning_effort into the model id BEFORE alias
   // resolution so `gpt-5.5 + reasoning.effort=xhigh` resolves to
@@ -1851,6 +1980,26 @@ async function _handleChatCompletionsInner(body, context = {}) {
         };
       }
     }
+  }
+
+  // O2: reject n>1 explicitly. OpenAI's `n` asks for N independent
+  // completions, but the Cascade/Devin upstream only ever returns a
+  // single choice (all response paths emit choices:[{index:0}]). Silently
+  // returning one choice would let a client that reads choices[1..n-1]
+  // pick up undefined — a subtler failure than a 400. n=1/null/undefined
+  // (the default) pass through unchanged; only n>1 is refused, matching
+  // OpenAI's own invalid_request_error shape for unsupported values.
+  if (body.n != null && body.n !== 1) {
+    return {
+      status: 400,
+      body: {
+        error: {
+          message: 'This proxy only supports n=1. The upstream backend returns a single completion per request; set n to 1 (or omit it).',
+          type: 'invalid_request_error',
+          param: 'n',
+        },
+      },
+    };
   }
 
   // Heavy clients (OpenClaw 24KB, opencode + omo, Cline with full tool
@@ -1980,7 +2129,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // disconnected/cancelled caller tears down the in-flight connect call
     // instead of leaking it until the 120s timeout.
     if (context.signal) connectParams.signal = context.signal;
-    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools };
+    // O1: honor stream_options.include_usage on the connect path too — the
+    // trailing usage frame is emitted only when the caller opted in.
+    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools, includeUsage: body.stream_options?.include_usage === true };
     // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
     // accumulates every session token burned this request so getApiKey never
     // re-picks a known-dead account when we hop to the next pool member.
@@ -2000,7 +2151,21 @@ async function _handleChatCompletionsInner(body, context = {}) {
         },
         handler: async (res) => {
           let emitted = false;
+          const fp = systemFingerprint(reqModelName);
+          // O10: 仅直连 OpenAI 客户端(route==='chat')在出口归一化 error.type;
+          // messages/gemini/responses 路由写入各自 translator 的 captureRes,
+          // 须保留内部词供其 remap。
+          const isOpenAIClient = (body.__route || 'chat') === 'chat';
           const send = (data) => {
+            // O9:见 streamResponse 的 send。connect 流的 chunk 由
+            // devin-connect-openai.js 预置 fp(§2.3),此处 == null 守卫防重复注入;
+            // 仅在极少数未预置场景兜底。error 帧不动。
+            if (data && data.object === 'chat.completion.chunk' && data.system_fingerprint == null) {
+              data.system_fingerprint = fp;
+            }
+            if (isOpenAIClient && data && data.error && typeof data.error.type === 'string') {
+              data.error.type = normalizeOpenAIErrorType(data.error.type);
+            }
             if (!res.writableEnded) { emitted = true; res.write(`data: ${JSON.stringify(data)}\n\n`); }
           };
           // Run one account through the stream, with same-account re-login as the
@@ -2075,7 +2240,23 @@ async function _handleChatCompletionsInner(body, context = {}) {
             if (acct) triedKeys.push(acct.apiKey);
             const r = await attemptStream(acct);
             if (r.kind === 'ok') break;
-            if (r.kind === 'error') { send(chatStreamError(r.err.message, 'upstream_error', r.err.code || null)); break; }
+            if (r.kind === 'error') {
+              // R1: account dry-well (QUOTA/RATE_LIMITED) → fail over to another
+              // pooled account instead of erroring the stream — but ONLY while
+              // !emitted, since replaying after bytes are on the wire would
+              // duplicate content. The offending account is already cooled.
+              if (isAccountFailoverError(r.err.code) && !emitted && hops < maxHops) {
+                const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
+                if (next) {
+                  log.info(`Chat[${reqId}]: DEVIN_CONNECT ${r.err.code} on account → stream failover hop ${hops + 1} to next pooled account`);
+                  bumpConnect('quota_failover_hops');
+                  acct = next;
+                  continue;
+                }
+              }
+              send(chatStreamError(r.err.message, 'upstream_error', r.err.code || null));
+              break;
+            }
             // r.kind === 'dead' — guaranteed !emitted, so a fresh account is safe.
             if (acct) reportDeadToken(acct.apiKey);
             bumpConnect('dead_tokens');
@@ -2143,6 +2324,20 @@ async function _handleChatCompletionsInner(body, context = {}) {
       const r = await attempt(acct);
       if (r.kind === 'ok') return r.out;
       if (r.kind === 'error') {
+        // R1: QUOTA_EXHAUSTED / RATE_LIMITED are ACCOUNT dry-wells — the offending
+        // account was just cooled by finalizeConnectAccount, so if the pool still
+        // has another account, move the request there instead of handing the client
+        // a 402/429 while healthy accounts sit idle. Non-stream is always replay-safe
+        // (nothing reached the client yet). Exhausted pool → fall through to surface.
+        if (isAccountFailoverError(r.err.code) && hops < maxHops) {
+          const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
+          if (next) {
+            log.info(`Chat[${reqId}]: DEVIN_CONNECT ${r.err.code} on account → failover hop ${hops + 1} to next pooled account`);
+            bumpConnect('quota_failover_hops');
+            acct = next;
+            continue;
+          }
+        }
         // Map the classified upstream code to the right HTTP status/type so a
         // free-tier /upgrade rejection reads as 402 model_blocked, an auth failure
         // as 401, and a rate limit as 429 — not a blanket 502.
@@ -2452,6 +2647,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
       route: body.__route || 'chat',
+      // O5: thread tool_choice so required/forced/none reach the user-message
+      // fallback preamble too — the proto tool_calling_section already carries
+      // it via applyToolPreambleBudget, but the fallback (for models that ignore
+      // the proto override) previously hard-coded 'auto'. Mirrors the
+      // DEVIN_CONNECT path above.
+      toolChoice: tool_choice,
     });
   } else {
     cascadeMessages = [...messages];
@@ -2614,6 +2815,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
       waitForAccount: waitForAccountFn,
       cachePolicy,
       wantThinking,
+      // O1: OpenAI only emits the trailing usage-only chunk when the caller opts
+      // in via stream_options.include_usage:true; otherwise a streamed response
+      // carries no usage frame. Passing this through lets streamResponse honor it
+      // instead of unconditionally sending usage (which made some clients
+      // double-count billing). Internal accounting (recordTokenUsage) still runs
+      // regardless — only the client-facing frame is gated.
+      includeUsage: body.stream_options?.include_usage === true,
       fpOpts: buildReuseOpts({ tools: effectiveTools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
       tools: effectiveTools,
       route: body.__route || 'chat',
@@ -2636,6 +2844,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       status: 200,
       body: {
         id: chatId, object: 'chat.completion', created, model: displayModel,
+        system_fingerprint: systemFingerprint(displayModel),
         choices: [{ index: 0, message, finish_reason: 'stop' }],
         usage: cachedUsage(messages, cached.text),
       },
@@ -3473,6 +3682,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       status: 200,
       body: {
         id, object: 'chat.completion', created, model,
+        system_fingerprint: systemFingerprint(model),
         choices: [{ index: 0, message, finish_reason: finishReason }],
         usage,
       },
@@ -3500,8 +3710,12 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (isPolicyBlocked) { err.isPolicyBlocked = true; err.isModelError = true; err.kind = 'policy_blocked'; }
     // v2.0.56: ban-shaped error → reportBanSignal handles the 2-strike
     // promotion to status='banned'. Skip when also a rate-limit so we
-    // don't conflate "out of quota" with "account dead".
-    if (!isRateLimit && looksLikeBanSignal(err.message)) {
+    // don't conflate "out of quota" with "account dead". Also skip when the
+    // error is internal or otherwise transient: the upstream sometimes wraps a
+    // transient stall in a 401/403 shell whose text matches BAN_PATTERNS
+    // (e.g. "authentication ... failed"), and promoting that to a permanent
+    // ban would burn a healthy account — transient-first must win here.
+    if (!isRateLimit && !isInternal && !isTransient && looksLikeBanSignal(err.message)) {
       reportBanSignal(apiKey, err.message);
       err.isModelError = true; err.kind ||= 'auth_error';
     }
@@ -3627,7 +3841,19 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           abortController.abort();
         }
       });
+      const fp = systemFingerprint(model);
+      // O10: 仅直连 OpenAI 客户端(route==='chat')归一化 error.type;
+      // messages/gemini/responses 路由须保留内部词供下游 translator remap。
+      const isOpenAIClient = (fpOpts?.route || 'chat') === 'chat';
       const send = (data) => {
+        // O9: 给每个 chat.completion.chunk 注入合成 system_fingerprint;error /
+        // usage-only 等其它帧不动。幂等 —— 已带值(如 connect 路径预置)则不覆盖。
+        if (data && data.object === 'chat.completion.chunk' && data.system_fingerprint == null) {
+          data.system_fingerprint = fp;
+        }
+        if (isOpenAIClient && data && data.error && typeof data.error.type === 'string') {
+          data.error.type = normalizeOpenAIErrorType(data.error.type);
+        }
         if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
       };
       unregisterSse = registerSseController({
@@ -3669,8 +3895,11 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           }
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
-          send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [], usage: cachedUsage(messages, cached.text) });
+          // O1: only the include_usage opt-in gets the trailing usage frame.
+          if (deps.includeUsage) {
+            send({ id, object: 'chat.completion.chunk', created, model,
+              choices: [], usage: cachedUsage(messages, cached.text) });
+          }
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         } finally {
           unregisterSse();
@@ -4339,10 +4568,15 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: {}, finish_reason: finalReason }] });
             {
+              // Always build + record for internal billing; O1: only forward the
+              // usage-only frame to the client when they opted in via
+              // stream_options.include_usage (OpenAI omits it by default).
               const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking, cachePolicy);
               try { recordTokenUsage(usage); } catch {}
-              send({ id, object: 'chat.completion.chunk', created, model,
-                choices: [], usage });
+              if (deps.includeUsage) {
+                send({ id, object: 'chat.completion.chunk', created, model,
+                  choices: [], usage });
+              }
             }
             if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
             if (ckey && !collectedToolCalls.length && (accText || accThinking)) {
@@ -4418,8 +4652,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (isPolicyBlocked) { recordPolicyBlocked(); err.isPolicyBlocked = true; err.isModelError = true; err.kind = 'policy_blocked'; }
             if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
             // v2.0.56 stream-path ban detection — same 2-strike logic as
-            // non-stream. See nonStreamResponse for rationale.
-            if (!isRateLimit && looksLikeBanSignal(err.message)) {
+            // non-stream. See nonStreamResponse for rationale, including the
+            // transient-first guard (internal/transient errors wrapped in an
+            // auth-shaped shell must not be promoted to a permanent ban).
+            if (!isRateLimit && !isInternal && !isTransient && looksLikeBanSignal(err.message)) {
               reportBanSignal(currentApiKey, err.message);
               err.isModelError = true; err.kind ||= 'auth_error';
             }

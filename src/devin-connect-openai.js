@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import { streamChat as realStreamChat, isRetryable } from './devin-connect.js';
 import { ToolCallStreamParser, parseToolCallsFromText } from './handlers/tool-emulation.js';
 import { log } from './config.js';
+import { systemFingerprint } from './system-fingerprint.js';
 
 // streamChat is injectable so the adapter can be unit-tested without touching
 // the network — mirrors the __set…ForTest convention in windsurf-api.js.
@@ -137,6 +138,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
     object: OBJECT_COMPLETION,
     created,
     model,
+    system_fingerprint: systemFingerprint(model),
     choices: [{ index: 0, message, finish_reason: finishReason }],
   };
   if (usage) body.usage = usage;
@@ -160,9 +162,9 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
  * @returns {Promise<{content:string, reasoning:string, finish_reason:string, usage:object|null}>}
  *          the assembled result, so callers can cache it after streaming.
  */
-export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false } = {}) {
+export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false } = {}) {
   const model = displayModel || params.model;
-  const base = { id, object: OBJECT_CHUNK, created, model };
+  const base = { id, object: OBJECT_CHUNK, created, model, system_fingerprint: systemFingerprint(model) };
 
   // 1. Prime the stream with the assistant role so clients open the message
   //    even before any token arrives.
@@ -244,7 +246,9 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   send({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finishReason }] });
 
   // 5. Usage-only chunk (OpenAI streams usage in a trailing choices:[] frame).
-  if (usage) {
+  //    O1: only when the caller opted in via stream_options.include_usage;
+  //    OpenAI omits this frame by default.
+  if (usage && includeUsage) {
     send({ ...base, choices: [], usage });
   }
 

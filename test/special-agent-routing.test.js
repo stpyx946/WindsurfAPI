@@ -1020,7 +1020,8 @@ describe('special-agent streaming correctness', () => {
     process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
 
     const result = await handleChatCompletions({
-      model: 'swe-1.6', stream: true, messages: [user('hi')],
+      // O1: usage frame is opt-in; this test asserts its contents.
+      model: 'swe-1.6', stream: true, stream_options: { include_usage: true }, messages: [user('hi')],
     }, {
       specialAgent: {
         runDevinAcp: async (_p, opts) => {
@@ -1047,7 +1048,8 @@ describe('special-agent streaming correctness', () => {
     process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
 
     const result = await handleChatCompletions({
-      model: 'swe-1.6', stream: true, messages: [user('hi')],
+      // O1: usage frame is opt-in; this test asserts its estimated contents.
+      model: 'swe-1.6', stream: true, stream_options: { include_usage: true }, messages: [user('hi')],
     }, {
       specialAgent: { runDevinAcp: async (_p, opts) => { opts.onChunk({ kind: 'message', text: 'hello world' }); return { text: 'hello world' }; } },
     });
@@ -1057,6 +1059,29 @@ describe('special-agent streaming correctness', () => {
       .map(w => { try { return JSON.parse(w.replace(/^data: /, '')); } catch { return null; } })
       .find(o => o && o.usage);
     assert.ok(usageFrame.usage.completion_tokens > 0, 'estimated completion tokens are non-zero');
+  });
+
+  it('O1: live ACP stream omits the usage frame without include_usage', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('hi')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (_p, opts) => {
+          opts.onChunk({ kind: 'message', text: 'ok' });
+          return { text: 'ok', usage: { inputTokens: 123, outputTokens: 456, totalTokens: 579 } };
+        },
+      },
+    });
+    const res = streamRes();
+    await result.handler(res);
+    const usageFrame = res.writes
+      .map(w => { try { return JSON.parse(w.replace(/^data: /, '')); } catch { return null; } })
+      .find(o => o && o.usage);
+    assert.equal(usageFrame, undefined, 'no usage frame emitted by default');
   });
 
   it('H7: stop_reason=max_tokens maps to finish_reason=length', async () => {

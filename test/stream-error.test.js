@@ -236,7 +236,10 @@ describe('stream error protocol', () => {
     await result.handler(res);
 
     assert.match(res.body, /"error"/);
-    assert.match(res.body, /"type":"upstream_deadline_exceeded"/);
+    // O10: a direct OpenAI client (no __route) sees the normalized official
+    // error.type; the specific condition is still carried in `code`.
+    assert.match(res.body, /"type":"api_error"/);
+    assert.match(res.body, /"code":"windsurf_provider_deadline"/);
     assert.match(res.body, /data: \[DONE\]/);
   });
 

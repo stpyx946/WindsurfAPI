@@ -123,7 +123,8 @@ describe('streamChatCompletion (SSE)', () => {
   it('emits role-prime, reasoning, content, finish, and usage chunks in order', async () => {
     __setStreamChatForTest(fakeStream(SAMPLE));
     const { send, frames } = collectSend();
-    const result = await streamChatCompletion({ model: 'swe-1-6-slow', messages: [] }, send, { id: 'x', created: 1 });
+    // O1: the trailing usage frame is opt-in; this test asserts its shape.
+    const result = await streamChatCompletion({ model: 'swe-1-6-slow', messages: [] }, send, { id: 'x', created: 1, includeUsage: true });
 
     // 1. role-prime
     assert.deepEqual(frames[0].choices[0].delta, { role: 'assistant', content: '' });
