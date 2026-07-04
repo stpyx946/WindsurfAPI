@@ -13,6 +13,7 @@ const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
 const originalNativeBridgeApiKeys = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_API_KEYS;
 const originalNativeBridgeAccounts = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS;
+const originalAllowNoAuth = process.env.DASHBOARD_ALLOW_NO_AUTH;
 const createdAccounts = new Set();
 
 afterEach(() => {
@@ -26,6 +27,8 @@ afterEach(() => {
   else process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_API_KEYS = originalNativeBridgeApiKeys;
   if (originalNativeBridgeAccounts === undefined) delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS;
   else process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS = originalNativeBridgeAccounts;
+  if (originalAllowNoAuth === undefined) delete process.env.DASHBOARD_ALLOW_NO_AUTH;
+  else process.env.DASHBOARD_ALLOW_NO_AUTH = originalAllowNoAuth;
   resetNativeBridgeStats();
   configureBindHost('0.0.0.0');
 });
@@ -79,16 +82,24 @@ describe('dashboard batch import proxy binding', () => {
     assert.match(res.json().error, /Unauthorized/);
   });
 
-  it('allows unauthenticated dashboard writes only on localhost binds', async () => {
+  it('fails closed on localhost binds with no secret by default; opens only with DASHBOARD_ALLOW_NO_AUTH=1', async () => {
     _resetRuntimeConfigForTests();
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');
 
-    const res = fakeRes();
-    await handleDashboardApi('GET', '/cache', {}, { headers: {} }, res);
+    // AUTH-1: localhost + nothing configured is now fail-closed by default.
+    delete process.env.DASHBOARD_ALLOW_NO_AUTH;
+    const closed = fakeRes();
+    await handleDashboardApi('GET', '/cache', {}, { headers: {} }, closed);
+    assert.equal(closed.statusCode, 401);
+    assert.match(closed.json().error, /Unauthorized/);
 
-    assert.equal(res.statusCode, 200);
+    // Operators who relied on the old open-local convenience must opt in.
+    process.env.DASHBOARD_ALLOW_NO_AUTH = '1';
+    const open = fakeRes();
+    await handleDashboardApi('GET', '/cache', {}, { headers: {} }, open);
+    assert.equal(open.statusCode, 200);
   });
 
   it('accepts dashboard auth headers with timing-safe configured secrets', async () => {
@@ -140,6 +151,7 @@ describe('dashboard batch import proxy binding', () => {
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');
+    process.env.DASHBOARD_ALLOW_NO_AUTH = '1'; // convenience: exercise metrics, not auth
 
     const { bumpConnect, resetConnectMetrics } = await import('../src/devin-connect-metrics.js');
     resetConnectMetrics();
@@ -168,6 +180,7 @@ describe('dashboard batch import proxy binding', () => {
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');
+    process.env.DASHBOARD_ALLOW_NO_AUTH = '1'; // convenience: exercise paging, not auth
     const a1 = addTestAccount('dashboard-summary-a');
     const a2 = addTestAccount('dashboard-summary-b');
 
