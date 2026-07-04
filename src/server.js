@@ -120,9 +120,19 @@ function sendBodyTooLargeIfNeeded(res, err, style = 'openai') {
 export function extractToken(req) {
   // Anthropic SDK + OAI SDK compatibility: accept either header.
   const authHeader = String(req.headers['authorization'] || '').trim();
-  if (authHeader && authHeader.includes(',')) return '';
+  // TOK-3 (audit P3): a comma used to blanket-clear the token — so a caller
+  // sending `Authorization: Bearer my,key` (or a duplicate header Node joined
+  // as `Bearer a, Bearer b`) was rejected AND the x-api-key fallback was
+  // skipped, 401ing even when a correct x-api-key was present. Instead, parse
+  // the Bearer credential and take only its FIRST comma-delimited segment: a
+  // duplicate/injected `Bearer a, Bearer b` can't smuggle a second credential,
+  // a stray comma no longer nukes auth, and — because we fall through when the
+  // Bearer segment is empty — x-api-key still works.
   const m = authHeader.match(/^Bearer\s+(.+)$/i);
-  if (m) return m[1].trim();
+  if (m) {
+    const first = m[1].split(',')[0].trim();
+    if (first) return first;
+  }
   const xApiKey = req.headers['x-api-key'] || '';
   return xApiKey;
 }

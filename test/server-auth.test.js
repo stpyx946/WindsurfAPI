@@ -9,9 +9,25 @@ describe('server auth token extraction', () => {
     assert.equal(extractToken({ headers: { authorization: 'BEARER xyz' } }), 'xyz');
   });
 
-  it('rejects malformed or duplicate Authorization headers instead of treating them as raw tokens', () => {
+  it('rejects a non-Bearer raw Authorization header instead of treating it as a token', () => {
     assert.equal(extractToken({ headers: { authorization: 'raw-secret' } }), '');
-    assert.equal(extractToken({ headers: { authorization: 'Bearer one, Bearer two', 'x-api-key': 'fallback' } }), '');
+  });
+
+  // TOK-3 (audit P3): a comma in the Bearer credential must NOT blanket-clear
+  // auth. Take the first comma-delimited segment (so a duplicate/injected
+  // `Bearer a, Bearer b` can't smuggle a second credential) and still fall
+  // back to x-api-key when the Bearer segment is empty.
+  it('takes the first Bearer segment when the credential contains a comma', () => {
+    assert.equal(extractToken({ headers: { authorization: 'Bearer one, Bearer two' } }), 'one');
+    assert.equal(extractToken({ headers: { authorization: 'Bearer my,key' } }), 'my');
+  });
+
+  it('falls back to x-api-key when the Bearer credential is comma-led (empty first segment)', () => {
+    assert.equal(extractToken({ headers: { authorization: 'Bearer ,junk', 'x-api-key': 'fallback' } }), 'fallback');
+  });
+
+  it('honours a correct x-api-key even when Authorization is a bare non-Bearer value', () => {
+    assert.equal(extractToken({ headers: { authorization: 'raw-secret', 'x-api-key': 'fallback' } }), 'fallback');
   });
 
   it('falls through to x-api-key when Authorization is absent', () => {

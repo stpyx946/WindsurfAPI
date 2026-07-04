@@ -52,11 +52,34 @@ export function extractBodyCallerSubKey(body) {
 // else gets a non-spoofable fingerprint by default.
 const TRUST_PROXY_XFF = process.env.TRUST_PROXY_X_FORWARDED_FOR === '1';
 
+// XFF-1 (audit P1): the LEFTMOST X-Forwarded-For value is fully attacker-
+// controllable — a client just prepends any IP and it lands at the front of
+// the list. Trusted reverse proxies (nginx `$proxy_add_x_forwarded_for`,
+// Cloudflare, etc.) APPEND the peer they received the connection from to the
+// RIGHT, so the trustworthy client IP is counted from the right by the number
+// of trusted proxy hops in front of us (TRUST_PROXY_HOPS, default 1 = a single
+// proxy). Taking the leftmost let an attacker with the shared key rotate the
+// value on every request to dodge the brute-force lockout (each spoof lands in
+// a fresh bucket, never reaching the 5-strike threshold) or aim a chosen IP to
+// land in — and poison — another caller's cascade/cache bucket.
+function trustedProxyHops() {
+  const raw = Number(process.env.TRUST_PROXY_HOPS);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+}
+
 function clientIp(req) {
   const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
   if (!TRUST_PROXY_XFF) return remote;
-  const fwd = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  return fwd || remote;
+  const parts = String(req?.headers?.['x-forwarded-for'] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (!parts.length) return remote;
+  // The last `hops` entries were appended by our trusted proxy chain; the real
+  // client IP is the entry just before them. If the header is shorter than the
+  // configured hop count it can't be trusted — fall back to the socket peer.
+  const idx = parts.length - trustedProxyHops();
+  return (idx >= 0 ? parts[idx] : '') || remote;
 }
 
 function ipUaFingerprint(req) {

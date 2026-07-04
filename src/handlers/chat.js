@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -1676,6 +1676,14 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     recordRequest(model, !err, Date.now() - startTime, null);
     return;
   }
+  // REF-1/REF-2: acct.apiKey is a snapshot taken at acquire time. A background
+  // re-login (UNAUTHORIZED path below) swaps the pool object's apiKey in place
+  // without touching this snapshot, so every mark*/report*/release keyed on the
+  // stale snapshot would silently no-op — leaking the in-flight slot and losing
+  // the cooldown/health signal. Resolve the account's CURRENT apiKey via its
+  // immutable id (falls back to the snapshot when the id is unknown), and
+  // release by id so the counter always finds its account.
+  const apiKey = currentApiKeyForId(acct.id, acct.apiKey);
   if (err) {
     // A client-side abort (caller disconnected) is not an account fault — just
     // release without penalizing the account's error budget.
@@ -1696,11 +1704,11 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // snapshot views of "is this account quota-dry?" consistent; a later
       // balance-recovery snapshot then clears it. 30-min cooldown default bounds
       // the re-probe rate without a hard disable (quota refills per billing cycle).
-      markQuotaExhausted(acct.apiKey, 30 * 60 * 1000);
+      markQuotaExhausted(apiKey, 30 * 60 * 1000);
       bumpConnect('quota_exhausted');
     }
     else if (err.code === 'UNAUTHORIZED') {
-      reportError(acct.apiKey);
+      reportError(apiKey);
       // The DEVIN_CONNECT session token is an opaque session_id with no refresh
       // path — UNAUTHORIZED most likely means the server retired it. If the
       // account has stored credentials + auto-relogin is enabled, trigger a
@@ -1708,7 +1716,7 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // lands on a fresh token instead of a permanently-dead account.
       reLoginAccount(acct.id).catch(() => {});
     }
-    else if (err.code === 'RATE_LIMITED') markRateLimited(acct.apiKey, 5 * 60 * 1000, null);
+    else if (err.code === 'RATE_LIMITED') markRateLimited(apiKey, 5 * 60 * 1000, null);
     else if (err.code === 'CAPACITY') {
       // The MODEL is temporarily overloaded ("high demand, try again later") —
       // a transient upstream condition, NOT an account fault. We already replayed
@@ -1716,7 +1724,7 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // cooldown (60s, auto-recovering via _modelRateLimits) so the pool briefly
       // prefers another account for THIS model, while the account stays fully
       // healthy for every other model. No error-budget penalty, no re-login.
-      markRateLimited(acct.apiKey, 60 * 1000, model, 'c');
+      markRateLimited(apiKey, 60 * 1000, model, 'c');
       bumpConnect('capacity_throttled');
     }
     else if (err.code === 'UPSTREAM_INTERNAL') {
@@ -1728,15 +1736,15 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // 2 in a row — exactly the persistent backend-fault case) and records a
       // health-window error so selection de-prioritizes a genuinely sick
       // account, WITHOUT the errorCount eviction a plain reportError would cause.
-      reportInternalError(acct.apiKey);
+      reportInternalError(apiKey);
       bumpConnect('upstream_internal');
     }
-    else reportError(acct.apiKey);
+    else reportError(apiKey);
   } else {
-    reportSuccess(acct.apiKey);
+    reportSuccess(apiKey);
   }
-  recordRequest(model, !err, Date.now() - startTime, acct.apiKey);
-  releaseAccount(acct.apiKey);
+  recordRequest(model, !err, Date.now() - startTime, apiKey);
+  releaseAccountById(acct.id);
 }
 
 // Wait until getApiKey returns a non-null account, or until maxWaitMs expires.

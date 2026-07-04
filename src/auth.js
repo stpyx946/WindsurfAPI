@@ -1192,6 +1192,23 @@ export function releaseAccount(apiKey) {
   if (!apiKey) return;
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return;
+  _releaseAccountObj(a);
+}
+
+// REF-1 (audit P1): release the in-flight slot by the IMMUTABLE account.id
+// instead of the mutable apiKey. A background re-login (reLoginAccount) swaps
+// account.apiKey in place, so a caller holding a pre-relogin snapshot key would
+// miss the account entirely on release (accounts.find(apiKey===oldKey) →
+// undefined) and leak an in-flight slot forever — permanently deprioritising a
+// healthy account in getApiKey's inflight-ascending sort (#165 re-manifest).
+export function releaseAccountById(id) {
+  if (!id) return;
+  const a = accounts.find(x => x.id === id);
+  if (!a) return;
+  _releaseAccountObj(a);
+}
+
+function _releaseAccountObj(a) {
   a._inflight = Math.max(0, (a._inflight || 0) - 1);
   // R2: keep _inflightAt tracking the NEWEST activity. When a request completes
   // while others are still in flight, refresh the timestamp so those survivors
@@ -1199,6 +1216,19 @@ export function releaseAccount(apiKey) {
   // clear it so a future leaked slot is measured from ITS acquire, not a stale one.
   if (a._inflight === 0) a._inflightAt = 0;
   else a._inflightAt = Date.now();
+}
+
+// REF-1/REF-2: resolve the account's CURRENT (live) apiKey from its immutable
+// id. finalize/health-report call sites hold a snapshot apiKey captured at
+// acquire time; if a re-login re-keyed the account since, that snapshot is
+// stale and every mark*/report* lookup (accounts.find(apiKey===snapshot))
+// silently no-ops. Resolving through the id first keeps cooldown/health
+// reporting landing on the right account; falls back to the snapshot key when
+// the id is unknown (env-token path) so behaviour is unchanged there.
+export function currentApiKeyForId(id, fallback = '') {
+  if (!id) return fallback;
+  const a = accounts.find(x => x.id === id);
+  return a?.apiKey || fallback;
 }
 
 // v2.0.96: safety net — auto-reset stale inflight counters that weren't
@@ -2538,11 +2568,52 @@ const LOCKOUT_THRESHOLD = 5;
 const LOCKOUT_DURATION_MS = 30 * 60 * 1000;
 const LOCKOUT_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
 const LOCKOUT_CLEANUP_MS = 60 * 60 * 1000;
+// LOCK-2 (audit P1, unauth-reachable): the per-IP lockout Map is reached
+// BEFORE the API-key gate (dashboard auth failures), so an attacker who can
+// present distinct source IPs (spoofed XFF pre-fix, IPv6 /64 rotation, a
+// botnet) could grow this Map without bound and OOM the single process. Cap
+// the number of tracked IPs and evict the oldest non-banned entry when full
+// so distinct-IP floods can't exhaust memory — and can't wipe a live ban.
+function _defaultLockoutMax() {
+  const raw = Number(process.env.LOCKOUT_MAX_ENTRIES);
+  return Number.isInteger(raw) && raw > 0 ? raw : 50000;
+}
+let _lockoutMaxEntries = _defaultLockoutMax();
+// Bounded scan budget: how many leading (oldest) entries we may skip past
+// while looking for an evictable (non-banned) one before giving up. Keeps
+// the per-insert cost O(1) amortized even in the pathological all-banned case.
+const _LOCKOUT_EVICT_SCAN_BUDGET = 64;
 const _lockoutAttempts = new Map();
 
 function _now() { return Date.now(); }
 
 export function _resetLockoutForTests() { _lockoutAttempts.clear(); }
+
+// Test seam: override the hard cap (returns the previous value) so the LOCK-2
+// regression can prove the bound with a small map instead of allocating 50k.
+export function __setLockoutMaxForTests(n) {
+  const prev = _lockoutMaxEntries;
+  _lockoutMaxEntries = Number.isInteger(n) && n > 0 ? n : _defaultLockoutMax();
+  return prev;
+}
+export function __lockoutSizeForTests() { return _lockoutAttempts.size; }
+
+// Reclaim one slot for a NEW ip when the Map is at capacity. Evicts the oldest
+// (insertion-order) entry that is NOT under an active ban, so a distinct-IP
+// flood stays memory-bounded without ever releasing a live lockout early.
+// Returns true if a slot was freed. Bounded by _LOCKOUT_EVICT_SCAN_BUDGET.
+function _evictLockoutForInsert(now) {
+  let scanned = 0;
+  for (const [ip, e] of _lockoutAttempts) {
+    if (e.blockedUntil > now) {
+      if (++scanned >= _LOCKOUT_EVICT_SCAN_BUDGET) break;
+      continue;
+    }
+    _lockoutAttempts.delete(ip);
+    return true;
+  }
+  return false;
+}
 
 export function getLockoutState(ip) {
   if (!ip) return { count: 0, blockedUntil: 0 };
@@ -2579,6 +2650,13 @@ export function failedAuthAttempt(ip) {
   const now = _now();
   let e = _lockoutAttempts.get(ip);
   if (!e) {
+    // LOCK-2: enforce the hard cap before inserting a brand-new IP. If we're
+    // at capacity, evict the oldest non-banned entry; if every slot is a live
+    // ban (can't happen with a sane cap, but guard anyway) short-circuit and
+    // don't create a record — the flood can't grow memory past the bound.
+    if (_lockoutAttempts.size >= _lockoutMaxEntries && !_evictLockoutForInsert(now)) {
+      return { blocked: false, retryAfterMs: 0, count: 0 };
+    }
     e = { count: 0, blockedUntil: 0, lastActivity: now };
     _lockoutAttempts.set(ip, e);
   }
