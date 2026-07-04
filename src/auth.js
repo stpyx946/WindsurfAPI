@@ -332,6 +332,12 @@ function _serializeAccounts() {
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl, method: a.method,
     status: a.status, addedAt: a.addedAt,
+    // AP-RISK-1: half-open recovery clock. Without persisting this an account
+    // flipped to 'error' loses its since-timestamp on restart, so
+    // maybeRecoverErrorAccount computes since=0 and bails forever — the pool
+    // then shrinks monotonically across restarts. _errorAt is deliberately NOT
+    // persisted: it's a transient streak-window field (reset on relogin/success).
+    erroredAt: a.erroredAt || 0,
     tier: a.tier, tierManual: !!a.tierManual,
     capabilities: a.capabilities, lastProbed: a.lastProbed,
     credits: a.credits || null,
@@ -439,6 +445,45 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
   }
 }
 
+// Rehydrate one persisted account record into a live in-memory account.
+// Pure (aside from `now`, defaulted for testability) so the serialize→load
+// round-trip can be exercised without touching disk or the dedup pass.
+function _deserializeAccount(a, now = Date.now()) {
+  const status = a.status || 'active';
+  // AP-RISK-1: restore the half-open recovery clock. An older accounts.json
+  // (written before erroredAt was persisted) has none, so an account already
+  // in 'error' would recover with since=0 → never. Default it to load time so
+  // it re-probes after the normal cooldown rather than staying disabled forever.
+  const erroredAt = a.erroredAt || (status === 'error' ? now : 0);
+  return {
+    id: a.id || randomUUID().slice(0, 8),
+    email: a.email, apiKey: a.apiKey,
+    apiServerUrl: a.apiServerUrl || '',
+    method: a.method || 'api_key',
+    status,
+    lastUsed: 0, errorCount: 0,
+    refreshToken: a.refreshToken || '', expiresAt: 0, refreshTimer: null,
+    addedAt: a.addedAt || now,
+    erroredAt,
+    tier: a.tier || 'unknown',
+    capabilities: a.capabilities || {},
+    lastProbed: a.lastProbed || 0,
+    credits: a.credits || null,
+    blockedModels: Array.isArray(a.blockedModels) ? a.blockedModels : [],
+    tierManual: !!a.tierManual,
+    userStatus: a.userStatus || null,
+    userStatusLastFetched: a.userStatusLastFetched || 0,
+    // RB2/B2 + B1: restore self-healing quota cooldown + backoff memory.
+    quotaResetAt: a.quotaResetAt || 0,
+    _breakerStreak: a._breakerStreak || 0,
+    // C5: restore the rolling health window; drop anything already out of
+    // the 1h window at load so a long-stopped process starts clean.
+    _health: Array.isArray(a._health)
+      ? a._health.filter(e => e && typeof e.t === 'number' && now - e.t < HEALTH_WINDOW_MS && HEALTH_KINDS.has(e.k))
+      : [],
+  };
+}
+
 function loadAccounts() {
   try {
     migrateReplicaAccountsTo({
@@ -449,37 +494,19 @@ function loadAccounts() {
     const data = JSON.parse(readFileSync(ACCOUNTS_FILE, 'utf-8'));
     for (const a of data) {
       if (accounts.find(x => x.apiKey === a.apiKey)) continue;
-      accounts.push({
-        id: a.id || randomUUID().slice(0, 8),
-        email: a.email, apiKey: a.apiKey,
-        apiServerUrl: a.apiServerUrl || '',
-        method: a.method || 'api_key',
-        status: a.status || 'active',
-        lastUsed: 0, errorCount: 0,
-        refreshToken: a.refreshToken || '', expiresAt: 0, refreshTimer: null,
-        addedAt: a.addedAt || Date.now(),
-        tier: a.tier || 'unknown',
-        capabilities: a.capabilities || {},
-        lastProbed: a.lastProbed || 0,
-        credits: a.credits || null,
-        blockedModels: Array.isArray(a.blockedModels) ? a.blockedModels : [],
-        tierManual: !!a.tierManual,
-        userStatus: a.userStatus || null,
-        userStatusLastFetched: a.userStatusLastFetched || 0,
-        // RB2/B2 + B1: restore self-healing quota cooldown + backoff memory.
-        quotaResetAt: a.quotaResetAt || 0,
-        _breakerStreak: a._breakerStreak || 0,
-        // C5: restore the rolling health window; drop anything already out of
-        // the 1h window at load so a long-stopped process starts clean.
-        _health: Array.isArray(a._health)
-          ? a._health.filter(e => e && typeof e.t === 'number' && Date.now() - e.t < HEALTH_WINDOW_MS && HEALTH_KINDS.has(e.k))
-          : [],
-      });
+      accounts.push(_deserializeAccount(a));
     }
     if (data.length > 0) log.info(`Loaded ${data.length} account(s) from disk`);
   } catch (e) {
     log.error('Failed to load accounts:', e.message);
   }
+}
+
+// Test seams: exercise the serialize→load round-trip without disk/dedup.
+export function __serializeAccounts() { return _serializeAccounts(); }
+export function __deserializeAccount(a, now = Date.now()) { return _deserializeAccount(a, now); }
+export function __maybeRecoverErrorAccount(account, now = Date.now()) {
+  return maybeRecoverErrorAccount(account, now);
 }
 
 // ─── Dynamic model catalog from cloud ─────────────────────

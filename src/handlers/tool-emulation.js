@@ -727,12 +727,42 @@ function sanitizeToolCallId(rawId) {
   return cleaned || 'unknown';
 }
 
+// TOOL-1 — neutralize any tool-call/tool-result markers embedded in an
+// (attacker-influenced) tool_result body before it is folded into the prompt,
+// so a hostile tool output can't smuggle a forged tool call in the exact
+// marker syntax the model is told to emit and have the downstream parser
+// (ToolCallStreamParser / parseToolCallsFromText) treat it as a real call.
+//
+// The XML-family sentinels (<tool_call> / <tool_result>) cover openai_json_xml
+// AND glm47 (glm47 emits/parses <tool_call>). The Kimi vLLM dialect uses
+// distinctive <|tool_..._begin|> / <|...|> tokens that never occur innocently
+// in normal text, so we break them unconditionally regardless of the active
+// dialect (defense-in-depth — a session may mix dialects across turns).
+//
+// gpt_native's "markers" are bare JSON objects ({"function_call":…}); those are
+// only salvage-parsed from the MODEL'S OWN OUTPUT, never from tool_result
+// prompt content, and escaping JSON braces here would corrupt legitimate JSON
+// tool results — so gpt_native needs no marker escaping on this path.
+const KIMI_SENTINELS = [
+  '<|tool_calls_section_begin|>',
+  '<|tool_calls_section_end|>',
+  '<|tool_call_begin|>',
+  '<|tool_call_argument_begin|>',
+  '<|tool_call_end|>',
+];
 function neutralizeToolResultBody(text) {
-  return String(text ?? '')
+  let out = String(text ?? '')
     .replaceAll('</tool_result>', '<\\/tool_result>')
     .replaceAll('<tool_result', '<\\tool_result')
     .replaceAll('</tool_call>', '<\\/tool_call>')
     .replaceAll('<tool_call>', '<\\tool_call>');
+  // Break the Kimi section/call tokens by injecting a backslash after the
+  // leading `<|` so the literal sentinel no longer matches, while the text
+  // stays human-legible.
+  for (const s of KIMI_SENTINELS) {
+    out = out.replaceAll(s, `<\\|${s.slice(2)}`);
+  }
+  return out;
 }
 
 export function normalizeMessagesForCascade(messages, tools, options = {}) {

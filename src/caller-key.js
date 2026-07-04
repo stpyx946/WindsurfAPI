@@ -5,6 +5,16 @@ function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
 }
 
+// A body field only carries a usable scope signal when it's a string with
+// non-whitespace content. An empty/whitespace value must NOT mint a scope:
+// user:"" would otherwise hash to the constant sha256("") prefix
+// (e3b0c44298fc1c14...), collapsing every distinct end user of a shared key
+// into one :user: segment and re-enabling cross-tenant cascade/cache bleed.
+// Returns '' for anything that isn't a non-empty trimmed string.
+function usableSignal(value) {
+  return typeof value === 'string' && value.trim() !== '' ? value : '';
+}
+
 // Extract a per-user / per-session signal from the request body so two
 // different end users sharing one API key get different conversation pool
 // scopes. v2.0.25 HIGH-3: chat & responses now look at body.user /
@@ -20,12 +30,13 @@ function sha256Hex(value) {
 // pinned to (apiKey, user/session). Returns '' when no usable signal.
 export function extractBodyCallerSubKey(body) {
   if (!body || typeof body !== 'object') return '';
-  if (typeof body.user === 'string') return sha256Hex(body.user).slice(0, 16);
+  const user = usableSignal(body.user);
+  if (user) return sha256Hex(user).slice(0, 16);
   const candidates = [
-    typeof body?.metadata?.conversation_id === 'string' ? body.metadata.conversation_id : '',
-    typeof body.conversation === 'string' ? body.conversation : '',
-    typeof body.previous_response_id === 'string' ? body.previous_response_id : '',
-    typeof body?.metadata?.session_id === 'string' ? body.metadata.session_id : '',
+    usableSignal(body?.metadata?.conversation_id),
+    usableSignal(body.conversation),
+    usableSignal(body.previous_response_id),
+    usableSignal(body?.metadata?.session_id),
   ].filter(Boolean);
   if (!candidates.length) return '';
   return sha256Hex(candidates.join('|')).slice(0, 16);
@@ -91,7 +102,7 @@ function ipUaFingerprint(req) {
 
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
-  const hasUserInBody = !!(body && typeof body.user === 'string');
+  const hasUserInBody = !!(body && usableSignal(body.user));
   // Don't log the raw body.user — OpenAI's `user` field is often an end-user
   // email or stable account id (PII). bodySubKey is already its hash.
   log.info('[caller-key] hasUser=%s subKey=%s', hasUserInBody ? 'yes' : 'no', bodySubKey || '(none)');
