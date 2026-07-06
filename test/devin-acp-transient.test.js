@@ -186,7 +186,30 @@ rl.on('line', line => {
 });
 `);
     const ac = new AbortController();
-    setTimeout(() => ac.abort(), 300);
+    // Event-driven abort. A fixed wall-clock timer here races the real node
+    // subprocess cold-start + handshake: under concurrent load (the full suite
+    // spawns many child processes) that startup can exceed the window, so the
+    // abort fires before session/new resolves — the runner hasn't armed
+    // `activeSessionId`, takes the immediate-SIGTERM branch, and no
+    // session/cancel is ever sent (child dies before recording anything).
+    // Instead, wait until the fake has recorded the in-flight session/prompt
+    // frame — proof the handshake completed and the runner called setSessionId —
+    // THEN abort. Deterministic regardless of load. A generous deadline is a
+    // last-resort so a genuinely stuck handshake can't hang the test.
+    const aborter = (async () => {
+      const deadline = Date.now() + 10_000;
+      while (Date.now() < deadline) {
+        if (existsSync(evidence)) {
+          try {
+            const seen = readFileSync(evidence, 'utf8')
+              .trim().split(/\r?\n/).filter(Boolean).map(l => JSON.parse(l));
+            if (seen.some(m => m.method === 'session/prompt')) break;
+          } catch { /* mid-append: retry on next tick */ }
+        }
+        await new Promise(r => setTimeout(r, 10));
+      }
+      ac.abort();
+    })();
     await assert.rejects(
       () => runDevinAcpProcess('cancel me', { modelKey: 'swe-1.6', apiKey: 'k', signal: ac.signal }),
       (err) => {
@@ -195,6 +218,7 @@ rl.on('line', line => {
         return true;
       },
     );
+    await aborter;
     // Give the fake a moment to flush its append before we read.
     await new Promise(r => setTimeout(r, 200));
     assert.ok(existsSync(evidence), 'fake recorded received frames');
