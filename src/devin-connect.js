@@ -151,11 +151,23 @@ export function extractInlineImages(content) {
   return images;
 }
 
-/** Encode one ImageData sub-message: { base64_data=1, mime_type=2 } (Cascade-proven). */
-function encodeImageData(img) {
+/** Encode one ImageData sub-message. Inner tags are calibratable via
+ * DEVIN_CONNECT_IMAGE_INNER_TAGS="base64,mime" (default "1,2" = Cascade-proven).
+ * ApiServerService (the DEVIN_CONNECT cloud path) is a DIFFERENT message than
+ * Cascade's LanguageServerService: RE of devin.exe strings shows ImageData
+ * declared as {width, height, base64_data, mime_type, source_path}, i.e.
+ * base64_data=#3 / mime_type=#4 [inferred from declaration order — verify by
+ * probe]. Set DEVIN_CONNECT_IMAGE_INNER_TAGS="3,4" to test that layout. */
+function encodeImageData(img, env = process.env) {
+  let bTag = 1, mTag = 2;
+  const raw = String(env.DEVIN_CONNECT_IMAGE_INNER_TAGS || '').trim();
+  if (/^\d+,\d+$/.test(raw)) {
+    const [b, m] = raw.split(',').map((n) => Number.parseInt(n, 10));
+    if (b > 0 && m > 0) { bTag = b; mTag = m; }
+  }
   return Buffer.concat([
-    writeStringField(1, img.base64_data),
-    writeStringField(2, img.mime_type || 'image/png'),
+    writeStringField(bTag, img.base64_data),
+    writeStringField(mTag, img.mime_type || 'image/png'),
   ]);
 }
 
