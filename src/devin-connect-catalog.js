@@ -199,6 +199,140 @@ export function decodePlanName(raw) {
 }
 
 /**
+ * Decode GetUserStatusResponse → full billing ledger.
+ *
+ * Field spec (calibrated 2026-07-07 against live Teams paid account):
+ *   #1.13.16 = balance (varint, micro-dollar — divide by 1e6 for USD)
+ *   #1.13.17 = billing period start (varint, epoch seconds)
+ *   #1.13.18 = billing period end (varint, epoch seconds)
+ *   #1.13.1.21 (repeated) = per-model credit rate table (fixed32 f32, paired to catalog order)
+ *
+ * Returns { plan, isPaid, balance, balanceUnit, periodStart, periodEnd, rateTable }.
+ * All billing fields are optional — older/free accounts may not carry them. Returns
+ * null for missing fields (no throw). Rate table is { selector → creditFloat } where
+ * selectors come from pairing with the live catalog (requires separate fetchCatalog
+ * call; this decode is catalog-agnostic).
+ *
+ * @param {Buffer} raw  GetUserStatusResponse wire bytes
+ * @param {Array<{selector:string}>} [catalog]  live catalog from fetchCatalog (for
+ *   pairing rate-table indices to selectors). If omitted, rateTable is returned as
+ *   an array of f32 values (no selector keys).
+ * @returns {{
+ *   plan: string,
+ *   isPaid: boolean,
+ *   balance: number|null,
+ *   balanceUnit: 'micro-usd'|null,
+ *   periodStart: Date|null,
+ *   periodEnd: Date|null,
+ *   rateTable: Object<string,number>|Array<number>|null
+ * }}
+ */
+export function decodeUserStatusFull(raw, catalog = null) {
+  const result = {
+    plan: 'unknown',
+    isPaid: false,
+    balance: null,
+    balanceUnit: null,
+    periodStart: null,
+    periodEnd: null,
+    rateTable: null,
+  };
+
+  try {
+    const top = parseFields(raw);
+    // #1 = main account block (55KB on paid accounts)
+    const field1 = top.find((x) => x.field === 1 && x.wireType === 2);
+
+    if (field1) {
+      const lvl1 = parseFields(field1.value);
+      // #1.13 = billing structure
+      const billingField = lvl1.find((x) => x.field === 13 && x.wireType === 2);
+      if (billingField) {
+        const billing = parseFields(billingField.value);
+
+        // Balance: #1.13.16 is in micro-dollars on the wire (observed 80000000
+        // = $80 on a paid Teams account). We convert to USD here, so `balance`
+        // is already USD and `balanceUnit` reflects that — consumers must NOT
+        // divide by 1e6 again.
+        const balanceMicro = intField(billing, 16);
+        if (balanceMicro != null) {
+          result.balance = balanceMicro / 1e6;
+          result.balanceUnit = 'usd';
+          result.balanceMicro = balanceMicro; // raw micro-usd, for callers that want it
+        }
+
+        // Period: #1.13.17/18 are epoch SECONDS on the wire. Return them as
+        // millisecond timestamps (numbers) — JSON-safe (no Date→string round
+        // trip through accounts.json), and directly usable by `new Date(ms)`.
+        const periodStartEpoch = intField(billing, 17);
+        const periodEndEpoch = intField(billing, 18);
+        if (periodStartEpoch != null) result.periodStart = periodStartEpoch * 1000;
+        if (periodEndEpoch != null) result.periodEnd = periodEndEpoch * 1000;
+
+        // #1.13.1 = plan detail
+        const planField = billing.find((x) => x.field === 1 && x.wireType === 2);
+        if (planField) {
+          const plan = parseFields(planField.value);
+
+          // Plan name
+          const planName = strField(plan, 2);
+          if (planName) {
+            result.plan = planName.trim().toLowerCase();
+            result.isPaid = result.plan !== 'free' && result.plan !== '';
+          }
+
+          // #1.13.1.21 (repeated) = credit rate table (fixed32 f32)
+          const rateEntries = plan.filter((x) => x.field === 21 && x.wireType === 2);
+          if (rateEntries.length > 0) {
+            const rates = rateEntries.map((entry) => {
+              try {
+                const fields = parseFields(entry.value);
+                const f2 = fields.find((x) => x.field === 2 && x.wireType === 5);
+                return f2 ? f2.value.readFloatLE(0) : null;
+              } catch {
+                return null;
+              }
+            });
+
+            // Pair to catalog if provided; otherwise return raw array
+            if (catalog && Array.isArray(catalog)) {
+              const map = {};
+              for (let i = 0; i < Math.min(rates.length, catalog.length); i++) {
+                if (rates[i] != null && catalog[i]?.selector) {
+                  map[catalog[i].selector] = rates[i];
+                }
+              }
+              result.rateTable = map;
+            } else {
+              result.rateTable = rates;
+            }
+          }
+        }
+      }
+    }
+
+    // Fallback plan name from #2.#2 (backward compat with decodePlanName)
+    if (result.plan === 'unknown') {
+      const lvl2 = top.find((x) => x.field === 2 && x.wireType === 2);
+      if (lvl2) {
+        try {
+          const planName = strField(parseFields(lvl2.value), 2);
+          if (planName) {
+            result.plan = planName.trim().toLowerCase();
+            result.isPaid = result.plan !== 'free' && result.plan !== '';
+          }
+        } catch { /* keep 'unknown' */ }
+      }
+    }
+  } catch (e) {
+    // Defensive: malformed response → return partial result (never throw)
+    log.warn(`decodeUserStatusFull: parse error (${e.message}), returning partial data`);
+  }
+
+  return result;
+}
+
+/**
  * Fetch the live model catalog for a session token.
  *
  * @param {object} [opts]
@@ -219,17 +353,44 @@ export async function fetchCatalog({ token, signal, env = process.env } = {}) {
 /**
  * Fetch the account's plan/tier name for a session token.
  *
- * @returns {Promise<{plan:string, isPaid:boolean}>}
+ * Returns the full billing ledger when available (paid accounts): { plan, isPaid,
+ * balance, balanceUnit, periodStart, periodEnd, rateTable }. Free/old accounts
+ * only have plan + isPaid. All billing fields are nullable (no throw on missing).
+ *
+ * @param {object} [opts]
+ * @param {string} [opts.token]  session token; defaults to env (getConnectToken)
+ * @param {AbortSignal} [opts.signal]
+ * @param {object} [opts.env]
+ * @param {boolean} [opts.withCatalog]  fetch catalog for rate-table pairing (default false)
+ * @returns {Promise<{
+ *   plan: string,
+ *   isPaid: boolean,
+ *   balance?: number,
+ *   balanceUnit?: string,
+ *   periodStart?: Date,
+ *   periodEnd?: Date,
+ *   rateTable?: Object|Array
+ * }>}
  */
-export async function fetchUserStatus({ token, signal, env = process.env } = {}) {
+export async function fetchUserStatus({ token, signal, env = process.env, withCatalog = false } = {}) {
   const sessionToken = token || getConnectToken(env);
   if (!sessionToken) throw Object.assign(new Error('DEVIN_CONNECT: no session token configured'), { code: 'NO_TOKEN' });
   const raw = await unaryCall(STATUS_PATH, sessionToken, { signal });
-  const plan = decodePlanName(raw);
-  // "free" (and empty) ⇒ free tier; anything else (pro/team/teams/enterprise)
-  // ⇒ paid. The catalog lists all models regardless, so this is the gate.
-  const isPaid = !!plan && plan !== 'free';
-  return { plan: plan || 'unknown', isPaid };
+
+  let catalog = null;
+  if (withCatalog) {
+    try {
+      catalog = await fetchCatalog({ token: sessionToken, signal, env });
+    } catch (e) {
+      // Catalog fetch failed — degrade gracefully (rate table returned as array)
+      log.warn(`fetchUserStatus: catalog fetch failed (${e.message}), rate table will not be paired`);
+    }
+  }
+
+  const status = decodeUserStatusFull(raw, catalog);
+
+  // Backward compat: existing callers expect { plan, isPaid } at top level
+  return status;
 }
 
 export const __testing = { buildClientMetadata, strField, intField, PROVIDER_NAMES };

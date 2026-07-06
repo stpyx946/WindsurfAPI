@@ -805,6 +805,9 @@
         "title": "订阅信息",
         "name": "套餐",
         "tier": "层级",
+        "balance": "账户余额",
+        "periodStart": "账期开始",
+        "periodEnd": "账期结束",
         "start": "开始",
         "end": "到期",
         "overage": "透支余额"

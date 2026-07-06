@@ -4379,8 +4379,9 @@ docker compose up -d --force-recreate</pre>
           <div class="detail-kv">
             <span class="k">${T('plan.name')}</span><span class="v"><b>${this.esc(cr.planName || us.planName || '—')}</b></span>
             <span class="k">${T('plan.tier')}</span><span class="v"><span class="tier ${this.esc(a.tier || 'unknown')}" style="padding:1px 8px;font-size:10px">${this.esc(a.tier || 'unknown')}</span>${a.tierManual ? ' <span style="color:var(--text-dim);font-size:10px">✎ manual</span>' : ''}</span>
-            <span class="k">${T('plan.start')}</span><span class="v">${fmtDate(cr.planStart || us.planStart)}</span>
-            <span class="k">${T('plan.end')}</span><span class="v">${fmtDate(cr.planEnd || us.planEnd)}${trialDaysLeft != null ? ` <span style="color:${trialDaysLeft <= 3 ? 'var(--error)' : 'var(--text-dim)'};font-size:11px">(${trialDaysLeft}d left)</span>` : ''}</span>
+            ${a.balance != null ? `<span class="k">${T('plan.balance')}</span><span class="v"><b style="color:var(--success)">$${Number(a.balance).toFixed(2)}</b></span>` : ''}
+            ${a.periodStart ? `<span class="k">${T('plan.periodStart')}</span><span class="v">${fmtDate(a.periodStart)}</span>` : `<span class="k">${T('plan.start')}</span><span class="v">${fmtDate(cr.planStart || us.planStart)}</span>`}
+            ${a.periodEnd ? `<span class="k">${T('plan.periodEnd')}</span><span class="v">${fmtDate(a.periodEnd)}</span>` : `<span class="k">${T('plan.end')}</span><span class="v">${fmtDate(cr.planEnd || us.planEnd)}${trialDaysLeft != null ? ` <span style="color:${trialDaysLeft <= 3 ? 'var(--error)' : 'var(--text-dim)'};font-size:11px">(${trialDaysLeft}d left)</span>` : ''}</span>`}
             ${cr.overageBalance != null ? `<span class="k">${T('plan.overage')}</span><span class="v">$${cr.overageBalance.toFixed(4)}</span>` : ''}
           </div>
         </div>

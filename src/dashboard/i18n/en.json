@@ -805,6 +805,9 @@
         "title": "Subscription",
         "name": "Plan",
         "tier": "Tier",
+        "balance": "Balance",
+        "periodStart": "Period start",
+        "periodEnd": "Period end",
         "start": "Start",
         "end": "End",
         "overage": "Overage balance"

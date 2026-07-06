@@ -99,6 +99,11 @@ export function writeFixed64Field(field, buf8) {
   return Buffer.concat([makeTag(field, 1), buf8]);
 }
 
+/** Write a fixed32 field (wire type 5). */
+export function writeFixed32Field(field, buf4) {
+  return Buffer.concat([makeTag(field, 5), buf4]);
+}
+
 /** Write a bool field (wire type 0), only if true. */
 export function writeBoolField(field, value) {
   if (!value) return Buffer.alloc(0);

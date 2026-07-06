@@ -2029,6 +2029,7 @@ function publicAccount(a, now, { view = 'full' } = {}) {
   const rpmLimit = rpmLimitFor(a);
   const rpmUsed = pruneRpmHistory(a, now);
   const tierModels = getTierModels(a.tier || 'unknown');
+  const cr = a.credits || null;
   const base = {
     id: a.id,
     email: a.email,
@@ -2045,11 +2046,14 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
     rpmUsed,
     rpmLimit,
-    credits: a.credits || null,
+    credits: cr,
     blockedModelCount: (a.blockedModels || []).length,
     tierModelCount: tierModels.length,
     userStatus: accountUserStatusSummary(a.userStatus),
     userStatusLastFetched: a.userStatusLastFetched || 0,
+    balance: cr?.balance ?? null,
+    periodStart: cr?.periodStart ?? null,
+    periodEnd: cr?.periodEnd ?? null,
   };
   if (view === 'summary') return base;
 
@@ -2141,12 +2145,24 @@ export async function refreshCredits(id) {
   if (!account) return { ok: false, error: 'Account not found' };
   try {
     const { getUserStatus } = await import('./windsurf-api.js');
+    const { decodeUserStatusFull } = await import('./devin-connect-catalog.js');
     const proxy = getEffectiveProxy(account.id) || null;
     const status = await getUserStatus(account.apiKey, proxy);
     // Drop the huge raw payload before persisting — keep it only in memory for
     // downstream callers (e.g. model catalog cache) to inspect once.
     const { raw, ...persist } = status;
     account.credits = persist;
+    // B: wire richer billing into account.credits when raw response is available
+    if (raw) {
+      try {
+        const billing = decodeUserStatusFull(raw);
+        if (billing.balance != null) account.credits.balance = billing.balance;
+        if (billing.periodStart) account.credits.periodStart = billing.periodStart;
+        if (billing.periodEnd) account.credits.periodEnd = billing.periodEnd;
+      } catch (billingErr) {
+        log.warn(`refreshCredits ${id}: billing decode failed: ${billingErr.message}`);
+      }
+    }
     // RB2/B2+B3+B6: react to the fresh balance snapshot. A dry account is
     // pre-cooled on its own quotaResetAt dimension (so getApiKey stops handing
     // it out to eat 402s) and a recovered account is uncooled immediately. This
