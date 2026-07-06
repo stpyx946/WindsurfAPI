@@ -1607,6 +1607,65 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
+  // ─── Email OTP Login (Step 1: Send verification code) ────
+  if (subpath === '/email-otp/send' && method === 'POST') {
+    try {
+      const { email, firstName, turnstileToken } = body || {};
+      if (!email || !firstName || !turnstileToken) {
+        return json(res, 400, { error: 'ERR_EMAIL_FIRSTNAME_TURNSTILE_REQUIRED' });
+      }
+      const { sendEmailVerification } = await import('./email-otp-login.js');
+      const proxy = getProxyConfig().global;
+      await sendEmailVerification(email, firstName, turnstileToken, proxy);
+      return json(res, 200, {
+        success: true,
+        email,
+        message: 'Verification code sent. Check your email.',
+      });
+    } catch (err) {
+      return json(res, err.statusCode || 400, { error: err.message });
+    }
+  }
+
+  // ─── Email OTP Login (Step 2: Complete registration) ────
+  if (subpath === '/email-otp/complete' && method === 'POST') {
+    try {
+      const { email, otpCode, turnstileToken, firstName, lastName, autoAdd } = body || {};
+      if (!email || !otpCode || !turnstileToken) {
+        return json(res, 400, { error: 'ERR_EMAIL_OTP_TURNSTILE_REQUIRED' });
+      }
+      const { registerUserWithOtp } = await import('./email-otp-login.js');
+      const proxy = getProxyConfig().global;
+      const { apiKey, name, apiServerUrl } = await registerUserWithOtp(
+        email,
+        otpCode,
+        turnstileToken,
+        firstName || '',
+        lastName || '',
+        proxy
+      );
+
+      let account = null;
+      if (autoAdd !== false) {
+        account = addAccountByKey(apiKey, name || email || 'OTP');
+        scheduleAccountWarmup(account.id);
+      }
+
+      return json(res, 200, {
+        success: true,
+        ...(autoAdd === false
+          ? { apiKey }
+          : { apiKey_masked: maskApiKey(apiKey) }),
+        name,
+        email,
+        apiServerUrl,
+        account: account ? { id: account.id, email: account.email, status: account.status } : null,
+      });
+    } catch (err) {
+      return json(res, err.statusCode || 400, { error: err.message });
+    }
+  }
+
   // ─── Rate Limit Check ──────────────────────────────────
   // POST /accounts/:id/rate-limit — check capacity for a single account
   const rateLimitCheck = subpath.match(/^\/accounts\/([^/]+)\/rate-limit$/);
