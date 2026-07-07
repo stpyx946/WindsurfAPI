@@ -17,7 +17,7 @@ import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount,
   reportError, reportSuccess, markRateLimited, reportInternalError,
-  applyQuotaSnapshot, __isRateLimitedForModel,
+  applyQuotaSnapshot, __isRateLimitedForModel, __isLastUsableAccount,
 } from '../src/auth.js';
 
 const created = [];
@@ -37,7 +37,7 @@ const BREAKER_ENV = [
   'WINDSURFAPI_BREAKER_MAX_MS', 'WINDSURFAPI_NEW_ACCOUNT_GRACE_MS',
   'WINDSURFAPI_NEW_ACCOUNT_BASELINE', 'WINDSURFAPI_QUOTA_COOLDOWN',
   'WINDSURFAPI_QUOTA_COOLDOWN_MS', 'WINDSURFAPI_QUOTA_DRY_THRESHOLD',
-  'WINDSURFAPI_ERROR_RECOVERY_MS',
+  'WINDSURFAPI_ERROR_RECOVERY_MS', 'WINDSURFAPI_LAST_ACCOUNT_EXEMPT',
 ];
 
 afterEach(() => {
@@ -56,6 +56,7 @@ function failToError(acct) {
 
 describe('RB2/B1 — account-level exponential backoff', () => {
   it('first episode applies NO extra cooldown (matches pre-RB2 behaviour)', () => {
+    reportSuccess(mk('b1-peer-first').apiKey); // healthy peer: not the last account
     const acct = mk('b1-first');
     failToError(acct);
     assert.equal(acct.status, 'error');
@@ -69,6 +70,7 @@ describe('RB2/B1 — account-level exponential backoff', () => {
     process.env.WINDSURFAPI_BREAKER_BASE_MS = '60000'; // 1m
     process.env.WINDSURFAPI_BREAKER_FACTOR = '2';
     process.env.WINDSURFAPI_BREAKER_MAX_MS = '600000'; // cap 10m
+    reportSuccess(mk('b1-peer-grow').apiKey); // healthy peer: not the last account
     const acct = mk('b1-grow');
 
     failToError(acct);            // streak 1 — no cooldown
@@ -95,6 +97,7 @@ describe('RB2/B1 — account-level exponential backoff', () => {
   it('backoff is never permanent — the capped cooldown still expires (self-heal)', () => {
     process.env.WINDSURFAPI_BREAKER_BASE_MS = '60000';
     process.env.WINDSURFAPI_BREAKER_MAX_MS = '120000'; // 2m cap
+    reportSuccess(mk('b1-peer-selfheal').apiKey); // healthy peer: not the last account
     const acct = mk('b1-selfheal');
     failToError(acct);
     for (let i = 0; i < 5; i++) { acct.status = 'active'; reportError(acct.apiKey); }
@@ -105,6 +108,7 @@ describe('RB2/B1 — account-level exponential backoff', () => {
   });
 
   it('reportSuccess fully clears the backoff streak (good behaviour wipes the penalty)', () => {
+    reportSuccess(mk('b1-peer-clear').apiKey); // healthy peer: not the last account
     const acct = mk('b1-clear');
     failToError(acct);
     assert.equal(acct._breakerStreak, 1);
@@ -214,6 +218,7 @@ describe('RB2/T3 — new-credential thunderstorm guard', () => {
     process.env.WINDSURFAPI_BREAKER_BASE_MS = '60000';
     process.env.WINDSURFAPI_BREAKER_FACTOR = '2';
     process.env.WINDSURFAPI_NEW_ACCOUNT_GRACE_MS = String(10 * 60 * 1000);
+    reportSuccess(mk('t3-peer-new').apiKey); // healthy peer: not the last account
     // aged:false → addedAt = now, inside the grace window.
     const acct = mk('t3-new', { aged: false });
     failToError(acct);
@@ -228,6 +233,9 @@ describe('RB2/T3 — new-credential thunderstorm guard', () => {
     process.env.WINDSURFAPI_BREAKER_BASE_MS = '60000';
     process.env.WINDSURFAPI_BREAKER_FACTOR = '2';
     process.env.WINDSURFAPI_NEW_ACCOUNT_GRACE_MS = String(10 * 60 * 1000);
+    // A healthy peer so the account under test is NOT the last usable one (the
+    // LB last-account exemption would otherwise keep a sole account in rotation).
+    reportSuccess(mk('t3-peer').apiKey);
     const acct = mk('t3-aged', { aged: false });
     acct.addedAt = Date.now() - 60 * 60 * 1000; // now well past the grace window
     failToError(acct);
@@ -326,5 +334,67 @@ describe('RB2/B2 — quota dimension is consistent across pool-status helpers', 
     // Smoke the helpers don't throw with the new dimension present.
     assert.doesNotThrow(() => isAllRateLimited(null));
     assert.doesNotThrow(() => isAllTemporarilyUnavailable(null));
+  });
+});
+
+// LB — last-account breaker exemption: the breaker must not take the ONLY usable
+// account out of rotation. In a single-account pool, disabling = a guaranteed
+// pool-wide 529, so one bad request/model self-inflicts a total outage. A
+// degraded sole account serving what it can beats guaranteed failure. The streak
+// counters keep advancing, so a healthy peer restores normal breaker behaviour.
+// afterEach (top of file) removes every created account, so each test starts on a
+// clean pool and controls its own island.
+describe('LB — last-account breaker exemption', () => {
+  it('reportError does NOT flip the sole account to error (kept in rotation)', () => {
+    const acct = mk('lb-sole');
+    failToError(acct); // 3 errors would normally flip status='error'
+    assert.equal(acct.status, 'active', 'last account stays active');
+    assert.equal(acct.errorCount, 3, 'errorCount still climbed (history preserved)');
+    assert.equal(__isRateLimitedForModel(acct, null), false, 'still selectable');
+  });
+
+  it('reportInternalError does NOT quarantine the sole account', () => {
+    const acct = mk('lb-sole-internal');
+    reportInternalError(acct.apiKey);
+    reportInternalError(acct.apiKey); // streak>=2 would normally 5min-quarantine
+    assert.equal(acct.internalErrorStreak, 2, 'streak still climbed');
+    assert.ok(!acct.rateLimitedUntil || acct.rateLimitedUntil <= Date.now(),
+      'no quarantine cooldown set on the last account');
+    assert.equal(__isRateLimitedForModel(acct, null), false, 'still selectable');
+  });
+
+  it('with a healthy peer present, the breaker trips normally (exemption is pool-size aware)', () => {
+    const bad = mk('lb-bad');
+    const good = mk('lb-good');
+    reportSuccess(good.apiKey); // ensure the peer is unambiguously usable
+    assert.equal(__isLastUsableAccount(bad), false, 'bad is not the last usable account');
+    failToError(bad);
+    assert.equal(bad.status, 'error', 'a non-last account still trips to error');
+    // internal-error quarantine path also trips when a peer exists
+    const bad2 = mk('lb-bad2');
+    reportInternalError(bad2.apiKey);
+    reportInternalError(bad2.apiKey);
+    assert.ok(bad2.rateLimitedUntil > Date.now(), 'non-last account still quarantined');
+  });
+
+  it('once the only peer is itself down, the survivor is exempt again', () => {
+    const a = mk('lb-a');
+    const b = mk('lb-b');
+    // Take a out via the internal-error path with b as the healthy peer present.
+    reportSuccess(a.apiKey);
+    reportInternalError(b.apiKey);
+    reportInternalError(b.apiKey);
+    assert.ok(b.rateLimitedUntil > Date.now(), 'b quarantined while a was usable');
+    // Now a is the last usable account — it must be exempt.
+    assert.equal(__isLastUsableAccount(a), true, 'a is now the sole usable account');
+    failToError(a);
+    assert.equal(a.status, 'active', 'survivor exempt once its peer is down');
+  });
+
+  it('WINDSURFAPI_LAST_ACCOUNT_EXEMPT=0 restores strict trip-always behaviour', () => {
+    process.env.WINDSURFAPI_LAST_ACCOUNT_EXEMPT = '0';
+    const acct = mk('lb-optout');
+    failToError(acct);
+    assert.equal(acct.status, 'error', 'opt-out: sole account trips as before');
   });
 });

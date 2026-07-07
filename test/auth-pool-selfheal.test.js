@@ -21,6 +21,15 @@ function addTestAccount(label = 'batch3') {
   createdIds.push(account.id);
   return account;
 }
+// A healthy peer kept in rotation so the account under test is NOT the pool's
+// last usable account — otherwise the LB last-account exemption (src/auth.js)
+// keeps a sole account active to avoid a guaranteed pool-wide 529. These tests
+// assert breaker MECHANICS, which in production only fire when a fallback exists.
+function addHealthyPeer(label = 'batch3-peer') {
+  const peer = addTestAccount(label);
+  reportSuccess(peer.apiKey);
+  return peer;
+}
 
 afterEach(() => {
   delete process.env.WINDSURFAPI_ERROR_RECOVERY_MS;
@@ -29,6 +38,7 @@ afterEach(() => {
 
 describe('batch3 — account pool self-healing', () => {
   it('AP-BUG-1: three errors in-window flip status to error and persist it', () => {
+    addHealthyPeer();
     const acct = addTestAccount('ap-bug-1');
     reportError(acct.apiKey);
     reportError(acct.apiKey);
@@ -50,6 +60,7 @@ describe('batch3 — account pool self-healing', () => {
 
   it('AP-RISK-1: an error account is half-open recovered after the TTL on next selection', () => {
     process.env.WINDSURFAPI_ERROR_RECOVERY_MS = '1000';
+    addHealthyPeer();
     const acct = addTestAccount('ap-risk-1');
     reportError(acct.apiKey);
     reportError(acct.apiKey);
@@ -69,6 +80,7 @@ describe('batch3 — account pool self-healing', () => {
 
   it('AP-RISK-1: an error account still inside the TTL is NOT recovered on selection', () => {
     process.env.WINDSURFAPI_ERROR_RECOVERY_MS = String(60 * 60 * 1000);
+    addHealthyPeer();
     const acct = addTestAccount('ap-risk-1-cooldown');
     reportError(acct.apiKey);
     reportError(acct.apiKey);

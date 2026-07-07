@@ -322,6 +322,11 @@ export function __isRateLimitedForModel(account, modelKey = null, now = Date.now
   return isRateLimitedForModel(account, modelKey, now);
 }
 
+/** Test seam: would tripping this account leave the pool with no usable account? */
+export function __isLastUsableAccount(account, now = Date.now()) {
+  return isLastUsableAccount(account, now);
+}
+
 // Serialize concurrent saveAccounts calls — multiple async paths
 // (reportSuccess / markRateLimited / updateCapability / probe) can fire
 // together; without a mutex the last writer wins on stale memory state.
@@ -1593,6 +1598,39 @@ function isNewAccount(account, now = Date.now()) {
   return (now - added) < newAccountGraceMs();
 }
 
+// ─── LB: last-account breaker exemption ─────────────────────────────────────
+// The breaker (reportError status='error' flip + reportInternalError 5min
+// quarantine) has no notion of pool size. In a single-account deployment — the
+// common self-hosted case — tripping the ONLY usable account takes the whole
+// proxy down: every request then 529s ("All accounts rate-limited") until the
+// cooldown expires, so one malformed request or one bad model selector
+// self-inflicts a total outage. When an account IS the last one still usable,
+// keeping it in rotation (and returning its real upstream error) is strictly
+// better than guaranteeing 100% failure: a degraded single account can still
+// serve the requests it's able to. The streak counters keep advancing, so the
+// moment a second usable account exists the normal breaker resumes with full
+// history — this only suppresses the terminal REMOVAL, nothing else.
+// Set WINDSURFAPI_LAST_ACCOUNT_EXEMPT=0 to restore the strict trip-always behaviour.
+function lastAccountExemptEnabled() {
+  return process.env.WINDSURFAPI_LAST_ACCOUNT_EXEMPT !== '0';
+}
+// True when `account` is the last one that would still be selectable if we took
+// it out of rotation — i.e. no OTHER account is currently active and free of a
+// cooldown (rateLimitedUntil / quotaResetAt / per-model). Account-wide view
+// (modelKey=null): the breaker is not model-scoped, so a peer that could serve
+// SOME model counts as a fallback. Object identity (a !== account) is immune to
+// a mid-flight re-login re-keying the account.
+function isLastUsableAccount(account, now = Date.now()) {
+  if (!account) return false;
+  for (const a of accounts) {
+    if (a === account) continue;
+    if (a.status !== 'active') continue;
+    if (isRateLimitedForModel(a, null, now)) continue;
+    return false; // found another usable account — this one is not the last
+  }
+  return true;
+}
+
 // RB2/T3a: stop a freshly-added account (or a BATCH added together) from being
 // first-picked by every initial request. A new account defaults to lastUsed=0,
 // which the getApiKey LRU tiebreaker reads as "oldest → most preferred"; a batch
@@ -1752,6 +1790,14 @@ export function reportError(apiKey, { windowMs = 30 * 60 * 1000 } = {}) {
   account.errorCount = (now - last < windowMs) ? (account.errorCount || 0) + 1 : 1;
   account._errorAt = now;
   if (account.errorCount >= 3 && account.status !== 'error') {
+    // LB: never take the LAST usable account out of rotation. errorCount keeps
+    // climbing above, so the moment a healthy peer exists the next error flips
+    // it normally with full history — this only defers the terminal removal in a
+    // single-account pool, where disabling means a guaranteed pool-wide 529.
+    if (lastAccountExemptEnabled() && isLastUsableAccount(account, now)) {
+      log.warn(`Account ${safeAccountRef(account)} hit ${account.errorCount} errors in ${Math.round(windowMs / 60000)}m but is the LAST usable account — kept in rotation (single-account exemption); surfacing upstream errors instead of a pool-wide 529`);
+      return;
+    }
     account.status = 'error';
     account.erroredAt = now;
     // RB2/B1: account-level EXPONENTIAL BACKOFF. Each consecutive error EPISODE
@@ -1824,7 +1870,17 @@ export function reportInternalError(apiKey) {
   recordHealthEvent(account, 'e');
   account.internalErrorStreak = (account.internalErrorStreak || 0) + 1;
   if (account.internalErrorStreak >= 2) {
-    account.rateLimitedUntil = Date.now() + 5 * 60 * 1000;
+    const now = Date.now();
+    // LB: never quarantine the LAST usable account — in a single-account pool a
+    // 5min quarantine is a 5min total outage (every request 529s). The streak
+    // stays elevated, so once a healthy peer exists the next hit quarantines
+    // normally. A degraded sole account serving what it can beats guaranteed
+    // pool-wide failure.
+    if (lastAccountExemptEnabled() && isLastUsableAccount(account, now)) {
+      log.warn(`Account ${safeAccountRef(account)} hit ${account.internalErrorStreak} consecutive upstream internal errors but is the LAST usable account — NOT quarantined (single-account exemption)`);
+      return;
+    }
+    account.rateLimitedUntil = now + 5 * 60 * 1000;
     log.warn(`Account ${safeAccountRef(account)} quarantined 5min after ${account.internalErrorStreak} consecutive upstream internal errors`);
   }
 }

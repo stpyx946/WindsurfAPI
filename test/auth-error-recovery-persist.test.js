@@ -30,6 +30,10 @@ afterEach(() => {
 
 describe('auth — error-recovery timestamp persistence', () => {
   it('serialize→load round-trip preserves erroredAt', () => {
+    // A healthy peer so the account under test isn't the pool's last usable one
+    // (the LB last-account exemption would otherwise keep a sole account active).
+    const peer = addTestAccount('roundtrip-peer');
+    peer.status = 'active';
     const acct = addTestAccount('roundtrip');
     reportError(acct.apiKey);
     reportError(acct.apiKey);

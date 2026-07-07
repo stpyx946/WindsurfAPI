@@ -116,6 +116,11 @@ describe('reportError — time-windowed auth-failure streak', () => {
   });
 
   it('disables a key after 3 failures inside the window, and success rehabilitates', () => {
+    // A healthy peer so the key under test isn't the pool's last usable account
+    // (the LB last-account exemption keeps a sole account active by design).
+    const peer = addAccountByKey(`err-burst-peer-${Date.now()}-${Math.random()}`, 'err-burst-peer');
+    createdAccountIds.push(peer.id);
+    reportSuccess(peer.apiKey);
     const key = `err-burst-${Date.now()}-${Math.random()}`;
     const account = addAccountByKey(key, 'err-burst');
     createdAccountIds.push(account.id);
