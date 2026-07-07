@@ -36,6 +36,7 @@ import {
 import {
   handleSpecialAgentChatCompletion,
 } from '../special-agent.js';
+import { acpVisionEnabled } from '../devin-acp.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
@@ -2061,6 +2062,22 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // the backend. Unmapped names degrade to the free-tier selector downstream.
   if (selectBackend({ modelInfo }).flow === 'devin_connect') {
     const reqModelName = reqModel || config.defaultModel;
+    // VISION reroute: the DEVIN_CONNECT synthetic-image path is a dead end for
+    // extended-thinking models (un-forgeable #12 server signature). When the
+    // request carries images AND ACP vision is enabled, hand it to the ACP path
+    // instead — the real devin CLI builds the wire and the server signs its own
+    // turns, so vision works for ALL models including opus-4-8 (verified E2E).
+    if (acpVisionEnabled() && hasMultimodalContent(messages)) {
+      log.info(`Chat[${reqId}]: image request → rerouting ${reqModelName} to ACP vision path (DEVIN_CONNECT synthetic-image path cannot serve thinking models)`);
+      return handleSpecialAgentChatCompletion(body, {
+        id: genId(),
+        created: Math.floor(Date.now() / 1000),
+        model: reqModelName,
+        modelKey: routingModelKey,
+        messages,
+        callerKey,
+      }, context.specialAgent || {});
+    }
     const { selector, mapped } = resolveConnectSelector(reqModelName);
     // Tool calling: connect selectors have no native function-calling slot, so
     // we emulate exactly like the Cascade path — inject the tool protocol into
