@@ -101,23 +101,27 @@ function messageText(content) {
   return JSON.stringify(content);
 }
 
-// Image (vision) support — GROUNDWORK, gated behind DEVIN_CONNECT_IMAGE_TAG.
+// Image (vision) support — VERIFIED-FROM-WIRE 2026-07-06 (MITM capture of a real
+// devin.exe GetChatMessage carrying an image, teams account).
 //
-// The `images` field lives NESTED inside each ChatMessage (unlike the Cascade
-// path, which carries images at the request level as field #6). The ImageData
-// sub-message shape is known and proven on the Cascade path
-// ({ base64_data=1, mime_type=2 }), but the protobuf TAG NUMBER of the `images`
-// field inside ChatMessage is NOT calibrated — the live capture was text-only
-// and the prost binary embeds no descriptor (see memory:
-// devin-connect-tools-vision-2026-06-30). So image emission is OFF unless the
-// operator sets DEVIN_CONNECT_IMAGE_TAG=<n> after calibrating it against a
-// vision-capable (paid) model — see scripts/devin-connect-image-calibrate.mjs.
-// Free-tier swe-1.6 is not a vision model, so this can't be end-to-end verified
-// here; the encoder is wired and unit-tested so it's ready the moment the tag
-// is known.
+// The `images` field lives NESTED inside each ChatMessage at TAG #10 (confirmed
+// from the captured protobuf: ChatMessage {uuid #1, role #2, text #3,
+// tool_call_id #7, images #10}). Each images entry is an ImageData sub-message
+// { base64_data=1, mime_type=2 } — the SAME inner shape as the Cascade path
+// (earlier RE guesses of 3,4 were wrong). In the captured turn the image rode a
+// role=4 (tool_result) message tied to a `functions.read` tool_call, because the
+// Devin CLI feeds images via a local read tool; a plain user-message image at
+// #10 is the natural generalization.
+//
+// The VERIFIED tag is 10 — set DEVIN_CONNECT_IMAGE_TAG=10 to turn vision on.
+// Kept OFF by default (unset → 0) to honor the project's env-gate discipline:
+// enabling image emission for every request is a behavior change, and only a
+// subset of models accept vision, so it stays opt-in with a now-known-correct
+// value rather than flipping on implicitly.
+export const VERIFIED_IMAGE_TAG = 10;
 export function getImageFieldTag(env = process.env) {
   const raw = String(env.DEVIN_CONNECT_IMAGE_TAG || '').trim();
-  if (!raw) return 0; // unset → images disabled (current production behavior)
+  if (!raw) return 0; // unset → images disabled (opt-in via DEVIN_CONNECT_IMAGE_TAG=10)
   const tag = Number.parseInt(raw, 10);
   return Number.isInteger(tag) && tag > 0 && tag < 536870912 ? tag : 0;
 }
