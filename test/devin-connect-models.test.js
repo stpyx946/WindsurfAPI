@@ -38,4 +38,13 @@ describe('resolveConnectSelector', () => {
     assert.deepEqual(resolveConnectSelector(''), { selector: FREE_TIER_SELECTOR, mapped: false });
     assert.deepEqual(resolveConnectSelector(null), { selector: FREE_TIER_SELECTOR, mapped: false });
   });
+
+  it('resolves a dotted dash-form that normalizes to a real catalog selector', () => {
+    // Regression: "gpt-5.5-medium" → norm "gpt-5-5-medium" IS a catalog selector
+    // but not a SELECTOR_MAP alias. Before the norm→catalog check it silently
+    // degraded to the free tier (mapped:false); it must now resolve mapped:true.
+    const r = resolveConnectSelector('gpt-5.5-medium');
+    assert.equal(r.selector, 'gpt-5-5-medium');
+    assert.equal(r.mapped, true);
+  });
 });

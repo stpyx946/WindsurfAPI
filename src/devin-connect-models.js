@@ -155,6 +155,12 @@ export function resolveConnectSelector(model) {
   // prefix some clients prepend (e.g. "anthropic/claude-...").
   const norm = raw.toLowerCase().replace(/^[a-z]+\//, '').replace(/\./g, '-');
   if (SELECTOR_MAP.has(norm)) return { selector: SELECTOR_MAP.get(norm), mapped: true };
+  // A normalized dash-form that IS a real catalog selector (e.g. client sent the
+  // dotted "gpt-5.5-medium" → norm "gpt-5-5-medium" which the catalog exposes but
+  // the alias map doesn't list). Without this, a valid selector written with dots
+  // silently degraded to the free tier. Checked after the map so an alias still
+  // wins, before the free-tier fallback.
+  if (CATALOG_SELECTORS.has(norm)) return { selector: norm, mapped: true };
 
   // Enum-form passthrough — ONLY when the catalog actually exposes it. A blind
   // MODEL_* passthrough is what re-introduces UPSTREAM_INTERNAL on drift: any

@@ -2091,6 +2091,27 @@ async function _handleChatCompletionsInner(body, context = {}) {
       }, context.specialAgent || {});
     }
     const { selector, mapped } = resolveConnectSelector(reqModelName);
+    // P1 whitelist guard: an unmapped model name (mapped:false) means the request
+    // does NOT resolve to any real DEVIN_CONNECT selector and would otherwise
+    // silently degrade to the free-tier fallback (swe-1-6-slow) — the client
+    // asked for opus/gpt/etc. and unknowingly runs a different, free model
+    // (wrong output, wrong billing, and a junk name can trip UPSTREAM_INTERNAL
+    // and burn the account's health). Reject early with 400 instead of guessing.
+    // The whitelist ceiling is the catalog snapshot (devin-catalog-snapshot.json);
+    // set WINDSURFAPI_STRICT_MODEL=0 to restore the legacy silent-degrade if the
+    // snapshot is stale and a genuinely-live selector is being rejected.
+    if (!mapped && String(process.env.WINDSURFAPI_STRICT_MODEL || '1') !== '0') {
+      log.warn(`Chat[${reqId}]: DEVIN_CONNECT rejecting unmapped model "${reqModelName}" (not in catalog whitelist) — 400 model_not_found`);
+      return {
+        status: 400,
+        body: { error: {
+          message: `The model \`${reqModelName}\` is not a valid model for this endpoint. Call GET /v1/models for the list of available models, or use a known selector (e.g. claude-opus-4-8-medium, claude-5-fable-medium, gpt-5-5-medium).`,
+          type: 'invalid_request_error',
+          param: 'model',
+          code: 'model_not_found',
+        } },
+      };
+    }
     // Tool calling: connect selectors have no native function-calling slot, so
     // we emulate exactly like the Cascade path — inject the tool protocol into
     // the prompt (normalizeMessagesForCascade folds role:tool history and

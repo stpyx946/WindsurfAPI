@@ -1,7 +1,7 @@
 {
-  "_comment": "Committed snapshot of the live GetCliModelConfigs catalog, calibrated 2026-07-05 against the PAID teams account (redacted). Each entry is {selector, alias, provider}. Aliases are non-unique FAMILY names (e.g. claude-opus-4.8 covers low/medium/high/xhigh/max); an alias resolves to ONE curated default variant (prefer -medium). The offline drift test asserts every selector resolves to itself and every alias resolves (mapped) to a real catalog selector. Refresh via the paid preflight capture.",
-  "_calibratedAt": "2026-07-05",
-  "_count": 105,
+  "_comment": "DEVIN_CONNECT catalog whitelist. Refreshed from live GetCascadeModelConfigs 2026-07-08. Live dash-form + enum selectors; MODEL_PRIVATE_* excluded EXCEPT those referenced by SELECTOR_MAP; swe-1-6-slow free-tier fallback preserved.",
+  "_calibratedAt": "2026-07-07",
+  "_count": 131,
   "models": [
     {
       "selector": "claude-opus-4-8-medium",
@@ -389,6 +389,16 @@
       "provider": "openai"
     },
     {
+      "selector": "MODEL_GPT_5_2_LOW_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_MEDIUM_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
       "selector": "MODEL_CLAUDE_4_5_OPUS",
       "alias": "claude-opus-4.5",
       "provider": "anthropic"
@@ -419,6 +429,31 @@
       "provider": "anthropic"
     },
     {
+      "selector": "MODEL_CHAT_GPT_4_1_2025_04_14",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GOOGLE_GEMINI_2_5_PRO",
+      "alias": null,
+      "provider": "google"
+    },
+    {
+      "selector": "MODEL_CHAT_O3",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_CHAT_O3_HIGH",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_CHAT_GPT_5_CODEX",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
       "selector": "MODEL_GPT_5_2_NONE",
       "alias": "gpt-5.2",
       "provider": "openai"
@@ -431,6 +466,61 @@
     {
       "selector": "MODEL_GPT_5_2_XHIGH",
       "alias": "gpt-5.2",
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_NONE_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_HIGH_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_XHIGH_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_LOW",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_MEDIUM",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_HIGH",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_XHIGH",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_LOW_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_MEDIUM_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_HIGH_PRIORITY",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_2_CODEX_XHIGH_PRIORITY",
+      "alias": null,
       "provider": "openai"
     },
     {
@@ -474,19 +564,49 @@
       "provider": "openai"
     },
     {
+      "selector": "MODEL_GPT_5_1_CODEX_MAX_LOW",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_1_CODEX_MAX_MEDIUM",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_1_CODEX_MAX_HIGH",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_1_CODEX_LOW",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_GPT_5_1_CODEX_MINI_LOW",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
+      "selector": "MODEL_CHAT_GPT_4O_2024_08_06",
+      "alias": null,
+      "provider": "openai"
+    },
+    {
       "selector": "kimi-k2-6",
       "alias": "kimi-k2.6",
       "provider": "moonshot"
     },
     {
-      "selector": "glm-5-1",
-      "alias": "glm-5.1",
-      "provider": "zhipu"
-    },
-    {
       "selector": "MODEL_SWE_1_5_SLOW",
       "alias": "",
       "provider": "cognition"
+    },
+    {
+      "selector": "MODEL_GPT_OSS_120B",
+      "alias": null,
+      "provider": "openai"
     },
     {
       "selector": "gemini-3-1-pro-low",
@@ -527,6 +647,16 @@
       "selector": "swe-1-6-slow",
       "alias": "swe-1.6-slow",
       "provider": "cognition"
+    },
+    {
+      "selector": "subagent-default",
+      "alias": null,
+      "provider": "unknown"
+    },
+    {
+      "selector": "glm-5-1",
+      "alias": "glm-5.1",
+      "provider": "zhipu"
     }
   ]
 }
