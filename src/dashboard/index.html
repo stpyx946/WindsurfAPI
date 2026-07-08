@@ -195,16 +195,27 @@ code {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 18px 20px;
+  padding: 16px 18px;
   transition: border-color .15s;
+  /* Consistent shape so a row of KPI cards lines up (no "gnawed" ragged edges):
+     fixed min-height, header pinned top, value block pushed to a common baseline. */
+  display: flex;
+  flex-direction: column;
+  min-height: 104px;
 }
 .card:hover { border-color: var(--border-strong); }
 .card-header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  margin-bottom: 4px;
+  gap: 8px;
+  min-height: 16px;
+  margin-bottom: 0;
 }
+/* Value block sits at the same vertical position across all cards regardless of
+   whether a card has an icon or a longer title. */
+.card-value { margin-top: auto; }
+.card-header + .card-value { margin-top: auto; }
 .card-title {
   font-size: 12px;
   font-weight: 500;
@@ -221,9 +232,8 @@ code {
   font-weight: 700;
   letter-spacing: -.02em;
   line-height: 1.2;
-  margin-top: 6px;
 }
-.card-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
+.card-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; min-height: 15px; }
 .card.accent .card-value { color: var(--accent); }
 .card.success .card-value { color: var(--success); }
 .card.warn .card-value { color: var(--warn); }
@@ -232,10 +242,15 @@ code {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 14px;
   margin-bottom: 24px;
 }
+/* Overview has 6 KPI cards — use column counts that divide evenly (3×2 / 2×3)
+   so there is never a lone orphan card dangling on its own row. */
+#overview-cards { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 1100px) { #overview-cards { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 560px) { #overview-cards { grid-template-columns: 1fr; } }
 
 /* ─── Section Block ───────────────────────────── */
 .section {
@@ -1907,7 +1922,7 @@ window._firebaseOAuth = async function(provider) {
       </div>
       <div class="section-body"><div id="overview-rankings-body"></div></div>
     </div>
-    <div class="section">
+    <div class="section" id="ls-section">
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.lsStatus.title">Language Server</div>
@@ -4052,6 +4067,22 @@ docker compose up -d --force-recreate</pre>
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
     const totalRss = ls.totalRssBytes ? this.fmtBytes(ls.totalRssBytes) : '-';
+    // The local Language Server is retired on the DEVIN_CONNECT cloud path
+    // (backend-router: DEVIN_CONNECT retires both Cascade AND the local CLI). When
+    // it isn't running / has no instances, hide its KPI card + section so a
+    // cloud-only deployment isn't cluttered by a permanently-"stopped" panel. A
+    // Cascade/LS deployment (running) still shows everything.
+    const lsActive = !!(ls.running || (ls.instances || []).length > 0);
+    const lsSection = document.getElementById('ls-section');
+    if (lsSection) lsSection.style.display = lsActive ? '' : 'none';
+    const lsCard = lsActive ? `
+      <div class="card ${ls.running ? 'success' : 'error'}">
+        <div class="card-header"><div class="card-title">${I18n.t('card.languageServer.title')}</div>
+          <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+        </div>
+        <div class="card-value" style="font-size:20px">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</div>
+        <div class="card-sub">${I18n.t('card.languageServer.subtitle', { count: poolCount, port: ls.port || '-' })} · RSS ${totalRss} · Cap ${ls.maxInstances || '-'}</div>
+      </div>` : '';
     document.getElementById('overview-cards').innerHTML = `
       <div class="card success">
         <div class="card-header"><div class="card-title">${I18n.t('card.activeAccounts.title')}</div>
@@ -4074,13 +4105,7 @@ docker compose up -d --force-recreate</pre>
         <div class="card-value" style="font-size:20px">${uptime}</div>
         <div class="card-sub">${I18n.t('card.uptime.subtitle', { time: d.startedAt ? new Date(d.startedAt).toLocaleString() : '-' })}</div>
       </div>
-      <div class="card ${ls.running ? 'success' : 'error'}">
-        <div class="card-header"><div class="card-title">${I18n.t('card.languageServer.title')}</div>
-          <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
-        </div>
-        <div class="card-value" style="font-size:20px">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</div>
-        <div class="card-sub">${I18n.t('card.languageServer.subtitle', { count: poolCount, port: ls.port || '-' })} · RSS ${totalRss} · Cap ${ls.maxInstances || '-'}</div>
-      </div>
+      ${lsCard}
       <div class="card info">
         <div class="card-header"><div class="card-title">${I18n.t('card.responseCache.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
