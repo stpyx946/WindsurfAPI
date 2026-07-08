@@ -3189,11 +3189,17 @@ const App = {
       // the list tracks the trigger while an ancestor scrolls.
       const onScroll = (e) => { if (pop && pop.contains(e.target)) return; place(); };
       const onResize = () => close();
+      // Capture-phase Esc: while the dropdown is open, Esc closes ONLY the
+      // dropdown and is stopped before it reaches an enclosing modal's own
+      // capture-phase Esc handler (which would otherwise close the whole modal).
+      const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } };
       document.addEventListener('mousedown', onDocDown, true);
+      document.addEventListener('keydown', onKey, true);
       window.addEventListener('scroll', onScroll, true);
       window.addEventListener('resize', onResize, true);
       cleanup = () => {
         document.removeEventListener('mousedown', onDocDown, true);
+        document.removeEventListener('keydown', onKey, true);
         window.removeEventListener('scroll', onScroll, true);
         window.removeEventListener('resize', onResize, true);
       };
@@ -3446,10 +3452,19 @@ docker compose up -d --force-recreate</pre>
           </div>
         </div>`;
       document.getElementById('modal-container').appendChild(wrap);
-      const close = (v) => { wrap.remove(); resolve(v); };
+      const onKey = (e) => {
+        // Defer Esc to an open custom-select dropdown (it closes itself first).
+        if (document.querySelector('.cs-pop')) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(false); }
+        else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); close(true); }
+      };
+      const close = (v) => { document.removeEventListener('keydown', onKey, true); wrap.remove(); resolve(v); };
       wrap.querySelector('[data-act=cancel]').onclick = () => close(false);
       wrap.querySelector('[data-act=ok]').onclick = () => close(true);
       wrap.onclick = (e) => { if (e.target === wrap) close(false); };
+      document.addEventListener('keydown', onKey, true);
+      // Focus the confirm button so Enter/Esc work immediately without a click.
+      setTimeout(() => wrap.querySelector('[data-act=ok]')?.focus(), 50);
     });
   },
 
@@ -3486,14 +3501,24 @@ docker compose up -d --force-recreate</pre>
       // Theme the modal's dynamic selects/number inputs. data-name stays on the
       // native element, so the [data-name].value harvest below is unaffected.
       this.enhanceControls(wrap);
-      const close = (v) => { wrap.remove(); resolve(v); };
-      wrap.querySelector('[data-act=cancel]').onclick = () => close(null);
-      wrap.querySelector('[data-act=ok]').onclick = () => {
+      const submit = () => {
         const values = {};
         wrap.querySelectorAll('[data-name]').forEach(el => values[el.dataset.name] = el.value);
         close(values);
       };
+      const onKey = (e) => {
+        // Defer Esc to an open custom-select dropdown (it closes itself first).
+        if (document.querySelector('.cs-pop')) return;
+        if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        // Enter submits from a text input (but not from a textarea or the custom
+        // select trigger, which use Enter themselves).
+        else if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); submit(); }
+      };
+      const close = (v) => { document.removeEventListener('keydown', onKey, true); wrap.remove(); resolve(v); };
+      wrap.querySelector('[data-act=cancel]').onclick = () => close(null);
+      wrap.querySelector('[data-act=ok]').onclick = submit;
       wrap.onclick = (e) => { if (e.target === wrap) close(null); };
+      document.addEventListener('keydown', onKey, true);
       setTimeout(() => wrap.querySelector('input, select')?.focus(), 100);
     });
   },
