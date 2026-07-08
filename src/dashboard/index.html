@@ -1260,6 +1260,36 @@ tbody tr:hover td { background: var(--surface-2); }
   gap: 8px;
   justify-content: flex-end;
 }
+/* ── Fire status filter (WebGL2 ember slider, dark-theme port of the demo) ── */
+.fire-filter { --warning-color: var(--error); --primary-color: var(--accent); --primary-contrast: #fff; width: 220px; user-select: none; }
+.fire-filter .ff-scale { display: flex; justify-content: space-between; font-size: 10px; font-weight: 600; color: var(--text-dim); margin-bottom: 4px; letter-spacing: .02em; }
+.fire-filter .ff-track {
+  --thumb-size: 20px; --thumb-half: 10px; --track-inset: 10px;
+  position: relative; height: 24px; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border-strong); background: var(--bg-elev);
+  box-shadow: inset 0 1px 2px rgba(0,0,0,.35); isolation: isolate;
+}
+.fire-filter .ff-track:focus-within { border-color: var(--accent); box-shadow: inset 0 1px 2px rgba(0,0,0,.35), 0 0 0 3px var(--accent-soft); }
+.fire-filter .ff-track.active { border-color: color-mix(in srgb, var(--error) 45%, var(--border-strong)); }
+.fire-filter .ff-bg { position: absolute; inset: 0; background: linear-gradient(90deg, var(--accent-soft), transparent 62%); z-index: 0; }
+.fire-filter .ff-canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; opacity: 0; mix-blend-mode: screen; z-index: 2; transition: opacity .3s; }
+.fire-filter .ff-track.active .ff-canvas { opacity: 1; z-index: 4; }
+.fire-filter .ff-dots { position: absolute; inset: 0 var(--track-inset); pointer-events: none; z-index: 3; }
+.fire-filter .ff-dot { position: absolute; width: 4px; height: 4px; border-radius: 50%; background: var(--text-dim); top: 50%; transform: translate(-50%,-50%); transition: opacity .5s, background-color .2s; z-index: 6; }
+.fire-filter .ff-track.active .ff-dot { background: color-mix(in srgb, var(--error) 55%, var(--text-dim)); opacity: .4; }
+.fire-filter .ff-track.full .ff-dot { opacity: 0; }
+.fire-filter .ff-range { position: absolute; inset: 0 var(--track-inset); width: auto; height: 100%; background: transparent; -webkit-appearance: none; appearance: none; cursor: pointer; z-index: 5; outline: none; margin: 0; }
+.fire-filter .ff-range::-webkit-slider-thumb { -webkit-appearance: none; width: var(--thumb-size); height: var(--thumb-size); background: transparent; opacity: 0; cursor: grab; }
+.fire-filter .ff-range::-moz-range-thumb { width: var(--thumb-size); height: var(--thumb-size); border: 0; background: transparent; opacity: 0; cursor: grab; }
+.fire-filter .ff-thumbwrap { position: absolute; inset: 0 var(--track-inset); pointer-events: none; z-index: 7; }
+.fire-filter .ff-thumb {
+  position: absolute; top: 50%; width: var(--thumb-size); height: var(--thumb-size); border-radius: 7px;
+  background: linear-gradient(170deg, #fff 0%, color-mix(in srgb, #fff 78%, var(--surface-3)) 100%);
+  border: 1px solid var(--border-strong);
+  box-shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 10px rgba(0,0,0,.3);
+  transform: translate(-50%,-50%); transition: left .22s cubic-bezier(.33,1,.68,1), box-shadow .3s;
+}
+.fire-filter .ff-track.dragging .ff-thumb { transform: translate(-50%,-50%) scale(.94); box-shadow: 0 1px 2px rgba(0,0,0,.5), 0 0 0 3px var(--accent-soft); }
 .trend-legend { display: flex; gap: 14px; align-items: center; font-size: 11px; color: var(--text-muted); }
 .trend-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
 .trend-legend .lg-dot { width: 8px; height: 8px; border-radius: 2px; }
@@ -2206,6 +2236,7 @@ window._firebaseOAuth = async function(provider) {
           <div class="section-title" data-i18n="section.accountList.title">账号列表</div>
           <div class="section-desc" data-i18n="section.accountList.desc">点击探测按钮可单独更新某个账号的能力信息</div>
         </div>
+        <div id="account-fire-filter" class="fire-filter"></div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
@@ -4967,8 +4998,9 @@ docker compose up -d --force-recreate</pre>
       const hl = healthLevel(a);
       const hlColor = bandColor[hl];
       const hlLabel = I18n.t('status.healthLevel.' + hl);
+      const isProblem = a.status === 'error' || a.status === 'disabled' || a.rateLimited || (a.errorCount || 0) > 0;
       return `
-      <tr${isExpanded ? ' class="expanded"' : ''}>
+      <tr${isExpanded ? ' class="expanded"' : ''} data-acct-status="${this.esc(a.status || 'unknown')}" data-acct-problem="${isProblem ? '1' : '0'}">
         <td style="box-shadow: inset 3px 0 0 ${hlColor};" title="${this.esc(hlLabel)}">
           <button class="expand-chevron ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')" title="${I18n.t('account.detail.toggle')}">▸</button>
           <code>${a.id}</code>
@@ -5002,6 +5034,46 @@ docker compose up -d --force-recreate</pre>
         </td>
       </tr>${isExpanded ? `<tr class="account-detail-row"><td colspan="11">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
     }).join('') || `<tr class="empty-row"><td colspan="11">${I18n.t('table.empty.accounts')}</td></tr>`;
+    this._initAccountFireFilter();
+    this._applyAccountStatusFilter();
+  },
+
+  _accountStatusFilter: 'all',
+  _initAccountFireFilter() {
+    const host = document.getElementById('account-fire-filter');
+    if (!host || host._ff || !window.FireFilter) return;
+    host._ff = window.FireFilter.mount(host, {
+      ariaLabel: I18n.t('accountFilter.aria'),
+      value: this._accountStatusFilter,
+      options: [
+        { value: 'all', label: I18n.t('accountFilter.all') },
+        { value: 'active', label: I18n.t('accountFilter.active') },
+        { value: 'disabled', label: I18n.t('accountFilter.disabled') },
+        { value: 'problem', label: I18n.t('accountFilter.problem') },
+      ],
+      onChange: (v) => { this._accountStatusFilter = v; this._applyAccountStatusFilter(); },
+    });
+  },
+  // Client-side row filter driven by the fire slider — hides non-matching account
+  // rows (and their expanded detail rows) without refetching. 'problem' = any
+  // account with an error/disabled/rate-limited/error-count signal.
+  _applyAccountStatusFilter() {
+    const f = this._accountStatusFilter || 'all';
+    const rows = document.querySelectorAll('#accounts-table tbody tr[data-acct-status]');
+    let shown = 0;
+    rows.forEach((tr) => {
+      const st = tr.getAttribute('data-acct-status');
+      const problem = tr.getAttribute('data-acct-problem') === '1';
+      let match = true;
+      if (f === 'active') match = st === 'active';
+      else if (f === 'disabled') match = st === 'disabled';
+      else if (f === 'problem') match = problem;
+      tr.style.display = match ? '' : 'none';
+      // Keep an expanded detail row in sync with its parent's visibility.
+      const detail = tr.nextElementSibling;
+      if (detail && detail.classList.contains('account-detail-row')) detail.style.display = match ? '' : 'none';
+      if (match) shown++;
+    });
   },
 
   _expandedAccounts: new Set(),
@@ -7355,6 +7427,128 @@ docker compose up -d --force-recreate</pre>
 };
 
 window.addEventListener('DOMContentLoaded', () => App.init());
+</script>
+<script>
+/* ── FireFilter: WebGL2 ember segmented slider (ported from the fire-slider demo,
+   dark-theme + integrated as a status filter). window.FireFilter.mount(el, opts)
+   builds the control; opts.options=[{value,label}], opts.value, opts.onChange(value).
+   Fire ignites on the last (rightmost) option. Degrades to a plain slider without
+   WebGL2, and honors prefers-reduced-motion (no fire animation). ── */
+window.FireFilter = (function () {
+  'use strict';
+  var VERT = '#version 300 es\nlayout(location=0) in vec2 a_pos;out vec2 v_uv;void main(){v_uv=a_pos*0.5+0.5;gl_Position=vec4(a_pos,0.0,1.0);}';
+  var FRAG_SIM = '#version 300 es\nprecision highp float;in vec2 v_uv;out vec4 fc;uniform float u_time,u_slider,u_elapsed,u_grid_x;uniform vec3 u_ember,u_glow,u_core;uniform sampler2D u_back;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}void main(){vec2 uv=v_uv;vec2 g=uv*vec2(u_grid_x,6.0);vec2 id=floor(g);vec2 cf=fract(g);float h=hash(id);vec2 ap=abs(cf-0.5);float cell=smoothstep(0.34,0.22,max(ap.x*0.9,ap.y));vec3 prev=texture(u_back,uv).rgb;float fade_mask=smoothstep(0.0,0.45,uv.x);vec3 decay=prev*0.90*fade_mask;float act=smoothstep(0.95,1.0,u_slider);if(act<0.01||u_elapsed<0.0){fc=vec4(decay,1.0);return;}float t=u_time;float cellDelay=h*1.2;float cellAge=max(u_elapsed-cellDelay,0.0);float ignited=step(0.001,cellAge);float cellSpd=0.85+h*0.30;float eased=1.0-pow(1.0-clamp(cellAge/2.5,0.0,1.0),3.0);float dist=eased*u_slider*cellSpd*ignited;float cellOff=(h-0.5)*0.05;float front=max(u_slider-dist-cellOff,0.02);float tail=max(u_slider-front,0.001);float inZ=step(front-0.003,uv.x)*step(uv.x,u_slider+0.003);float dn=clamp(max(u_slider-uv.x,0.0)/tail,0.0,1.0);float bright=pow(1.0-dn,0.65);bright=max(bright,0.04*ignited)*inZ;bright*=1.0-smoothstep(0.94,1.05,dn);float es=mix(0.15,0.5,min(u_elapsed/1.0,1.0));float vy=abs(uv.y-0.5)*2.0;float vf=pow(max(1.0-vy*vy*0.45,0.0),0.75);float ts=mix(0.85,1.0,min(u_elapsed/1.5,1.0));float f1=sin(uv.x*30.0+t*15.0*ts+h*6.28);float f2=sin(uv.x*17.0+t*8.0*ts+h*3.14);float f3=sin(uv.x*52.0+t*25.0*ts+h*10.0);float flame=smoothstep(0.08,0.92,(f1+f2*0.5+f3*0.25)*0.35+0.5);float r1=sin(dn*16.0-t*5.0*ts+h*3.0);float r2=sin(dn*8.0-t*2.5*ts+h*5.0);float rhythm=smoothstep(-0.15,0.55,r1)*(r2*0.5+0.5);rhythm=pow(max(rhythm,0.0),1.2);float avgSpd=dist/max(cellAge,0.001);float age=max(cellAge-max(u_slider-uv.x,0.0)/max(avgSpd,0.001),0.0);float flash=step(0.0,age)*exp(-age*3.2);float sp=fract(t*(0.38+h*0.15)+h*7.0);float sX=u_slider-sp*tail;float sY=0.5+sin(sp*11.0+h*6.28)*0.28;float spark=smoothstep(0.014,0.0,abs(uv.x-sX))*smoothstep(0.18,0.0,abs(uv.y-sY))*(1.0-sp)*(1.0-sp)*es;float energy=bright*vf*(flame*0.42+rhythm*0.38)+flash*bright*vf*0.55+spark*0.7*inZ;energy*=es;float edgeBase=exp(-pow((uv.x-front)*18.0,2.0));float ef1=sin(uv.x*45.0+t*20.0*ts+h*6.28)*0.5+0.5;float ef2=sin(uv.x*28.0+t*11.0*ts+h*3.14)*0.5+0.5;float edge=edgeBase*(0.25+ef1*ef2*1.5)*1.6*act*es;float leadD=front-uv.x;float leadZone=smoothstep(0.07,0.0,leadD)*step(0.0,leadD)*vf;float h2=hash(id+vec2(99.0,33.0));float leadF=sin(leadD*100.0+t*20.0*ts+h2*6.28)*0.5+0.5;float leadSpark=leadZone*step(0.6,h2)*leadF*act*es*0.5;float total=energy+edge+leadSpark;vec3 ember=u_ember;vec3 wpur=u_glow;vec3 wht=u_core;float temp=1.0-dn;vec3 col=mix(ember,wpur,temp);col=mix(col,wht,pow(temp,4.5));col*=total;float pulse=sin(t*2.8)*0.15+1.0;float core=exp(-pow((uv.x-u_slider)*16.0,2.0));col+=wht*core*2.2*pulse*act*es;col+=wpur*exp(-pow((uv.x-u_slider)*3.5,2.0))*0.12*act*es;col*=cell;col*=fade_mask;fc=vec4(min(decay+col,vec3(1.5)),1.0);}';
+  var FRAG_BLUR = '#version 300 es\nprecision highp float;in vec2 v_uv;out vec4 fc;uniform sampler2D u_tex;uniform vec2 u_dir,u_res;uniform float u_ext;vec3 s(vec2 uv){vec3 c=texture(u_tex,uv).rgb;return u_ext>0.5&&dot(c,vec3(0.2126,0.7152,0.0722))<0.3?vec3(0.0):c;}void main(){vec2 o=u_dir*1.8/u_res;vec3 r=s(v_uv)*0.227027;r+=s(v_uv+o)*0.194595;r+=s(v_uv-o)*0.194595;r+=s(v_uv+o*2.0)*0.121622;r+=s(v_uv-o*2.0)*0.121622;r+=s(v_uv+o*3.0)*0.054054;r+=s(v_uv-o*3.0)*0.054054;fc=vec4(r,1.0);}';
+  var FRAG_COMP = '#version 300 es\nprecision highp float;in vec2 v_uv;out vec4 fc;uniform sampler2D u_scene,u_glow;void main(){vec3 s=texture(u_scene,v_uv).rgb;vec3 g=texture(u_glow,v_uv).rgb;fc=vec4(1.0-exp(-(s+g*1.2+s*g*0.35)*1.15),1.0);}';
+  var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  function parseColor(v) {
+    v = (v || '').trim(); if (!v) return null;
+    var h = v.match(/^#([\da-f]{3}|[\da-f]{6})$/i);
+    if (h) { var x = h[1].length === 3 ? h[1].replace(/./g, function(c){return c+c;}) : h[1]; var n = parseInt(x, 16); return [((n>>16)&255)/255, ((n>>8)&255)/255, (n&255)/255]; }
+    var m = v.match(/^rgba?\(([^)]+)\)/i); if (!m) return null;
+    var p = m[1].replace(/\s*\/.*$/, '').split(/[,\s]+/).filter(Boolean).slice(0, 3).map(function(c){ return c.indexOf('%')>=0 ? parseFloat(c)/100 : parseFloat(c)/255; });
+    return p.length === 3 && !p.some(isNaN) ? p : null;
+  }
+  function mix(a, b, r) { r = Math.max(0, Math.min(1, r)); return [a[0]*(1-r)+b[0]*r, a[1]*(1-r)+b[1]*r, a[2]*(1-r)+b[2]*r]; }
+  function fireColors(el) {
+    var cs = getComputedStyle(el);
+    var warn = parseColor(cs.getPropertyValue('--warning-color')) || parseColor(cs.getPropertyValue('--error')) || [0.93,0.27,0.27];
+    var prim = parseColor(cs.getPropertyValue('--primary-color')) || parseColor(cs.getPropertyValue('--accent')) || [0.23,0.51,0.96];
+    var con = [1,1,1];
+    return { ember: mix(warn,[0,0,0],0.46), glow: mix(warn,prim,0.18), core: mix(warn,con,0.72) };
+  }
+
+  // WebGL2 ember engine. Returns {setState(slider,active), destroy()} or null.
+  function createFire(canvas) {
+    var gl = canvas.getContext('webgl2', { preserveDrawingBuffer: false, antialias: false });
+    if (!gl) return null;
+    var raf = null, simP, blurP, compP, vao, simA, simB, blurH, blurV, ready = false;
+    var U = {}, cols = fireColors(canvas), sliderRef = 1, activeRef = false, startRef = null, loop = false, idle = 0, wasA = false;
+    function sh(t, s){ var o=gl.createShader(t); gl.shaderSource(o,s); gl.compileShader(o); if(!gl.getShaderParameter(o,gl.COMPILE_STATUS)){ console.warn(gl.getShaderInfoLog(o)); return null;} return o; }
+    function prog(vs, fs){ var v=sh(gl.VERTEX_SHADER,vs), f=sh(gl.FRAGMENT_SHADER,fs); if(!v||!f) return null; var p=gl.createProgram(); gl.attachShader(p,v); gl.attachShader(p,f); gl.bindAttribLocation(p,0,'a_pos'); gl.linkProgram(p); return gl.getProgramParameter(p,gl.LINK_STATUS)?p:null; }
+    function fbo(){ var f=gl.createFramebuffer(), t=gl.createTexture(); gl.bindFramebuffer(gl.FRAMEBUFFER,f); gl.bindTexture(gl.TEXTURE_2D,t); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,canvas.width,canvas.height,0,gl.RGBA,gl.UNSIGNED_BYTE,null); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); return {fbo:f,tex:t}; }
+    function build(){ simP=prog(VERT,FRAG_SIM); blurP=prog(VERT,FRAG_BLUR); compP=prog(VERT,FRAG_COMP); if(!simP||!blurP||!compP) return; vao=gl.createVertexArray(); gl.bindVertexArray(vao); var b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]),gl.STATIC_DRAW); gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0,2,gl.FLOAT,false,0,0);
+      ['u_time','u_slider','u_elapsed','u_grid_x','u_ember','u_glow','u_core','u_back'].forEach(function(n){U['sim_'+n]=gl.getUniformLocation(simP,n);});
+      ['u_dir','u_ext','u_tex','u_res'].forEach(function(n){U['blur_'+n]=gl.getUniformLocation(blurP,n);});
+      U['comp_u_scene']=gl.getUniformLocation(compP,'u_scene'); U['comp_u_glow']=gl.getUniformLocation(compP,'u_glow'); ready=true; }
+    function size(){ var r=canvas.getBoundingClientRect(); if(!r.width||!r.height) return; var dpr=window.devicePixelRatio||1; canvas.width=Math.round(r.width*dpr); canvas.height=Math.round(r.height*dpr); [simA,simB,blurH,blurV].forEach(function(e){ if(e){gl.deleteFramebuffer(e.fbo);gl.deleteTexture(e.tex);} }); simA=fbo(); simB=fbo(); blurH=fbo(); blurV=fbo(); }
+    var GRID = 58;
+    function render(t){
+      var active = activeRef;
+      if(!active && !wasA){ if(++idle>180){ loop=false; raf=null; return; } raf=requestAnimationFrame(render); return; }
+      idle=0; if(active && !wasA){ gl.bindFramebuffer(gl.FRAMEBUFFER,simA.fbo); gl.clear(gl.COLOR_BUFFER_BIT); gl.bindFramebuffer(gl.FRAMEBUFFER,simB.fbo); gl.clear(gl.COLOR_BUFFER_BIT); } wasA=active;
+      if(!simA||!simB||!blurH||!blurV) return;
+      var elapsed = active ? (performance.now()-(startRef||0))/1000 : -1.0;
+      gl.viewport(0,0,canvas.width,canvas.height); gl.bindVertexArray(vao);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,simB.fbo); gl.useProgram(simP);
+      gl.uniform1f(U.sim_u_time,t*0.001); gl.uniform1f(U.sim_u_slider,sliderRef); gl.uniform1f(U.sim_u_elapsed,elapsed); gl.uniform1f(U.sim_u_grid_x,GRID);
+      gl.uniform3f(U.sim_u_ember,cols.ember[0],cols.ember[1],cols.ember[2]); gl.uniform3f(U.sim_u_glow,cols.glow[0],cols.glow[1],cols.glow[2]); gl.uniform3f(U.sim_u_core,cols.core[0],cols.core[1],cols.core[2]);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,simA.tex); gl.uniform1i(U.sim_u_back,0); gl.drawArrays(gl.TRIANGLES,0,6);
+      gl.useProgram(blurP); gl.uniform2f(U.blur_u_res,canvas.width,canvas.height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,blurH.fbo); gl.uniform2f(U.blur_u_dir,1,0); gl.uniform1f(U.blur_u_ext,1); gl.bindTexture(gl.TEXTURE_2D,simB.tex); gl.uniform1i(U.blur_u_tex,0); gl.drawArrays(gl.TRIANGLES,0,6);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,blurV.fbo); gl.uniform2f(U.blur_u_dir,0,1); gl.uniform1f(U.blur_u_ext,0); gl.bindTexture(gl.TEXTURE_2D,blurH.tex); gl.drawArrays(gl.TRIANGLES,0,6);
+      gl.bindFramebuffer(gl.FRAMEBUFFER,null); gl.useProgram(compP); gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D,simB.tex); gl.uniform1i(U.comp_u_scene,0); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D,blurV.tex); gl.uniform1i(U.comp_u_glow,1); gl.drawArrays(gl.TRIANGLES,0,6);
+      var tmp=simA; simA=simB; simB=tmp; raf=requestAnimationFrame(render);
+    }
+    function ensure(){ if(!simA||!simB){ size(); if(!simA||!simB) return; } if(loop){ idle=0; return; } loop=true; idle=0; wasA=false; raf=requestAnimationFrame(render); }
+    build(); if(!ready) return null; size();
+    var ro = new ResizeObserver(function(){ size(); }); ro.observe(canvas);
+    return {
+      setState: function(sv, active){ sliderRef=sv; if(activeRef!==active){ activeRef=active; if(active){ startRef=performance.now(); ensure(); } else { startRef=null; } } },
+      destroy: function(){ if(raf) cancelAnimationFrame(raf); ro.disconnect(); loop=false; [simA,simB,blurH,blurV].forEach(function(e){ if(e){gl.deleteFramebuffer(e.fbo);gl.deleteTexture(e.tex);} }); }
+    };
+  }
+
+  function mount(host, opts) {
+    if (!host) return null;
+    var options = opts.options || [];
+    if (options.length < 2) return null;
+    var value = opts.value || options[0].value;
+    var onChange = opts.onChange || function(){};
+    host.innerHTML = '';
+    var scale = document.createElement('div'); scale.className = 'ff-scale';
+    var s0 = document.createElement('span'); s0.textContent = options[0].label;
+    var s1 = document.createElement('span'); s1.textContent = options[options.length-1].label;
+    scale.appendChild(s0); scale.appendChild(s1); host.appendChild(scale);
+    var track = document.createElement('div'); track.className = 'ff-track';
+    var bg = document.createElement('div'); bg.className = 'ff-bg';
+    var dots = document.createElement('div'); dots.className = 'ff-dots';
+    var canvas = document.createElement('canvas'); canvas.className = 'ff-canvas'; canvas.setAttribute('aria-hidden','true');
+    var range = document.createElement('input'); range.type='range'; range.min='0'; range.max='100'; range.step='any'; range.className='ff-range'; range.setAttribute('aria-label', opts.ariaLabel || 'Status filter');
+    var thumbWrap = document.createElement('div'); thumbWrap.className='ff-thumbwrap'; thumbWrap.setAttribute('aria-hidden','true');
+    var thumb = document.createElement('span'); thumb.className='ff-thumb'; thumbWrap.appendChild(thumb);
+    track.appendChild(bg); track.appendChild(dots); track.appendChild(canvas); track.appendChild(range); track.appendChild(thumbWrap);
+    host.appendChild(track);
+    options.forEach(function(o, i){ var d=document.createElement('span'); d.className='ff-dot'; d.style.left=((i/Math.max(1,options.length-1))*100)+'%'; dots.appendChild(d); });
+    var fire = reduceMotion ? null : createFire(canvas);
+    var dragging = false;
+    function idx(){ var i = options.findIndex(function(o){return o.value===value;}); return i<0?0:i; }
+    function paint(){
+      var ai = idx(); var sv = (ai/Math.max(1,options.length-1))*100; var active = ai===options.length-1; var full = sv===100;
+      s1.style.color = active ? 'var(--error)' : '';
+      track.className = 'ff-track' + (active?' active':'') + (full?' full':'') + (dragging?' dragging':'');
+      range.value = String(sv); thumb.style.left = sv+'%';
+      var p = Math.min(sv+2,100); var grad='linear-gradient(to right, black 0%, black '+p+'%, transparent '+p+'%)';
+      canvas.style.maskImage=grad; canvas.style.webkitMaskImage=grad;
+      if(fire) fire.setState(sv/100, active);
+    }
+    function select(ni){ var c=Math.max(0,Math.min(options.length-1,ni)); var nv=options[c].value; if(nv!==value){ value=nv; paint(); onChange(nv); } else { paint(); } }
+    function fromPct(raw){ var step=100/Math.max(1,options.length-1); select(Math.round(raw/step+1e-9)); }
+    function fromX(cx){ var r=range.getBoundingClientRect(); if(!r.width) return; fromPct(Math.max(0,Math.min(100,((cx-r.left)/r.width)*100))); }
+    track.addEventListener('pointerdown', function(e){ e.preventDefault(); dragging=true; track.setPointerCapture&&track.setPointerCapture(e.pointerId); range.focus({preventScroll:true}); fromX(e.clientX); });
+    track.addEventListener('pointermove', function(e){ if(dragging) fromX(e.clientX); });
+    function end(e){ dragging=false; if(track.hasPointerCapture&&track.hasPointerCapture(e.pointerId)) track.releasePointerCapture(e.pointerId); paint(); }
+    track.addEventListener('pointerup', end); track.addEventListener('pointercancel', end);
+    range.addEventListener('input', function(){ fromPct(Number(range.value)); });
+    range.addEventListener('keydown', function(e){ if(e.key==='ArrowLeft'||e.key==='ArrowDown'){e.preventDefault();select(idx()-1);} else if(e.key==='ArrowRight'||e.key==='ArrowUp'){e.preventDefault();select(idx()+1);} });
+    paint();
+    return { getValue: function(){ return value; }, setValue: function(v){ if(v!==value){ value=v; paint(); } }, destroy: function(){ if(fire) fire.destroy(); } };
+  }
+
+  return { mount: mount };
+})();
+</script>
 </script>
 </body>
 </html>

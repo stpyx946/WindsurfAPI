@@ -817,6 +817,13 @@
     "importSuccess": "Imported {{email}}",
     "unavailable": "Available only on localhost deployments — \"local Windsurf\" on a remote server belongs to someone else's machine, not yours."
   },
+  "accountFilter": {
+    "aria": "Filter accounts by status",
+    "all": "All",
+    "active": "Active",
+    "disabled": "Disabled",
+    "problem": "Problem"
+  },
   "account": {
     "addSuccess": "Account added",
     "deleteSuccess": "Account deleted",

@@ -817,6 +817,13 @@
     "importSuccess": "已导入 {{email}}",
     "unavailable": "此功能仅在 localhost 部署可用 — 远端服务器上的 \"本地 Windsurf\" 是别人电脑上的，不是你电脑里的。"
   },
+  "accountFilter": {
+    "aria": "按状态筛选账号",
+    "all": "全部",
+    "active": "正常",
+    "disabled": "已禁用",
+    "problem": "异常"
+  },
   "account": {
     "addSuccess": "账号已添加",
     "deleteSuccess": "账号已删除",
