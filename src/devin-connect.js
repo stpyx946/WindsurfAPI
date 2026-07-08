@@ -634,6 +634,16 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     ]));
   }
 
+  // ModelConfig #15. RE-CALIBRATED FROM THE FULL CAPTURE SET (not just req022):
+  // decoding all 9 GetChatMessage requests of one live session (9501aa2c) shows
+  //   #15.1 = a STABLE per-session config UUID (same across every turn),
+  //   #15.2 = a MONOTONIC per-session turn counter (req009→022: 1,2,3,4,5,6,7,8),
+  //   #15.3 = 4 (constant).
+  // The earlier "req022 → #15.2 == 8, so hardcode 8" reading mistook the 8th
+  // turn's counter for a constant. Our gateway is stateless (a fresh session_id
+  // per request, #16), so every request is legitimately turn 1 → #15.2 = 1 is the
+  // correct value and MUST stay 1, not 8. Verified against turn-1 capture req009
+  // (swe-1-6-fast, which the real CLI chats fine): #15 == {1:uuid, 2:1, 3:4}.
   const modelConfig = Buffer.concat([
     writeStringField(1, randomUUID()),
     writeVarintField(2, 1),
@@ -652,10 +662,15 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     writeStringField(16, sessionId || randomUUID()),
     writeVarintField(20, 1),
     writeStringField(21, model),
-    // #22 request_id — VERIFIED-FROM-WIRE (req022: #22 = a UUID string right after
-    // #21 model). The real devin.exe CLI always sends it; we previously omitted it.
-    // Zero-risk parity/idempotency/trace add — a fresh uuid per request.
-    writeStringField(22, randomUUID()),
+    // #22 request_id — DELIBERATELY OMITTED. RE-CALIBRATED FROM THE FULL CAPTURE
+    // SET: the verified turn-1 request (req009, which the real CLI chats fine)
+    // carries NO #22. It only appears from turn 2 onward, where it reuses ONE id
+    // across a user-turn's tool loop (turns 2-3 share it, 5-6 share, 7-8 share) —
+    // i.e. it's a user-exchange id tied to conversation state, NOT a fresh
+    // per-request uuid. The earlier "the real CLI always sends #22" reading came
+    // from decoding only req022 (turn 8). Our gateway is stateless (turn-1 every
+    // request), so emitting a random #22 matched neither the turn-1 (absent) nor
+    // the turn-2+ (reused) wire. Match the verified turn-1 wire: send nothing.
   );
   // Native tool definitions (repeated #10) — only when the inner ToolDef tags are
   // calibrated (DEVIN_CONNECT_TOOL_DEF_TAGS). Default: tag map is null → nothing
@@ -1462,12 +1477,15 @@ export async function* streamChat({
   // AUTH (critical): the header token is the session token doubled, dash-joined.
   const authHeader = `Basic ${sessionToken}-${sessionToken}`;
 
-  // Host resolution: default server.codeium.com, but a self-serve / teams account
-  // whose token was minted against a different API server (account.apiServerUrl,
-  // e.g. server.self-serve.windsurf.com) must send GetChatMessage to THAT host or
-  // the backend rejects the token with authentication_error (GetUserStatus is a
-  // global seat service and accepts it, which is why liveness passes but chat 401s).
-  // Opt-in via DEVIN_CONNECT_ACCOUNT_HOST=1 so the default wire is unchanged.
+  // Host resolution. REVERTED (2026-07-08): the DEVIN_CONNECT_ACCOUNT_HOST
+  // override was built on the hypothesis that a teams/self-serve token must send
+  // GetChatMessage to its own apiServerUrl. Live capture DISPROVES this — the real
+  // teams CLI sends GetChatMessage to server.codeium.com (captures/req-00N-
+  // server.codeium.com-CHAT.bin, session 9501aa2c), the SAME host where our
+  // GetCliModelConfigs / GetUserStatus already succeed. The 401 was never a host
+  // problem. The override is kept behind its (default-off) flag purely so an
+  // operator can still force a host during future RE, but it is NOT a fix and must
+  // not be enabled in production — a wrong host will break chat. Default: HOST.
   let effectiveHost = HOST;
   if (host && String(env.DEVIN_CONNECT_ACCOUNT_HOST || '') === '1') {
     try {
