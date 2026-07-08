@@ -370,6 +370,16 @@ code {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .input::placeholder, .textarea::placeholder { color: var(--text-dim); }
+/* type=search clear-X: themed, visible cancel affordance (default is near-invisible
+   on a dark field). Appears only when the field has a value. */
+.input[type=search]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+  height: 13px; width: 13px; margin-left: 6px; cursor: pointer;
+  background: var(--text-dim);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M18 6L6 18M6 6l12 12' stroke='black' stroke-width='3' stroke-linecap='round'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M18 6L6 18M6 6l12 12' stroke='black' stroke-width='3' stroke-linecap='round'/></svg>") center/contain no-repeat;
+}
+.input[type=search]::-webkit-search-cancel-button:hover { background: var(--text); }
 
 .select {
   appearance: none;
@@ -2243,7 +2253,7 @@ window._firebaseOAuth = async function(provider) {
         <div class="field-row">
           <div class="field">
             <label class="field-label" data-i18n="field.searchModel.label">搜索模型</label>
-            <input id="model-search" class="input" data-i18n-placeholder="field.searchModel.placeholder" placeholder="输入模型名称筛选..." oninput="App.filterModels()">
+            <input id="model-search" class="input" type="search" data-i18n-placeholder="field.searchModel.placeholder" placeholder="输入模型名称筛选..." oninput="App.filterModels()">
           </div>
           <div class="field" style="max-width:220px">
             <label class="field-label" data-i18n="field.provider.label">供应商</label>
@@ -2369,7 +2379,7 @@ window._firebaseOAuth = async function(provider) {
         <option value="warn">Warn</option>
         <option value="error">Error</option>
       </select>
-      <input id="log-search" class="input search" data-i18n-placeholder="log.searchPlaceholder" placeholder="搜索日志内容..." oninput="App.debouncedFilterLogs()">
+      <input id="log-search" class="input search" type="search" data-i18n-placeholder="log.searchPlaceholder" placeholder="搜索日志内容..." oninput="App.debouncedFilterLogs()">
       <label class="checkbox">
         <input type="checkbox" id="log-autoscroll" checked>
         <span class="box"></span>
