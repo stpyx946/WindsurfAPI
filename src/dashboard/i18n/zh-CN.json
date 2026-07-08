@@ -1019,6 +1019,7 @@
     }
   },
   "model": {
+    "remove": "移除模型",
     "mode": {
       "all": "全部允许",
       "allowlist": "白名单",

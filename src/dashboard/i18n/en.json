@@ -1019,6 +1019,7 @@
     }
   },
   "model": {
+    "remove": "Remove model",
     "mode": {
       "all": "Allow All",
       "allowlist": "Allowlist",

@@ -478,6 +478,9 @@ code {
   box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
 }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px; }
+/* Non-button elements promoted to role=button (reveal-key code, tier span, remove
+   chip) get a visible keyboard focus ring too. */
+[role="button"]:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); border-radius: 3px; }
 
 .field { display: flex; flex-direction: column; gap: 6px; flex: 1; min-width: 0; }
 .field-label {
@@ -664,6 +667,7 @@ tbody tr:hover td { background: var(--surface-2); }
   background: var(--surface-2);
   border-color: var(--border);
 }
+.expand-chevron:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-soft); color: var(--text); }
 .expand-chevron.open {
   color: var(--accent);
   transform: rotate(90deg);
@@ -5002,13 +5006,13 @@ docker compose up -d --force-recreate</pre>
       return `
       <tr${isExpanded ? ' class="expanded"' : ''} data-acct-status="${this.esc(a.status || 'unknown')}" data-acct-problem="${isProblem ? '1' : '0'}">
         <td style="box-shadow: inset 3px 0 0 ${hlColor};" title="${this.esc(hlLabel)}">
-          <button class="expand-chevron ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')" title="${I18n.t('account.detail.toggle')}">▸</button>
+          <button class="expand-chevron ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')" title="${I18n.t('account.detail.toggle')}" aria-label="${I18n.t('account.detail.toggle')}" aria-expanded="${isExpanded ? 'true' : 'false'}">▸</button>
           <code>${a.id}</code>
         </td>
         <td>${this.esc(a.email)}</td>
         <td>
           <div style="display:flex;flex-direction:column;gap:2px">
-            <span class="tier ${this.esc(tier)}" style="cursor:pointer" title="${this.esc(tierTooltip)}" onclick="App.overrideTier('${this.escJsAttr(a.id)}','${this.escJsAttr(tier)}')">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ✎' : ''}</span>
+            <span class="tier ${this.esc(tier)}" role="button" tabindex="0" aria-label="${I18n.t('status.clickToEditTier')}" style="cursor:pointer" title="${this.esc(tierTooltip)}" onclick="App.overrideTier('${this.escJsAttr(a.id)}','${this.escJsAttr(tier)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.overrideTier('${this.escJsAttr(a.id)}','${this.escJsAttr(tier)}')}">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ✎' : ''}</span>
             ${tierSubline ? `<span class="text-xs text-dim" style="font-size:10px">${this.esc(tierSubline)}</span>` : ''}
           </div>
         </td>
@@ -5019,7 +5023,7 @@ docker compose up -d --force-recreate</pre>
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'};font-variant-numeric:tabular-nums;text-align:right;">${a.errorCount}</td>
         <td class="text-sm nowrap" style="font-variant-numeric:tabular-nums;">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code title="${I18n.t('action.revealKey')}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
+          <code title="${I18n.t('action.revealKey')}" role="button" tabindex="0" aria-label="${I18n.t('action.revealKey')}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.revealAndCopyKey('${this.escJsAttr(a.id)}')}">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">
@@ -5655,7 +5659,7 @@ docker compose up -d --force-recreate</pre>
     if (current.length > 0) {
       document.getElementById('model-list-current').innerHTML = `
         <div class="text-xs text-muted" style="margin-bottom:6px">${I18n.t('model.list.current', {count: current.length})}</div>
-        <div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escJsAttr(m)}')">×</span></span>`).join('')}</div>`;
+        <div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" role="button" tabindex="0" aria-label="${I18n.t('model.remove')}" onclick="App.removeModelFromList('${this.escJsAttr(m)}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.removeModelFromList('${this.escJsAttr(m)}')}">×</span></span>`).join('')}</div>`;
     } else {
       document.getElementById('model-list-current').innerHTML = `<div class="text-xs text-dim">${I18n.t('model.list.empty')}</div>`;
     }
