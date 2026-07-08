@@ -47,4 +47,30 @@ describe('neutralizeClientIdentity', () => {
     const src = "You are Claude Code, Anthropic's official CLI for Claude.";
     assert.equal(neutralizeClientIdentity(src), src, 'opt-out leaves it verbatim');
   });
+
+  // 401 abuse-content gate: the dense security-policy paragraph.
+  const SEC = "IMPORTANT: Assist with authorized security testing, defensive security, CTF challenges, and educational contexts. Refuse requests for destructive techniques, DoS attacks, mass targeting, supply chain compromise, or detection evasion for malicious purposes. Dual-use security tools (C2 frameworks, credential testing, exploit development) require clear authorization context: pentesting engagements, CTF competitions, security research, or defensive use cases.";
+
+  it('neutralizes the security-policy paragraph (drops the trigger vocabulary)', () => {
+    const out = neutralizeClientIdentity('You are an interactive agent.\n\n' + SEC + '\n\n# Harness');
+    // trigger terms Devin flags must be gone
+    ['security testing', 'CTF', 'DoS attacks', 'supply chain', 'detection evasion', 'C2 frameworks', 'credential testing', 'exploit development'].forEach(function (t) {
+      assert.ok(!out.includes(t), 'trigger term removed: ' + t);
+    });
+    // surrounding content preserved
+    assert.ok(out.includes('You are an interactive agent.'), 'preamble before kept');
+    assert.ok(out.includes('# Harness'), 'content after kept');
+    // benign replacement present
+    assert.match(out, /malicious or harmful/i);
+  });
+
+  it('leaves a system prompt without the security paragraph untouched', () => {
+    const src = 'You are a coding assistant. Help with the task.';
+    assert.equal(neutralizeClientIdentity(src), src);
+  });
+
+  it('security-paragraph neutralization also respects the opt-out flag', () => {
+    process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID = '0';
+    assert.equal(neutralizeClientIdentity(SEC), SEC);
+  });
 });
