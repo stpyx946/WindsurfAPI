@@ -1717,6 +1717,50 @@ window._firebaseOAuth = async function(provider) {
     </div>
     <div id="update-status" class="section hidden" style="padding:12px;margin-bottom:12px"></div>
     <div class="metrics-grid" id="overview-cards"></div>
+    <!-- Cockpit: pool health → connect self-healing → trend → rankings.
+         Each is rendered idempotently by loadOverview from real telemetry;
+         hidden/empty when its data source is unavailable. -->
+    <div class="section" id="pool-health-overview">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.poolHealth.title">Account Pool Health</div>
+          <div class="section-desc" data-i18n="section.poolHealth.desc">Worst-first summary of per-account health signals</div>
+        </div>
+      </div>
+      <div class="section-body"><div id="pool-health-summary"></div></div>
+    </div>
+    <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
+      <div class="section" id="connect-metrics-overview">
+        <div class="section-header">
+          <div>
+            <div class="section-title" data-i18n="section.connectMetrics.title">Connection Self-Healing</div>
+            <div class="section-desc" data-i18n="section.connectMetrics.desc">Live recovery counters</div>
+          </div>
+        </div>
+        <div class="section-body"><div id="connect-metrics-status"></div></div>
+      </div>
+      <div class="section" id="overview-trend-section">
+        <div class="section-header">
+          <div>
+            <div class="section-title" data-i18n="section.overviewTrend.title">Request Trend (24h)</div>
+            <div class="section-desc" data-i18n="section.overviewTrend.desc">Requests and errors per hour</div>
+          </div>
+        </div>
+        <div class="section-body">
+          <div class="overview-trend-wrap" style="position:relative;width:100%;height:120px;"><canvas id="overview-trend-canvas"></canvas></div>
+          <div id="overview-trend-empty"></div>
+        </div>
+      </div>
+    </div>
+    <div class="section" id="overview-rankings">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.rankings.title">Rankings</div>
+          <div class="section-desc" data-i18n="section.rankings.desc">By request volume (local counters only)</div>
+        </div>
+      </div>
+      <div class="section-body"><div id="overview-rankings-body"></div></div>
+    </div>
     <div class="section">
       <div class="section-header">
         <div>
@@ -3292,8 +3336,165 @@ docker compose up -d --force-recreate</pre>
     }
   },
 
+  // 6th KPI card: token cache read as a share of total input (fresh + cache_read).
+  // Returns '' (no card) when /stats is missing or there is no token usage yet.
+  _tokenCacheKpiCard(s) {
+    const tt = s && s.tokenTotals;
+    if (!tt) return '';
+    const fresh = Number(tt.fresh_input) || 0;
+    const cr = Number(tt.cache_read) || 0;
+    const inputTotal = fresh + cr;
+    const fmt = (n) => this.fmtBytes ? String(n) : String(n);
+    if (inputTotal <= 0) {
+      return `<div class="card"><div class="card-header"><div class="card-title">${I18n.t('card.tokenCacheRead.title')}</div></div><div class="card-value" style="font-size:20px">—</div><div class="card-sub">${I18n.t('card.tokenCacheRead.empty')}</div></div>`;
+    }
+    const pct = ((cr / inputTotal) * 100).toFixed(1);
+    return `<div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.tokenCacheRead.title')}</div></div><div class="card-value">${pct}%</div><div class="card-sub">${I18n.t('card.tokenCacheRead.subtitle', { pct })}</div></div>`;
+  },
+
+  // Pool-health summary: worst-first verdict + counts, from /connect-metrics
+  // poolHealth[]. Read-only, title= tooltips only (no heavy hover). Empty state
+  // when no telemetry.
+  _renderPoolHealth(cm) {
+    const el = document.getElementById('pool-health-summary');
+    if (!el) return;
+    const ph = cm && Array.isArray(cm.poolHealth) ? cm.poolHealth : null;
+    if (!ph || ph.length === 0) {
+      el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.poolHealth.empty')}</div>`;
+      return;
+    }
+    let healthy = 0, throttled = 0, errored = 0, dead = 0;
+    for (const a of ph) {
+      const h = a.health || {};
+      if ((h.dead || 0) > 0) dead++;
+      else if ((h.error || 0) > 0) errored++;
+      else if ((h.throttle || 0) > 0 || (h.capacity || 0) > 0) throttled++;
+      else healthy++;
+    }
+    const bad = dead + errored;
+    let verdict, cls;
+    if (bad === 0 && throttled === 0) { verdict = I18n.t('overview.poolHealth.verdictAllHealthy'); cls = 'success'; }
+    else if (bad >= ph.length) { verdict = I18n.t('overview.poolHealth.verdictCritical', { count: bad }); cls = 'error'; }
+    else { verdict = I18n.t('overview.poolHealth.verdictDegraded', { count: bad + throttled }); cls = 'warning'; }
+    const chip = (label, n, color) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-variant-numeric:tabular-nums;font-weight:600;">${n}</span><span class="text-sm text-muted">${label}</span></span>`;
+    el.innerHTML = `<div class="badge ${cls === 'success' ? 'running' : cls === 'error' ? 'stopped' : ''}" style="margin-bottom:10px;">${this.esc(verdict)}</div>`
+      + `<div style="display:flex;flex-wrap:wrap;row-gap:6px;">`
+      + chip(I18n.t('overview.poolHealth.healthy'), healthy, 'var(--success, #22c55e)')
+      + chip(I18n.t('overview.poolHealth.throttled'), throttled, 'var(--warning, #f59e0b)')
+      + chip(I18n.t('overview.poolHealth.error'), errored, 'var(--error, #ef4444)')
+      + chip(I18n.t('overview.poolHealth.dead'), dead, 'var(--text-dim, #94a3b8)')
+      + `</div>`;
+  },
+
+  // Connection self-healing counters from /connect-metrics. Only shows non-zero
+  // counters to stay dense; empty state when metrics missing or all zero.
+  _renderConnectMetrics(cm) {
+    const el = document.getElementById('connect-metrics-status');
+    if (!el) return;
+    if (!cm) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.connect.empty')}</div>`; return; }
+    const rows = [
+      ['reloginOk', cm.relogin_ok], ['reloginFail', cm.relogin_fail],
+      ['failoverHops', cm.failover_hops], ['deadTokens', cm.dead_tokens],
+      ['quotaExhausted', cm.quota_exhausted], ['capacityThrottled', cm.capacity_throttled],
+      ['upstreamInternal', cm.upstream_internal], ['transientReplays', cm.transient_replays],
+      ['livenessRecovered', cm.liveness_recovered], ['credDecryptFail', cm.credDecryptFailures],
+    ].filter(([, v]) => Number(v) > 0);
+    if (rows.length === 0) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.connect.empty')}</div>`; return; }
+    el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;">`
+      + rows.map(([k, v]) =>
+          `<div style="display:flex;justify-content:space-between;gap:10px;"><span class="text-sm text-muted">${I18n.t('overview.connect.' + k)}</span><span style="font-variant-numeric:tabular-nums;font-weight:600;">${v}</span></div>`
+        ).join('')
+      + `</div>`;
+  },
+
+  // Top models + top accounts by request volume (local counters only — no upstream
+  // calls, account shown by 8-char id prefix, never joined to email/keys/balance).
+  _renderOverviewRankings(s) {
+    const el = document.getElementById('overview-rankings-body');
+    if (!el) return;
+    if (!s) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`; return; }
+    const top = (obj) => Object.entries(obj || {}).sort(([, a], [, b]) => (b.requests || 0) - (a.requests || 0)).slice(0, 5);
+    const models = top(s.modelCounts);
+    const accts = top(s.accountCounts);
+    if (models.length === 0 && accts.length === 0) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`; return; }
+    const maxM = models.length ? (models[0][1].requests || 0) : 0;
+    const maxA = accts.length ? (accts[0][1].requests || 0) : 0;
+    const bar = (label, n, max) => {
+      const pct = max > 0 ? (n / max) * 100 : 0;
+      return `<div style="margin-bottom:7px;">`
+        + `<div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:2px;"><span class="text-sm" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${this.esc(label)}</span><span class="text-sm text-muted" style="font-variant-numeric:tabular-nums;">${I18n.t('overview.rankings.reqUnit', { count: n })}</span></div>`
+        + `<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.05);overflow:hidden;"><div style="width:${pct.toFixed(1)}%;height:100%;background:var(--accent, #3b82f6);"></div></div>`
+        + `</div>`;
+    };
+    const col = (title, entries, max) => `<div><div class="text-sm text-muted" style="margin-bottom:8px;font-weight:600;">${title}</div>`
+      + (entries.length ? entries.map(([k, v]) => bar(k, v.requests || 0, max)).join('') : `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`)
+      + `</div>`;
+    const blocked = Number(s.policyBlockedCount) || 0;
+    const limited = Number(s.rateLimitedCount) || 0;
+    const indicators = (blocked > 0 || limited > 0)
+      ? `<div style="margin-top:12px;display:flex;gap:16px;">`
+        + (blocked > 0 ? `<span class="badge stopped">${I18n.t('overview.rankings.policyBlocked', { count: blocked })}</span>` : '')
+        + (limited > 0 ? `<span class="badge">${I18n.t('overview.rankings.rateLimited', { count: limited })}</span>` : '')
+        + `</div>`
+      : '';
+    el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">`
+      + col(I18n.t('section.rankings.models'), models, maxM)
+      + col(I18n.t('section.rankings.accounts'), accts, maxA)
+      + `</div>${indicators}`;
+  },
+
+  // Mini 24h request/error trend. Reuses the DPR-aware _setupCanvas + _smoothPath;
+  // zero-baseline, Y scaled to real max. Uses hourlyBuckets (success derived).
+  _renderOverviewTrend(s) {
+    const canvas = document.getElementById('overview-trend-canvas');
+    const emptyEl = document.getElementById('overview-trend-empty');
+    if (!canvas) return;
+    const buckets = s && Array.isArray(s.hourlyBuckets) ? s.hourlyBuckets.slice(-24) : [];
+    if (buckets.length === 0) {
+      canvas.style.display = 'none';
+      if (emptyEl) emptyEl.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.trend.empty')}</div>`;
+      return;
+    }
+    canvas.style.display = 'block';
+    if (emptyEl) emptyEl.innerHTML = '';
+    const setup = this._setupCanvas(canvas);
+    if (!setup || !setup.ctx) return;
+    const { ctx, W, H } = setup;
+    const pad = { l: 4, r: 4, t: 8, b: 4 };
+    const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
+    const maxV = Math.max(1, ...buckets.map(b => b.requests || 0));
+    const n = buckets.length;
+    const xAt = (i) => pad.l + (n <= 1 ? cW / 2 : (i / (n - 1)) * cW);
+    const yAt = (v) => pad.t + cH - (v / maxV) * cH;
+    ctx.clearRect(0, 0, W, H);
+    const reqPts = buckets.map((b, i) => ({ x: xAt(i), y: yAt(b.requests || 0) }));
+    const errPts = buckets.map((b, i) => ({ x: xAt(i), y: yAt(b.errors || 0) }));
+    // requests area
+    ctx.beginPath(); ctx.moveTo(reqPts[0].x, pad.t + cH);
+    ctx.lineTo(reqPts[0].x, reqPts[0].y);
+    this._smoothPath(ctx, reqPts, false);
+    ctx.lineTo(reqPts[n - 1].x, pad.t + cH); ctx.closePath();
+    ctx.fillStyle = 'rgba(59,130,246,.14)'; ctx.fill();
+    ctx.beginPath(); this._smoothPath(ctx, reqPts, true);
+    ctx.strokeStyle = 'var(--accent, #3b82f6)'; ctx.lineWidth = 1.5; ctx.stroke();
+    // errors line (only if any)
+    if (buckets.some(b => (b.errors || 0) > 0)) {
+      ctx.beginPath(); this._smoothPath(ctx, errPts, true);
+      ctx.strokeStyle = 'var(--error, #ef4444)'; ctx.lineWidth = 1.2; ctx.stroke();
+    }
+  },
+
   async loadOverview() {
-    const d = await this.api('GET', '/overview');
+    // Cockpit data: fetch /overview (primary) plus /stats and /connect-metrics in
+    // parallel for the trend/rankings/pool-health/self-healing panels. The two
+    // extras are best-effort — a 401/failure on either renders that panel's empty
+    // state without blocking the KPI row or LS section (KiroStudio principle:
+    // independent skeletons, never one failing source white-screens the page).
+    const [d, s, cm] = await Promise.all([
+      this.api('GET', '/overview'),
+      this.api('GET', '/stats').catch(() => null),
+      this.api('GET', '/connect-metrics').catch(() => null),
+    ]);
     this.renderNativeBridgeTelemetry(d);
     // Fetch /health (no auth) in parallel for version/commit info
     try {
@@ -3352,7 +3553,16 @@ docker compose up -d --force-recreate</pre>
         <div class="card-value">${d.cache?.hitRate || '0.0'}%</div>
         <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: d.cache?.hits || 0, misses: d.cache?.misses || 0, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
       </div>
+      ${this._tokenCacheKpiCard(s)}
     `;
+    // Cockpit panels (best-effort, independent skeletons): pool health, connect
+    // self-healing metrics, request trend, and rankings. Each renders its own
+    // empty state when its data source is missing. Idempotent full-innerHTML
+    // writes so a language switch (which re-runs loadOverview) never stacks.
+    this._renderPoolHealth(cm);
+    this._renderConnectMetrics(cm);
+    this._renderOverviewTrend(s);
+    this._renderOverviewRankings(s);
     const instances = ls.instances || [];
     if (instances.length > 0) {
       document.getElementById('ls-status').innerHTML = `
