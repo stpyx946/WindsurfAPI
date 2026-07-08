@@ -181,7 +181,8 @@
   },
   "section": {
     "banStatus": {
-      "title": "Health Status"
+      "title": "Health Status",
+      "desc": "Accounts flagged by errors, bans, or rate limits"
     },
     "lsStatus": {
       "title": "Language Server",

@@ -181,7 +181,8 @@
   },
   "section": {
     "banStatus": {
-      "title": "健康状态"
+      "title": "健康状态",
+      "desc": "因错误、封禁或限流被标记的账号"
     },
     "lsStatus": {
       "title": "Language Server",
