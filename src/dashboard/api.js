@@ -25,6 +25,7 @@ import {
   getExperimental, setExperimental, getTunables, setTunables, getPrefs, setPrefs, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
   getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
+  getBackendSwitch, getBackendSwitchOverrides, setBackendSwitches,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
@@ -570,24 +571,59 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { success: true, prompts });
   }
 
-  // ─── Runtime backend / env switches (READ-ONLY status) ──
-  // These are process.env deploy switches: the dashboard can't write them (they
-  // need a restart), so we only surface their current state so an operator can
-  // SEE what the running process picked up. Secrets are reported as a boolean
-  // presence flag only — never the value.
+  // ─── Runtime backend switches (hot-flippable) + security status (read-only) ──
+  // The six routing switches are migrated to runtime-config: an operator can
+  // flip them here without a redeploy. GET reports each switch's EFFECTIVE value
+  // plus its SOURCE ('config' when an override is set, else 'env' — which also
+  // covers the historical default). The two credential-store env switches stay
+  // READ-ONLY: they are a security boundary (a writable remote-cred-store toggle
+  // would let a compromised dashboard self-authorize password storage), so they
+  // are surfaced as booleans but never accepted on PUT. Secrets are reported as
+  // a presence flag only, never the value.
   if (subpath === '/runtime-env-status' && method === 'GET') {
     const on = (v) => String(v || '').trim() === '1';
-    const cliMode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase() === 'acp' ? 'acp' : 'print';
+    const overrides = getBackendSwitchOverrides();
+    const SWITCH_KEYS = ['devinConnect', 'devinOnly', 'devinCliMode', 'allowClientTools', 'loginHostFallback', 'autoRelogin'];
+    const switches = {};
+    for (const key of SWITCH_KEYS) {
+      switches[key] = {
+        value: getBackendSwitch(key),           // effective (config → env → default)
+        override: overrides[key],               // null = not set → falling back to env
+        source: overrides[key] === null ? 'env' : 'config',
+      };
+    }
     return json(res, 200, {
-      devinConnect: on(process.env.DEVIN_CONNECT),
-      devinOnly: on(process.env.DEVIN_ONLY),
-      devinCliMode: cliMode,
-      allowClientTools: on(process.env.DEVIN_CLI_ALLOW_CLIENT_TOOLS),
-      loginHostFallback: on(process.env.DEVIN_CONNECT_LOGIN_HOST_FALLBACK),
-      autoRelogin: on(process.env.DEVIN_CONNECT_AUTO_RELOGIN),
+      // Flat effective values (back-compat with the prior read-only card shape).
+      devinConnect: switches.devinConnect.value,
+      devinOnly: switches.devinOnly.value,
+      devinCliMode: switches.devinCliMode.value,
+      allowClientTools: switches.allowClientTools.value,
+      loginHostFallback: switches.loginHostFallback.value,
+      autoRelogin: switches.autoRelogin.value,
+      // Per-switch detail (effective value + override + source) for the toggle UI.
+      switches,
+      // Security boundary — env-only, read-only, never writable from here.
       remoteCredStore: on(process.env.DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE),
       credStoreEnabled: !!(process.env.DEVIN_CONNECT_CRED_KEY || '').trim(),
     });
+  }
+
+  // PUT — flip one or more backend switches. Whitelisted keys only (the setter
+  // rejects everything else, including remoteCredStore/credStoreEnabled). A key
+  // set to null CLEARS the override (falls back to env). devinCliMode accepts
+  // only 'acp'|'print'; the rest are booleans.
+  if (subpath === '/runtime-env-status' && method === 'PUT') {
+    const overrides = setBackendSwitches(body || {});
+    const SWITCH_KEYS = ['devinConnect', 'devinOnly', 'devinCliMode', 'allowClientTools', 'loginHostFallback', 'autoRelogin'];
+    const switches = {};
+    for (const key of SWITCH_KEYS) {
+      switches[key] = {
+        value: getBackendSwitch(key),
+        override: overrides[key],
+        source: overrides[key] === null ? 'env' : 'config',
+      };
+    }
+    return json(res, 200, { success: true, switches });
   }
 
   // ─── Proxy test — try an HTTP CONNECT through the given proxy ──

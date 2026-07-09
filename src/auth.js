@@ -12,7 +12,7 @@
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
-import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs } from './runtime-config.js';
+import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch } from './runtime-config.js';
 import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { safeAccountRef } from './log-safety.js';
@@ -921,7 +921,7 @@ export function __reloginGateState() {
  * @param {boolean} [opts.force] bypass the cooldown (e.g. liveness-probe driven)
  */
 export async function reLoginAccount(id, { force = false } = {}) {
-  if (String(process.env.DEVIN_CONNECT_AUTO_RELOGIN || '') !== '1') return false;
+  if (!getBackendSwitch('autoRelogin')) return false;
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
 

@@ -19,6 +19,8 @@
  *   3. otherwise                                       → BACKEND.LEGACY
  */
 
+import { getBackendSwitch } from './runtime-config.js';
+
 export const BACKEND = Object.freeze({
   CASCADE: 'cascade',        // Connect-RPC → server.codeium.com (StartCascade flow)
   LEGACY: 'legacy',          // RawGetChatMessage (deprecated, enum-only models)
@@ -44,8 +46,9 @@ function isSpecialAgentInfo(modelInfo) {
  * conservative default special-agent.js uses.
  */
 function devinCliMode(env = process.env) {
-  const mode = String(env.DEVIN_CLI_MODE || 'print').trim().toLowerCase();
-  return mode === 'acp' ? BACKEND.DEVIN_ACP : BACKEND.DEVIN_PRINT;
+  // runtime-config override wins; env is the fallback (getBackendSwitch handles
+  // the 'acp'|'print' resolution + historical 'print' default).
+  return getBackendSwitch('devinCliMode', env) === 'acp' ? BACKEND.DEVIN_ACP : BACKEND.DEVIN_PRINT;
 }
 
 /**
@@ -62,7 +65,7 @@ function devinCliMode(env = process.env) {
  * actually serve a specific model is an open question gated on a live probe.
  */
 function devinOnlyEnabled(env = process.env) {
-  return String(env.DEVIN_ONLY || '').trim() === '1';
+  return getBackendSwitch('devinOnly', env);
 }
 
 /**
@@ -80,7 +83,7 @@ function devinOnlyEnabled(env = process.env) {
  * gated on a paid-account probe.
  */
 function devinConnectEnabled(env = process.env) {
-  return String(env.DEVIN_CONNECT || '').trim() === '1';
+  return getBackendSwitch('devinConnect', env);
 }
 
 /**

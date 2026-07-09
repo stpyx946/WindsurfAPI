@@ -8,7 +8,7 @@ import https from 'https';
 import { log } from '../config.js';
 import { safeEmailRef, safeKeyRef, logHash } from '../log-safety.js';
 import { isSocks, createSocksTunnel } from '../socks.js';
-import { getEmailLockThreshold, getEmailLockMs } from '../runtime-config.js';
+import { getEmailLockThreshold, getEmailLockMs, getBackendSwitch } from '../runtime-config.js';
 
 const FIREBASE_API_KEY = 'AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY';
 const FIREBASE_AUTH_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`;
@@ -54,7 +54,7 @@ const DEVIN_AUTH1_CONNECTIONS_URL = `${DEVIN_HOST_BASE}/api/auth1/connections`;
 const DEVIN_AUTH1_PASSWORD_LOGIN_URL = `${DEVIN_HOST_BASE}/api/auth1/password/login`;
 
 function isLoginHostFallbackEnabled() {
-  return String(process.env.DEVIN_CONNECT_LOGIN_HOST_FALLBACK || '') === '1';
+  return getBackendSwitch('loginHostFallback');
 }
 
 // Test-only transport seam: when set, every httpsRequest in this module is

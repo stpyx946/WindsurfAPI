@@ -70,6 +70,24 @@ const DEFAULTS = {
     ipLockThreshold: 5,      // failed dashboard auths before that IP is banned
     ipLockMinutes: 30,       // how long an IP stays banned
   },
+  // v3.0.2 — backend routing switches, migrated from process.env so an
+  // operator can hot-flip them from the Settings page WITHOUT a redeploy.
+  // null means "not set → fall back to the corresponding env var, then the
+  // historical default". This is the backward-compat contract: an old deploy
+  // that only set env vars keeps its exact behaviour because every key here
+  // starts null. NOTE the two credential-store env switches
+  // (DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE / DEVIN_CONNECT_CRED_KEY) are
+  // deliberately NOT here — they are a security boundary and must stay
+  // env-only so a compromised dashboard can't self-authorize remote password
+  // storage / key placement.
+  backendSwitches: {
+    devinConnect: null,       // DEVIN_CONNECT — pure-HTTP cloud egress kill-switch
+    devinOnly: null,          // DEVIN_ONLY — Cascade retired, force Devin CLI
+    devinCliMode: null,       // DEVIN_CLI_MODE — 'acp' | 'print' sub-mode
+    allowClientTools: null,   // DEVIN_CLI_ALLOW_CLIENT_TOOLS — expose caller tools
+    loginHostFallback: null,  // DEVIN_CONNECT_LOGIN_HOST_FALLBACK — devin.ai auth1 fallback
+    autoRelogin: null,        // DEVIN_CONNECT_AUTO_RELOGIN — dead-token recovery
+  },
   // Dashboard UI preferences shared across browsers/devices (persisted here,
   // not in each browser's localStorage). Booleans only; toggle from the
   // global Settings page.
@@ -248,6 +266,101 @@ export function setPrefs(patch) {
   _state.prefs = next;
   persist();
   return getPrefs();
+}
+
+// ─── Backend routing switches (v3.0.2 — env → runtime-config migration) ──
+//
+// Each switch has three-tier resolution:
+//   1. runtime-config override (a boolean or, for devinCliMode, a string) wins
+//   2. else the corresponding process.env var (the historical source)
+//   3. else the historical default
+// A null in _state.backendSwitches means "unset → fall through to env". This
+// preserves old deploys exactly: they set only env, so every override is null
+// and resolution is identical to the pre-migration env-only reads.
+
+// Maps each switch key to its env var name. The env value is only consulted
+// when the runtime-config override is null (unset).
+const BACKEND_SWITCH_ENV = {
+  devinConnect: 'DEVIN_CONNECT',
+  devinOnly: 'DEVIN_ONLY',
+  devinCliMode: 'DEVIN_CLI_MODE',
+  allowClientTools: 'DEVIN_CLI_ALLOW_CLIENT_TOOLS',
+  loginHostFallback: 'DEVIN_CONNECT_LOGIN_HOST_FALLBACK',
+  autoRelogin: 'DEVIN_CONNECT_AUTO_RELOGIN',
+};
+const BACKEND_SWITCH_KEYS = new Set(Object.keys(BACKEND_SWITCH_ENV));
+
+// Boolean switches read env as: exact "1" (whitespace-tolerant) = true. This
+// matches every legacy call site (String(env.X||'').trim() === '1').
+function envIsOne(env, name) {
+  return String(env?.[name] ?? '').trim() === '1';
+}
+
+/**
+ * Resolve a backend switch to its effective value.
+ *
+ * @param {string} key one of BACKEND_SWITCH_KEYS
+ * @param {object} [env] env source (injectable for tests / pure call sites).
+ *                       Defaults to process.env.
+ * @returns {boolean|string} boolean for the flag switches; 'acp'|'print' for
+ *                           devinCliMode.
+ */
+export function getBackendSwitch(key, env = process.env) {
+  const override = _state.backendSwitches?.[key];
+  if (key === 'devinCliMode') {
+    // String enum: runtime override wins if it's a valid mode, else env, else
+    // the historical 'print' default.
+    if (override === 'acp' || override === 'print') return override;
+    const raw = String(env?.DEVIN_CLI_MODE ?? '').trim().toLowerCase();
+    return raw === 'acp' ? 'acp' : 'print';
+  }
+  // Boolean switches: an explicit boolean override wins; otherwise env.
+  if (typeof override === 'boolean') return override;
+  const envName = BACKEND_SWITCH_ENV[key];
+  return envName ? envIsOne(env, envName) : false;
+}
+
+export function getBackendSwitches(env = process.env) {
+  const out = {};
+  for (const key of BACKEND_SWITCH_KEYS) out[key] = getBackendSwitch(key, env);
+  return out;
+}
+
+/**
+ * Read the raw override map (null = unset). Used by the dashboard so it can
+ * distinguish "operator set this" from "falling back to env".
+ */
+export function getBackendSwitchOverrides() {
+  const out = {};
+  for (const key of BACKEND_SWITCH_KEYS) {
+    const v = _state.backendSwitches?.[key];
+    out[key] = v === undefined ? null : v;
+  }
+  return out;
+}
+
+/**
+ * Apply a patch to the backend switches. Whitelisted keys only. A value of
+ * null CLEARS the override (falls back to env). Booleans are coerced for the
+ * flag switches; devinCliMode accepts only 'acp' | 'print'. Everything else
+ * for a given key is ignored (leaves the prior override untouched).
+ */
+export function setBackendSwitches(patch) {
+  if (!patch || typeof patch !== 'object') return getBackendSwitchOverrides();
+  const next = { ...(_state.backendSwitches || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (!BACKEND_SWITCH_KEYS.has(k)) continue; // reject unknown keys
+    if (v === null) { next[k] = null; continue; } // explicit clear → env fallback
+    if (k === 'devinCliMode') {
+      const m = String(v).trim().toLowerCase();
+      if (m === 'acp' || m === 'print') next[k] = m; // ignore junk
+      continue;
+    }
+    next[k] = !!v; // boolean switches — coerce; truthy strings never sneak in
+  }
+  _state.backendSwitches = next;
+  persist();
+  return getBackendSwitchOverrides();
 }
 
 export function getSystemPrompts() {

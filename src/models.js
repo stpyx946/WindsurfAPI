@@ -9,6 +9,8 @@
  * Enum values sourced from Windsurf extension.js decompilation.
  */
 
+import { getBackendSwitch } from './runtime-config.js';
+
 export const MODELS = {
   // ── Claude ──────────────────────────────────────────────
   // Legacy 3.5 / 3.7 series — only have enumValue (legacy RawGetChatMessage flow), no modelUid.
@@ -623,7 +625,7 @@ function isSpecialAgentCatalogEnabled() {
   // special-agent models must stay listed. Routing itself is handled in
   // backend-router.selectBackend() (DEVIN_ONLY short-circuits there); this
   // only keeps the catalog/listing consistent with that mode.
-  if (String(process.env.DEVIN_ONLY || '').trim() === '1') return true;
+  if (getBackendSwitch('devinOnly')) return true;
   const backend = String(process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND || '').trim().toLowerCase();
   return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
 }

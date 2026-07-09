@@ -28,6 +28,7 @@ import { sanitizeText, PathSanitizeStream } from './sanitize.js';
 import { runDevinAcpProcess, probeDevinCliAvailable, acpVisionEnabled } from './devin-acp.js';
 import { extractInlineImages as extractImagesFromContent } from './devin-connect.js';
 import { systemFingerprint } from './system-fingerprint.js';
+import { getBackendSwitch } from './runtime-config.js';
 
 const SPECIAL_BACKEND = 'special_agent';
 const DEFAULT_SPECIAL_MODELS = new Set([
@@ -46,7 +47,7 @@ function intEnv(name, fallback, min = 0) {
 function isEnabled() {
   // DEVIN_ONLY (Cascade retired) implies the special-agent backend is on — it's
   // the only backend left, so a single switch must enable the whole path.
-  if (String(process.env.DEVIN_ONLY || '').trim() === '1') return true;
+  if (getBackendSwitch('devinOnly')) return true;
   const backend = String(process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND || '').trim().toLowerCase();
   return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
 }
@@ -356,7 +357,7 @@ export function getSpecialAgentStatus() {
     queueTimeoutMs: queueTimeoutMs(),
     runTimeoutMs: runTimeoutMs(),
     outputLimitBytes: outputLimitBytes(),
-    mode: process.env.DEVIN_CLI_MODE || 'print',
+    mode: getBackendSwitch('devinCliMode'),
   };
 }
 
@@ -375,7 +376,7 @@ export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServe
 export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal = null } = {}) {
   const release = await acquireSlot(signal);
   try {
-    const mode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase();
+    const mode = getBackendSwitch('devinCliMode');
     if (mode !== 'print') {
       throw Object.assign(new Error(`DEVIN_CLI_MODE=${mode} is not implemented yet; use print for the first PoC`), {
         status: 501,
@@ -746,7 +747,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       { backend: 'special_agent' },
     );
   }
-  if (tools.length && process.env.DEVIN_CLI_ALLOW_CLIENT_TOOLS !== '1') {
+  if (tools.length && !getBackendSwitch('allowClientTools')) {
     return errorResponse(
       400,
       'unsupported_tool_boundary',
@@ -759,7 +760,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
   // signed turns — the clean route that works even for extended-thinking models
   // (opus-4-8), which the DEVIN_CONNECT synthetic-tool_result path CANNOT serve
   // (un-forgeable #12 signature). Verified end-to-end: opus saw a red/blue image.
-  const acpMode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase() === 'acp';
+  const acpMode = getBackendSwitch('devinCliMode') === 'acp';
   const visionOverAcp = acpMode && acpVisionEnabled() && hasUnsupportedMedia(messages);
   if (hasUnsupportedMedia(messages) && !visionOverAcp && process.env.DEVIN_CLI_ALLOW_MEDIA !== '1') {
     return errorResponse(
@@ -784,7 +785,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
   let acct = null;
   let handedOff = false;
   try {
-    const mode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase();
+    const mode = getBackendSwitch('devinCliMode');
     // AC1 gap-e: proactively confirm the Devin CLI is runnable BEFORE we reserve
     // a pool account / spawn the ACP child. A missing or non-executable binary
     // is an ENVIRONMENT fault, not an account fault, so failing fast here avoids

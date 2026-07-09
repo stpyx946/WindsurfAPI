@@ -1310,7 +1310,13 @@
       "autoRelogin": "Auto re-login on dead session (AUTO_RELOGIN)",
       "remoteCredStore": "Allow remote password storage (ALLOW_REMOTE_CRED_STORE)",
       "credStoreEnabled": "Credential store key configured (CRED_KEY)",
-      "hint": "These are deploy-time environment switches. To change one, edit the environment and restart the process — they cannot be toggled from the dashboard."
+      "hint": "The routing switches above can be flipped live without a redeploy. A switch showing \"env\" is following its environment variable / default; flip it to set an override, or reset it to fall back again. The two credential-store rows are a security boundary and stay read-only.",
+      "srcEnv": "env",
+      "srcEnvHint": "Following the environment variable / default (no override set)",
+      "reset": "Reset to default",
+      "switched": "Backend switch updated",
+      "confirmTitle": "Switch backend routing",
+      "confirmRouting": "This switch affects the backend routing of all subsequent requests; in-flight sessions may be disrupted. Continue?"
     }
   }
 }

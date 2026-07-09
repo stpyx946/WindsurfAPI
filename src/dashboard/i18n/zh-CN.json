@@ -1310,7 +1310,13 @@
       "autoRelogin": "会话失效自动重登（AUTO_RELOGIN）",
       "remoteCredStore": "允许公网存储密码（ALLOW_REMOTE_CRED_STORE）",
       "credStoreEnabled": "凭证库主密钥已配置（CRED_KEY）",
-      "hint": "这些是部署时的环境变量开关。要修改请改环境变量并重启进程，无法从面板切换。"
+      "hint": "上面的路由开关可以免重启实时切换。标着「env」的开关表示当前跟随环境变量/默认值；切换即写入覆盖值，重置则回退到跟随。下方两条凭证库开关是安全边界，保持只读。",
+      "srcEnv": "env",
+      "srcEnvHint": "当前跟随环境变量/默认值（未设置覆盖）",
+      "reset": "重置为默认",
+      "switched": "后端开关已更新",
+      "confirmTitle": "切换后端路由",
+      "confirmRouting": "此开关影响所有后续请求的后端路由，在途会话可能受影响。确定切换吗？"
     }
   }
 }

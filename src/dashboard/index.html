@@ -7861,26 +7861,97 @@ docker compose up -d --force-recreate</pre>
     let s = {};
     try {
       s = await this.api('GET', '/runtime-env-status') || {};
-    } catch { /* fall through — show all as off */ }
-    // A boolean switch => green "on" / grey "off" badge. Each row also carries a
-    // "needs restart" note so nobody expects to flip it from here.
+    } catch { /* fall through — show all off/read-only */ }
+    const sw = s.switches || {};
+    const rowStyle = 'display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)';
+    // Read-only badge (green "on" / grey "off") — used for the two credential-store
+    // switches, which stay a security boundary and are never writable from here.
     const badge = (on) => on
       ? `<span class="badge success no-dot">${I18n.t('settings.env.on')}</span>`
       : `<span class="badge no-dot" style="opacity:.6">${I18n.t('settings.env.off')}</span>`;
-    const row = (labelKey, on) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)">`
+    const roRow = (labelKey, on) => `<div style="${rowStyle}">`
       + `<span class="text-sm">${I18n.t(labelKey)}</span>${badge(on)}</div>`;
+    // Source hint + reset entry for a migrated switch: "env" badge when the value
+    // is falling back to the environment/default (no override), or a "reset to
+    // default" link when an override is currently in effect.
+    const meta = (key) => {
+      const src = sw[key]?.source;
+      if (src === 'config') {
+        return `<button class="btn btn-ghost btn-sm" style="padding:2px 8px" onclick="App.resetBackendSwitch('${key}')">${this.esc(I18n.t('settings.env.reset'))}</button>`;
+      }
+      return `<span class="badge no-dot" style="opacity:.55" title="${this.esc(I18n.t('settings.env.srcEnvHint'))}">${this.esc(I18n.t('settings.env.srcEnv'))}</span>`;
+    };
+    // A boolean routing switch → live .switch toggle.
+    const boolRow = (key, labelKey) => `<div style="${rowStyle}">`
+      + `<span class="text-sm">${I18n.t(labelKey)}</span>`
+      + `<div style="display:flex;align-items:center;gap:8px">${meta(key)}`
+        + `<label class="switch"><input type="checkbox" ${sw[key]?.value ? 'checked' : ''} onchange="App.toggleBackendSwitch('${key}', this.checked)"><span class="switch-slider"></span></label>`
+      + `</div></div>`;
+    const mode = sw.devinCliMode?.value || 'print';
+    const modeRow = `<div style="${rowStyle}">`
+      + `<span class="text-sm">${I18n.t('settings.env.devinCliMode')}</span>`
+      + `<div style="display:flex;align-items:center;gap:8px">${meta('devinCliMode')}`
+        + `<select id="set-env-devincli" aria-label="${this.esc(I18n.t('settings.env.devinCliMode'))}" onchange="App.toggleBackendSwitch('devinCliMode', this.value)">`
+          + `<option value="print" ${mode === 'print' ? 'selected' : ''}>print</option>`
+          + `<option value="acp" ${mode === 'acp' ? 'selected' : ''}>acp</option>`
+        + `</select>`
+      + `</div></div>`;
     body.innerHTML =
-        row('settings.env.devinConnect', s.devinConnect)
-      + row('settings.env.devinOnly', s.devinOnly)
-      + `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)">`
-        + `<span class="text-sm">${I18n.t('settings.env.devinCliMode')}</span>`
-        + `<span class="badge info no-dot">${this.esc(s.devinCliMode || 'print')}</span></div>`
-      + row('settings.env.allowClientTools', s.allowClientTools)
-      + row('settings.env.loginHostFallback', s.loginHostFallback)
-      + row('settings.env.autoRelogin', s.autoRelogin)
-      + row('settings.env.remoteCredStore', s.remoteCredStore)
-      + row('settings.env.credStoreEnabled', s.credStoreEnabled)
+        boolRow('devinConnect', 'settings.env.devinConnect')
+      + boolRow('devinOnly', 'settings.env.devinOnly')
+      + modeRow
+      + boolRow('allowClientTools', 'settings.env.allowClientTools')
+      + boolRow('loginHostFallback', 'settings.env.loginHostFallback')
+      + boolRow('autoRelogin', 'settings.env.autoRelogin')
+      + roRow('settings.env.remoteCredStore', s.remoteCredStore)
+      + roRow('settings.env.credStoreEnabled', s.credStoreEnabled)
       + `<div class="field-hint" style="margin-top:10px">${this.esc(I18n.t('settings.env.hint'))}</div>`;
+    // The devinCliMode <select> was just injected; upgrade it to the styled
+    // custom-select (idempotent, preserves the inline onchange on user pick).
+    this.enhanceControls(body);
+  },
+
+  // Routing/behavior switches whose flip changes how EVERY subsequent request is
+  // handled → confirm before applying. autoRelogin/loginHostFallback are low blast
+  // radius and flip silently.
+  _backendSwitchNeedsConfirm(key) {
+    return key === 'devinConnect' || key === 'devinOnly' || key === 'devinCliMode' || key === 'allowClientTools';
+  },
+
+  async _putBackendSwitch(patch) {
+    const r = await this.api('PUT', '/runtime-env-status', patch);
+    this.toast(I18n.t('settings.env.switched'), 'success');
+    return r;
+  },
+
+  async toggleBackendSwitch(key, value) {
+    if (this._backendSwitchNeedsConfirm(key)) {
+      const ok = await this.confirm(I18n.t('settings.env.confirmTitle'), I18n.t('settings.env.confirmRouting'), { okText: I18n.t('button.confirm'), danger: true });
+      // Cancelled → re-render to snap the control back to the server's truth.
+      if (!ok) { this.renderRuntimeEnvStatus(); return; }
+    }
+    try {
+      await this._putBackendSwitch({ [key]: value });
+    } catch (e) {
+      this.toast(I18n.t('toast.toggleFailed', { error: e.message || '' }), 'error');
+    }
+    // Refill from the server either way (success confirms, failure rolls back).
+    this.renderRuntimeEnvStatus();
+  },
+
+  async resetBackendSwitch(key) {
+    // Reset = clear the override so the switch falls back to env/default; the
+    // effective value can change, so confirm the same routing-sensitive keys.
+    if (this._backendSwitchNeedsConfirm(key)) {
+      const ok = await this.confirm(I18n.t('settings.env.confirmTitle'), I18n.t('settings.env.confirmRouting'), { okText: I18n.t('settings.env.reset'), danger: true });
+      if (!ok) return;
+    }
+    try {
+      await this._putBackendSwitch({ [key]: null });
+    } catch (e) {
+      this.toast(I18n.t('toast.toggleFailed', { error: e.message || '' }), 'error');
+    }
+    this.renderRuntimeEnvStatus();
   },
 
   async renderSecuritySettings() {

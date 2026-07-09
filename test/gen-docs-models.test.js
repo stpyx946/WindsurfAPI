@@ -22,6 +22,13 @@ function makeWorkspace({ includeHuggingFaceModel = false } = {}) {
 
   copyFileSync(join(ROOT, 'package.json'), join(workspace, 'package.json'));
   copyFileSync(join(ROOT, 'src/models.js'), join(srcDir, 'models.js'));
+  // models.js statically imports runtime-config.js (backend-switch getter), which
+  // in turn pulls config.js + fs-atomic.js. Copy the chain so the isolated
+  // generator subprocess can resolve models.js. (runtime-config's dynamic
+  // import('./auth.js') is .catch-swallowed, so auth.js need not be present.)
+  copyFileSync(join(ROOT, 'src/runtime-config.js'), join(srcDir, 'runtime-config.js'));
+  copyFileSync(join(ROOT, 'src/config.js'), join(srcDir, 'config.js'));
+  copyFileSync(join(ROOT, 'src/fs-atomic.js'), join(srcDir, 'fs-atomic.js'));
   copyFileSync(join(ROOT, 'scripts/gen-docs-models.js'), join(scriptsDir, 'gen-docs-models.js'));
   copyFileSync(join(ROOT, 'docs/index.html'), join(docsDir, 'index.html'));
 
