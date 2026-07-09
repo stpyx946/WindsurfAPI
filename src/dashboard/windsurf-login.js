@@ -684,8 +684,6 @@ async function windsurfLoginViaFirebase(email, password, fingerprint, proxy) {
 // limits per account and risks getting the *real* email flagged. Lock
 // the email locally so we never forward more than 3 fresh attempts in
 // any 15-minute window.
-const EMAIL_LOCK_THRESHOLD = 3;
-const EMAIL_LOCK_DURATION_MS = 15 * 60 * 1000;
 const EMAIL_LOCK_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
 const _emailFailures = new Map();
 
