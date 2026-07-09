@@ -769,6 +769,14 @@ tbody tr:hover td { background: var(--surface-2); }
   padding: 32px 16px;
   font-style: italic;
 }
+/* Centered empty-state placeholder for chart/health panels (icon + title + sub). */
+.panel-empty {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; min-height: 120px; padding: 28px 16px; text-align: center; color: var(--text-dim);
+}
+.panel-empty .pe-icon { width: 34px; height: 34px; opacity: .45; stroke: currentColor; }
+.panel-empty .pe-title { font-size: 13px; font-weight: 600; color: var(--text-muted); }
+.panel-empty .pe-sub { font-size: 11px; color: var(--text-dim); max-width: 300px; line-height: 1.5; }
 .table-pagination {
   display: flex;
   align-items: center;
@@ -1386,7 +1394,12 @@ tbody tr:hover td { background: var(--surface-2); }
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   max-width: 420px;
+  opacity: 0;
+  transform: translateY(-6px) scale(.98);
+  transition: opacity .16s ease, transform .16s ease;
+  pointer-events: none;
 }
+.custom-range-popup.open { opacity: 1; transform: none; pointer-events: auto; }
 .custom-range-title {
   font-size: 13px;
   font-weight: 600;
@@ -2006,8 +2019,8 @@ tbody tr:hover td { background: var(--surface-2); }
           <div class="overview-trend-wrap" style="position:relative;width:100%;height:340px;">
             <canvas id="overview-trend-canvas"></canvas>
             <div class="chart-tooltip" id="overview-trend-tooltip"></div>
+            <div id="overview-trend-empty" style="position:absolute;inset:0;"></div>
           </div>
-          <div id="overview-trend-empty"></div>
         </div>
       </div>
       <div class="section" id="connect-metrics-overview">
@@ -3563,23 +3576,35 @@ const App = {
     root.appendChild(btns);
 
     const step = Number(inp.step) > 0 ? Number(inp.step) : 1;
+    // Respect min/max declared on the input; an empty attr => no bound that side.
+    const clamp = (n) => {
+      const lo = inp.min !== '' ? Number(inp.min) : -Infinity;
+      const hi = inp.max !== '' ? Number(inp.max) : Infinity;
+      return Math.min(hi, Math.max(lo, n));
+    };
     const stepBy = (d) => {
       if (inp.disabled) return;
       const cur = parseFloat(inp.value);
-      const next = (Number.isFinite(cur) ? cur : 0) + d * step;
+      const next = clamp((Number.isFinite(cur) ? cur : 0) + d * step);
       inp.value = String(next);
       inp.dispatchEvent(new Event('input', { bubbles: true }));
     };
+    // Fire `change` only at a commit point (button release / each arrow key),
+    // mirroring native <input> semantics so onchange-bound persistence
+    // (saveTunable / saveDroughtThreshold) runs — without flooding a PUT + toast
+    // on every frame of hold-to-repeat.
+    const commit = () => inp.dispatchEvent(new Event('change', { bubbles: true }));
     // Hold-to-repeat: immediate step, then accelerating repeat. Timers cleared on
-    // release/leave to avoid leaks.
-    let hold = null, delay = null;
+    // release/leave to avoid leaks; a real step commits once on release.
+    let hold = null, delay = null, stepped = false;
     const startHold = (d) => {
-      stepBy(d);
+      stepped = true; stepBy(d);
       delay = setTimeout(() => { hold = setInterval(() => stepBy(d), 60); }, 200);
     };
     const stopHold = () => {
       if (delay) { clearTimeout(delay); delay = null; }
       if (hold) { clearInterval(hold); hold = null; }
+      if (stepped) { stepped = false; commit(); }
     };
     [ [up, 1], [down, -1] ].forEach(([b, d]) => {
       b.addEventListener('mousedown', (e) => { e.preventDefault(); startHold(d); });
@@ -3588,8 +3613,8 @@ const App = {
       b.addEventListener('touchend', stopHold);
     });
     inp.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowUp') { e.preventDefault(); stepBy(1); }
-      else if (e.key === 'ArrowDown') { e.preventDefault(); stepBy(-1); }
+      if (e.key === 'ArrowUp') { e.preventDefault(); stepBy(1); commit(); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); stepBy(-1); commit(); }
     });
   },
 
@@ -4082,7 +4107,15 @@ docker compose up -d --force-recreate</pre>
     if (!el) return;
     const ph = cm && Array.isArray(cm.poolHealth) ? cm.poolHealth : null;
     if (!ph || ph.length === 0) {
-      el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.poolHealth.empty')}</div>`;
+      // Distinguish "telemetry endpoint didn't respond" (cm===null) from
+      // "no accounts yet" — both empty, but the guidance differs. Neutral wording
+      // (auto-retry) rather than "error" to avoid alarming the operator.
+      const unavailable = !cm;
+      const title = I18n.t(unavailable ? 'overview.poolHealth.unavailable' : 'overview.poolHealth.empty');
+      const sub = I18n.t(unavailable ? 'overview.poolHealth.unavailableHint' : 'overview.poolHealth.emptyHint');
+      el.innerHTML = `<div class="panel-empty">`
+        + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`
+        + `<div class="pe-title">${title}</div><div class="pe-sub">${sub}</div></div>`;
       return;
     }
     let healthy = 0, throttled = 0, errored = 0, dead = 0;
@@ -4223,11 +4256,17 @@ docker compose up -d --force-recreate</pre>
     if (raw.length === 0) {
       canvas.style.display = 'none';
       if (legendEl) legendEl.innerHTML = '';
-      if (emptyEl) emptyEl.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.trend.empty')}</div>`;
+      if (emptyEl) {
+        emptyEl.style.display = 'flex';
+        emptyEl.innerHTML = `<div class="panel-empty" role="img" aria-label="${I18n.t('overview.trend.empty')}">`
+          + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 4-5"/></svg>`
+          + `<div class="pe-title">${I18n.t('overview.trend.empty')}</div>`
+          + `<div class="pe-sub">${I18n.t('overview.trend.emptyHint')}</div></div>`;
+      }
       return;
     }
     canvas.style.display = 'block';
-    if (emptyEl) emptyEl.innerHTML = '';
+    if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
     const acc = this._cssColor('--chart-req', '#d97757');
     const err = this._cssColor('--chart-err', '#c65d4e');
     const suc = this._cssColor('--chart-blue', '#6a9bcc');
@@ -6538,7 +6577,10 @@ docker compose up -d --force-recreate</pre>
   openCustomRange() {
     const popup = document.getElementById('custom-range-popup');
     if (!popup) return;
+    // Show, then add .open next frame so the opacity/transform transition runs.
+    if (this._rangeHideT) { clearTimeout(this._rangeHideT); this._rangeHideT = null; }
     popup.style.display = 'block';
+    requestAnimationFrame(() => popup.classList.add('open'));
     // Default to last 7 days
     const end = new Date();
     const start = new Date(end.getTime() - 7 * 86400_000);
@@ -6554,7 +6596,12 @@ docker compose up -d --force-recreate</pre>
 
   closeCustomRange() {
     const popup = document.getElementById('custom-range-popup');
-    if (popup) popup.style.display = 'none';
+    if (!popup) return;
+    // Fade out via .open removal, then hide after the 160ms transition. A pending
+    // hide timer is cleared on re-open (openCustomRange) to survive close-open-close.
+    popup.classList.remove('open');
+    if (this._rangeHideT) clearTimeout(this._rangeHideT);
+    this._rangeHideT = setTimeout(() => { popup.style.display = 'none'; this._rangeHideT = null; }, 160);
   },
 
   applyCustomRange() {
@@ -6926,17 +6973,29 @@ docker compose up -d --force-recreate</pre>
     // Bind hover tooltip once
     this._bindChartHover();
 
-    // Animate: paint repeatedly with 0 → 1 progress
+    // Animate: paint repeatedly with 0 → 1 progress. Respect reduced-motion by
+    // painting the final frame directly (matches _renderOverviewTrend). Skip the
+    // grow-in on background polls when the data hasn't changed — otherwise the
+    // 15/30s refresh replays the whole entrance every tick. Signature covers the
+    // fields that affect the drawing (bucket count + last hour + per-series totals).
     cancelAnimationFrame(this._chartAnim || 0);
-    const start = performance.now();
-    const dur = 480;
-    const loop = (now) => {
-      const t = Math.min(1, (now - start) / dur);
-      const p = 1 - Math.pow(1 - t, 3); // ease-out cubic
-      this._paintChart(p);
-      if (t < 1) this._chartAnim = requestAnimationFrame(loop);
-    };
-    this._chartAnim = requestAnimationFrame(loop);
+    const sig = buckets.length + '|' + (buckets[buckets.length - 1]?.hour || 0) + '|'
+      + buckets.reduce((a, b) => a + b.requests, 0) + '|' + buckets.reduce((a, b) => a + b.errors, 0);
+    const replay = this._chartSig !== sig;
+    this._chartSig = sig;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !replay) {
+      this._paintChart(1);
+    } else {
+      const start = performance.now();
+      const dur = 480;
+      const loop = (now) => {
+        const t = Math.min(1, (now - start) / dur);
+        const p = 1 - Math.pow(1 - t, 3); // ease-out cubic
+        this._paintChart(p);
+        if (t < 1) this._chartAnim = requestAnimationFrame(loop);
+      };
+      this._chartAnim = requestAnimationFrame(loop);
+    }
 
     // Legend with totals (drawn once, doesn't animate)
     if (legend) {
@@ -7240,6 +7299,13 @@ docker compose up -d --force-recreate</pre>
     const tipEl  = document.getElementById('stats-tooltip');
     if (!canvas || !tipEl || canvas._hoverBound) return;
     canvas._hoverBound = true;
+    // Coalesce crosshair repaints into one rAF frame — mousemove fires faster
+    // than the display refresh, and each _paintChart does a full clearRect +
+    // gradient rebuild. Without this a fast drag stacks many paints per frame.
+    const schedule = () => {
+      if (this._chartHoverRaf) return;
+      this._chartHoverRaf = requestAnimationFrame(() => { this._chartHoverRaf = 0; this._paintChart(1); });
+    };
     canvas.addEventListener('mousemove', (ev) => {
       const hm = this._chartHitMap;
       if (!hm) return;
@@ -7250,7 +7316,7 @@ docker compose up -d --force-recreate</pre>
         tipEl.classList.remove('show');
         if (this._chartCursorIdx !== -1) {
           this._chartCursorIdx = -1;
-          this._paintChart(1);
+          schedule();
         }
         return;
       }
@@ -7264,7 +7330,7 @@ docker compose up -d --force-recreate</pre>
       // moves. Skip when index is unchanged to avoid wasted draws.
       if (this._chartCursorIdx !== best) {
         this._chartCursorIdx = best;
-        this._paintChart(1);
+        schedule();
       }
       const b = hm.buckets[best];
       const rate = b.requests > 0 ? ((b.success / b.requests) * 100).toFixed(1) : '—';
@@ -7303,7 +7369,7 @@ docker compose up -d --force-recreate</pre>
       tipEl.classList.remove('show');
       if (this._chartCursorIdx !== -1) {
         this._chartCursorIdx = -1;
-        this._paintChart(1);
+        schedule();
       }
     });
   },
@@ -7313,6 +7379,16 @@ docker compose up -d --force-recreate</pre>
     const tipEl  = document.getElementById('model-pie-tooltip');
     if (!canvas || !tipEl || canvas._pieHoverBound) return;
     canvas._pieHoverBound = true;
+    // Repaint the donut at final state, emphasizing the hovered segment. rAF-
+    // coalesced so a fast mousemove doesn't stack redraws. _piePaint is set by
+    // renderModelPie; guard in case hover fires before the first paint.
+    const schedulePie = () => {
+      if (this._pieHoverRaf) return;
+      this._pieHoverRaf = requestAnimationFrame(() => {
+        this._pieHoverRaf = 0;
+        if (typeof this._piePaint === 'function') this._piePaint(1, this._pieHoverIdx);
+      });
+    };
     canvas.addEventListener('mousemove', (ev) => {
       const hm = this._pieHitMap;
       if (!hm) { tipEl.classList.remove('show'); return; }
@@ -7321,7 +7397,11 @@ docker compose up -d --force-recreate</pre>
       const y = ev.clientY - rect.top;
       const dx = x - hm.cx, dy = y - hm.cy;
       const r = Math.hypot(dx, dy);
-      if (r < hm.rInner || r > hm.rOuter) { tipEl.classList.remove('show'); return; }
+      if (r < hm.rInner || r > hm.rOuter) {
+        tipEl.classList.remove('show');
+        if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
+        return;
+      }
       // Pie starts at -π/2 going clockwise. Normalize cursor angle into the
       // same 0..2π space relative to the start angle so segment boundaries
       // align with the drawn arcs.
@@ -7333,7 +7413,12 @@ docker compose up -d --force-recreate</pre>
         const eNorm = s.endAngle - startAngle0;
         return a >= sNorm && a < eNorm;
       });
-      if (!seg) { tipEl.classList.remove('show'); return; }
+      if (!seg) {
+        tipEl.classList.remove('show');
+        if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
+        return;
+      }
+      if (this._pieHoverIdx !== seg.idx) { this._pieHoverIdx = seg.idx; schedulePie(); }
       const pct = (seg.count / hm.total * 100).toFixed(1);
       const successRate = seg.count > 0 ? (seg.success / seg.count * 100).toFixed(1) : '—';
       tipEl.innerHTML = `
@@ -7349,7 +7434,10 @@ docker compose up -d --force-recreate</pre>
       tipEl.style.left = x + 'px';
       tipEl.style.top = Math.max(0, y - 12) + 'px';
     });
-    canvas.addEventListener('mouseleave', () => { tipEl.classList.remove('show'); });
+    canvas.addEventListener('mouseleave', () => {
+      tipEl.classList.remove('show');
+      if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
+    });
   },
 
   _roundRect(ctx, x, y, w, h, r) {
@@ -7472,7 +7560,7 @@ docker compose up -d --force-recreate</pre>
     top.forEach((seg, i) => {
       const frac = seg.count / total;
       const a2 = angle + frac * Math.PI * 2;
-      segments.push({ ...seg, color: this._pieColors[i % this._pieColors.length], startAngle: angle, endAngle: a2 });
+      segments.push({ ...seg, idx: i, color: this._pieColors[i % this._pieColors.length], startAngle: angle, endAngle: a2 });
       angle = a2;
     });
 
@@ -7484,16 +7572,18 @@ docker compose up -d --force-recreate</pre>
     // Paint the donut swept to `p` of full rotation, mirroring the main chart's
     // 0→1 grow-in so the stats page feels as smooth as the dashboard. Center
     // label fades in over the last third of the sweep. Hover repaints call p=1.
-    const paint = (p) => {
+    const paint = (p, hoverIdx = -1) => {
       ctx.clearRect(0, 0, W, H);
       const sweepEnd = startAt + p * Math.PI * 2;
       for (const seg of segments) {
         const a1 = seg.startAngle;
         const a2 = Math.min(seg.endAngle, sweepEnd);
         if (a2 <= a1) continue;
+        // The hovered segment pops out with a slightly larger outer radius.
+        const rO = seg.idx === hoverIdx ? rOuter + 4 : rOuter;
         ctx.beginPath();
         ctx.moveTo(cx + Math.cos(a1) * rInner, cy + Math.sin(a1) * rInner);
-        ctx.arc(cx, cy, rOuter, a1, a2);
+        ctx.arc(cx, cy, rO, a1, a2);
         ctx.arc(cx, cy, rInner, a2, a1, true);
         ctx.closePath();
         ctx.fillStyle = seg.color;
@@ -7518,15 +7608,24 @@ docker compose up -d --force-recreate</pre>
     this._piePaint = paint; // hover handler repaints via this at p=1
 
     // Animate the sweep (cubic ease-out, ~600ms), matching renderMainChart.
+    // Respect reduced-motion, and skip the sweep on unchanged background polls
+    // (signature = segment names + counts) so the 30s refresh doesn't replay it.
     cancelAnimationFrame(this._pieAnim || 0);
-    const dur = 600, t0 = performance.now();
-    const loop = (now) => {
-      const t = Math.min(1, (now - t0) / dur);
-      const p = 1 - Math.pow(1 - t, 3);
-      paint(p);
-      if (t < 1) this._pieAnim = requestAnimationFrame(loop);
-    };
-    this._pieAnim = requestAnimationFrame(loop);
+    const pieSig = segments.map(s => s.name + ':' + s.count).join('|');
+    const pieReplay = this._pieSig !== pieSig;
+    this._pieSig = pieSig;
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !pieReplay) {
+      paint(1);
+    } else {
+      const dur = 600, t0 = performance.now();
+      const loop = (now) => {
+        const t = Math.min(1, (now - t0) / dur);
+        const p = 1 - Math.pow(1 - t, 3);
+        paint(p);
+        if (t < 1) this._pieAnim = requestAnimationFrame(loop);
+      };
+      this._pieAnim = requestAnimationFrame(loop);
+    }
 
     if (legend) {
       legend.innerHTML = top.map((seg, i) => {
@@ -7749,6 +7848,10 @@ docker compose up -d --force-recreate</pre>
       + num('set-ip-lock-threshold', 'ipLockThreshold', t.ipLockThreshold ?? 5, 0, 100, 1, 'settings.ipLockThreshold', 'settings.ipLockThreshold.hint')
       + num('set-ip-lock-minutes', 'ipLockMinutes', t.ipLockMinutes ?? 30, 0, 1440, 1, 'settings.ipLockMinutes', 'settings.ipLockMinutes.hint')
       + `<div class="field-hint" style="margin-top:4px">${this.esc(I18n.t('settings.lockZeroHint'))}</div>`;
+    // Upgrade the freshly-injected number inputs into the custom .ns stepper —
+    // this panel rebuilds body.innerHTML on every open/lang-switch, so the
+    // one-time init enhance doesn't cover it. enhanceControls is idempotent.
+    this.enhanceControls(body);
   },
 
   async savePref(key, value) {

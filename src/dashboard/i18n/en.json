@@ -1245,7 +1245,10 @@
       "verdictAllHealthy": "All accounts healthy",
       "verdictDegraded": "{{count}} account(s) need attention",
       "verdictCritical": "Pool degraded — {{count}} unusable",
-      "empty": "No pool telemetry"
+      "empty": "No pool telemetry",
+      "emptyHint": "Add accounts and send a request; health signals show up here.",
+      "unavailable": "Pool telemetry unavailable",
+      "unavailableHint": "The /connect-metrics endpoint didn't respond. This panel refreshes every 15s."
     },
     "connect": {
       "reloginOk": "Relogin OK",
@@ -1271,7 +1274,8 @@
       "requests": "Requests",
       "errors": "Errors",
       "successRate": "Success rate",
-      "empty": "No trend data"
+      "empty": "No trend data",
+      "emptyHint": "Requests will appear here once traffic starts flowing."
     }
   },
   "settings": {

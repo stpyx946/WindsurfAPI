@@ -1245,7 +1245,10 @@
       "verdictAllHealthy": "所有账号健康",
       "verdictDegraded": "{{count}} 个账号需关注",
       "verdictCritical": "号池降级 — {{count}} 个不可用",
-      "empty": "暂无号池遥测"
+      "empty": "暂无号池遥测",
+      "emptyHint": "添加账号并发起请求后，各账号健康信号会显示在这里。",
+      "unavailable": "号池遥测暂不可用",
+      "unavailableHint": "/connect-metrics 未响应，本面板每 15 秒自动重试。"
     },
     "connect": {
       "reloginOk": "重登成功",
@@ -1271,7 +1274,8 @@
       "requests": "请求",
       "errors": "错误",
       "successRate": "成功率",
-      "empty": "暂无趋势数据"
+      "empty": "暂无趋势数据",
+      "emptyHint": "有请求流量后，24 小时趋势会自动出现。"
     }
   },
   "settings": {
