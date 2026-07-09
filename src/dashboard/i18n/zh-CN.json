@@ -733,7 +733,17 @@
     "promptCredits": "Prompt 额度：{{used}}/{{total}}",
     "flowCredits": "Flow 额度：{{used}}/{{total}}",
     "allowedModels": "可用 cascade 模型：{{count}}",
-    "fetchedAgo": "获取于 {{mins}} 分钟前"
+    "fetchedAgo": "获取于 {{mins}} 分钟前",
+    "help": {
+      "devinCliMode": "Devin CLI 传输模式。print：一次性模式，发送提示词并读取打印的回复，不支持工具调用或流式。acp（Agent Client Protocol）：持久双向会话，支持原生工具调用、图片/视觉输入与流式输出。需要工具或多模态的模型用 acp；纯聊天用 print 更轻量。",
+      "devinConnect": "直连云端 HTTP 后端。开启后请求直接走 Devin 云端 API（HTTP），不再驱动本地 Devin CLI 进程。属部署级开关——关闭时原生 CLI 工具不可用。",
+      "devinOnly": "所有请求仅走 Devin CLI 后端，禁用其它上游提供方。适合只想用单一、可预期后端的场景。",
+      "allowClientTools": "允许客户端工具调用与图片/视觉输入抵达模型（DEVIN_CLI_ALLOW_CLIENT_TOOLS）。原生工具与图片理解必须开启；纯文本聊天可关闭。",
+      "loginHostFallback": "主登录 host 失败时，回退到 Devin 直连登录端点。在网络不稳定时提升登录成功率。",
+      "autoRelogin": "会话在请求中途失效时自动重新登录，而不是直接让请求失败。",
+      "remoteCredStore": "服务端是否可存储账号密码以支持远程自愈登录。属于安全边界——此处只读。",
+      "credStoreEnabled": "是否已配置凭据加密密钥（CRED_KEY），用于对存储的凭据做静态加密。"
+    }
   },
   "credentials": {
     "apiKey": "API_KEY",

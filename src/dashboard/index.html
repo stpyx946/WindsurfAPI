@@ -775,7 +775,7 @@ tbody tr:hover td { background: var(--surface-2); }
 /* Centered empty-state placeholder for chart/health panels (icon + title + sub). */
 .panel-empty {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
-  gap: 8px; min-height: 120px; padding: 28px 16px; text-align: center; color: var(--text-dim);
+  gap: 8px; width: 100%; height: 100%; min-height: 120px; padding: 28px 16px; text-align: center; color: var(--text-dim);
 }
 .panel-empty .pe-icon { width: 34px; height: 34px; opacity: .45; stroke: currentColor; }
 .panel-empty .pe-title { font-size: 13px; font-weight: 600; color: var(--text-muted); }
@@ -1468,6 +1468,32 @@ tbody tr:hover td { background: var(--surface-2); }
 .chart-tooltip .tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .chart-tooltip .tt-label { color: var(--text-dim); margin-right: 4px; }
 .chart-tooltip .tt-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Inline help "?" with an i18n hover/focus bubble — reusable info tooltip.
+   Text is injected via App._helpTip(key). Pure-CSS show on hover/focus,
+   keyboard-focusable. Bubble anchors left (opens rightward) to survive the
+   .section overflow:hidden when the icon sits on the left of a row. */
+.help-tip {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; margin-left: 6px; border-radius: 50%;
+  border: 1px solid var(--border-strong); color: var(--text-dim);
+  font-size: 10px; font-weight: 700; line-height: 1; cursor: help;
+  vertical-align: middle; outline: none; user-select: none;
+}
+.help-tip:hover, .help-tip:focus-visible { color: var(--text); border-color: var(--text-dim); }
+.help-tip__pop {
+  position: absolute; top: calc(100% + 8px); left: 0; width: max-content; max-width: 240px;
+  padding: 8px 10px; background: rgba(17,17,24,.97); color: var(--text);
+  border: 1px solid var(--border-strong); border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0,0,0,.5); backdrop-filter: blur(10px);
+  font-size: 11.5px; font-weight: 400; line-height: 1.5; white-space: normal; text-align: left;
+  opacity: 0; pointer-events: none; transform: translateY(-4px);
+  transition: opacity .14s ease, transform .14s ease; z-index: 20;
+}
+.help-tip:hover .help-tip__pop,
+.help-tip:focus-visible .help-tip__pop,
+.help-tip:focus-within .help-tip__pop { opacity: 1; transform: translateY(0); }
+@media (prefers-reduced-motion: reduce) { .help-tip__pop { transition: none; } }
 
 /* Chart legend */
 .chart-legend {
@@ -4313,8 +4339,23 @@ docker compose up -d --force-recreate</pre>
       success: Math.max(0, (b.requests || 0) - (b.errors || 0)),
       rate: (b.requests || 0) > 0 ? (Math.max(0, (b.requests || 0) - (b.errors || 0)) / b.requests) * 100 : null,
     }));
-    this._animateTrend(canvas, W, H, buckets, { acc, err, suc, dim, grid });
-    this._trendBindHover(canvas, tip, buckets, { acc, err, suc, dim, grid });
+    // Skip grow-in on background polls when the trend is unchanged — otherwise
+    // the 15s /overview refresh replays the whole entrance each tick (mirrors
+    // renderMainChart's _chartSig guard). reduced-motion is handled inside
+    // _animateTrend; the no-replay branch paints the final frame (p=1) so a
+    // theme/lang switch still repaints with fresh colors.
+    const c = { acc, err, suc, dim, grid };
+    const sig = buckets.length + '|' + (buckets[buckets.length - 1]?.hour || 0) + '|'
+      + buckets.reduce((a, b) => a + b.requests, 0) + '|' + buckets.reduce((a, b) => a + b.errors, 0);
+    const replay = this._overviewTrendSig !== sig;
+    this._overviewTrendSig = sig;
+    if (replay) {
+      this._animateTrend(canvas, W, H, buckets, c);
+    } else {
+      const s2 = this._setupCanvas(canvas);
+      if (s2 && s2.ctx) this._trendPaint(s2.ctx, s2.W, s2.H, buckets, c, null, 1);
+    }
+    this._trendBindHover(canvas, tip, buckets, c);
   },
 
   // Entrance grow: lerp the series from baseline to target over ~480ms (ease-out
@@ -7869,8 +7910,8 @@ docker compose up -d --force-recreate</pre>
     const badge = (on) => on
       ? `<span class="badge success no-dot">${I18n.t('settings.env.on')}</span>`
       : `<span class="badge no-dot" style="opacity:.6">${I18n.t('settings.env.off')}</span>`;
-    const roRow = (labelKey, on) => `<div style="${rowStyle}">`
-      + `<span class="text-sm">${I18n.t(labelKey)}</span>${badge(on)}</div>`;
+    const roRow = (labelKey, on, helpKey) => `<div style="${rowStyle}">`
+      + `<span class="text-sm">${I18n.t(labelKey)}${helpKey ? this._helpTip(helpKey) : ''}</span>${badge(on)}</div>`;
     // Source hint + reset entry for a migrated switch: "env" badge when the value
     // is falling back to the environment/default (no override), or a "reset to
     // default" link when an override is currently in effect.
@@ -7883,13 +7924,13 @@ docker compose up -d --force-recreate</pre>
     };
     // A boolean routing switch → live .switch toggle.
     const boolRow = (key, labelKey) => `<div style="${rowStyle}">`
-      + `<span class="text-sm">${I18n.t(labelKey)}</span>`
+      + `<span class="text-sm">${I18n.t(labelKey)}${this._helpTip(key)}</span>`
       + `<div style="display:flex;align-items:center;gap:8px">${meta(key)}`
         + `<label class="switch"><input type="checkbox" ${sw[key]?.value ? 'checked' : ''} onchange="App.toggleBackendSwitch('${key}', this.checked)"><span class="switch-slider"></span></label>`
       + `</div></div>`;
     const mode = sw.devinCliMode?.value || 'print';
     const modeRow = `<div style="${rowStyle}">`
-      + `<span class="text-sm">${I18n.t('settings.env.devinCliMode')}</span>`
+      + `<span class="text-sm">${I18n.t('settings.env.devinCliMode')}${this._helpTip('devinCliMode')}</span>`
       + `<div style="display:flex;align-items:center;gap:8px">${meta('devinCliMode')}`
         + `<select id="set-env-devincli" aria-label="${this.esc(I18n.t('settings.env.devinCliMode'))}" onchange="App.toggleBackendSwitch('devinCliMode', this.value)">`
           + `<option value="print" ${mode === 'print' ? 'selected' : ''}>print</option>`
@@ -7903,8 +7944,8 @@ docker compose up -d --force-recreate</pre>
       + boolRow('allowClientTools', 'settings.env.allowClientTools')
       + boolRow('loginHostFallback', 'settings.env.loginHostFallback')
       + boolRow('autoRelogin', 'settings.env.autoRelogin')
-      + roRow('settings.env.remoteCredStore', s.remoteCredStore)
-      + roRow('settings.env.credStoreEnabled', s.credStoreEnabled)
+      + roRow('settings.env.remoteCredStore', s.remoteCredStore, 'remoteCredStore')
+      + roRow('settings.env.credStoreEnabled', s.credStoreEnabled, 'credStoreEnabled')
       + `<div class="field-hint" style="margin-top:10px">${this.esc(I18n.t('settings.env.hint'))}</div>`;
     // The devinCliMode <select> was just injected; upgrade it to the styled
     // custom-select (idempotent, preserves the inline onchange on user pick).
@@ -8374,6 +8415,14 @@ docker compose up -d --force-recreate</pre>
     }).join('')}</div>`;
   },
   esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); },
+
+  // Reusable inline help "?" with an i18n hover/focus bubble. key resolves
+  // tooltip.help.<key>. Escaped text is used for both the bubble and aria-label.
+  _helpTip(key) {
+    const txt = I18n.t('tooltip.help.' + key);
+    return `<span class="help-tip" tabindex="0" role="note" aria-label="${this.esc(txt)}">?`
+      + `<span class="help-tip__pop" role="tooltip">${this.esc(txt)}</span></span>`;
+  },
   systemPromptDomId(key) {
     return `sp-${encodeURIComponent(String(key == null ? '' : key)).replace(/%/g, '_')}`;
   },

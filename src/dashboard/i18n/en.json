@@ -733,7 +733,17 @@
     "promptCredits": "Prompt: {{used}}/{{total}}",
     "flowCredits": "Flow: {{used}}/{{total}}",
     "allowedModels": "Allowed cascade models: {{count}}",
-    "fetchedAgo": "Fetched: {{mins}}m ago"
+    "fetchedAgo": "Fetched: {{mins}}m ago",
+    "help": {
+      "devinCliMode": "Devin CLI transport. print: one-shot mode — send the prompt, read the printed reply; no tool calls or streaming. acp (Agent Client Protocol): a persistent two-way session with native tool calls, image/vision input, and streaming. Use acp for tool-using or multimodal models; print is lighter for plain chat.",
+      "devinConnect": "Direct cloud HTTP backend. When on, requests go straight to Devin's cloud API over HTTP instead of driving a local Devin CLI process. Deploy-time switch — off means native CLI tools are unavailable.",
+      "devinOnly": "Route every request through the Devin CLI backend only, disabling all other upstream providers. Use when you want a single, predictable backend.",
+      "allowClientTools": "Allow client-side tool calls and image/vision input to reach the model (DEVIN_CLI_ALLOW_CLIENT_TOOLS). Required for native tool use and image understanding; leave off for text-only chat.",
+      "loginHostFallback": "If the primary login host fails, fall back to Devin's direct login endpoint. Improves login success on flaky networks.",
+      "autoRelogin": "Automatically re-authenticate an account when its session dies mid-request, instead of failing the request.",
+      "remoteCredStore": "Whether the server may store account passwords for remote self-healing login. A security boundary — read-only here.",
+      "credStoreEnabled": "Whether a credential encryption key (CRED_KEY) is configured, enabling encrypted at-rest storage of stored credentials."
+    }
   },
   "credentials": {
     "apiKey": "API_KEY",
