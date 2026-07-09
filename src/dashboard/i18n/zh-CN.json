@@ -194,7 +194,8 @@
     "settings": {
       "ux": { "title": "界面偏好", "desc": "跨浏览器/设备共享（存于服务端）" },
       "security": { "title": "安全与锁定", "desc": "登录失败锁定阈值与时长，可调整或关闭" },
-      "runtimeEnv": { "title": "运行时后端", "desc": "这些开关由部署时的环境变量控制，改动需重启进程生效；此处仅显示当前运行状态" }
+      "runtimeEnv": { "title": "运行时后端", "desc": "这些开关由部署时的环境变量控制，改动需重启进程生效；此处仅显示当前运行状态" },
+      "breaker": { "title": "熔断与限流", "desc": "账号错误熔断与自愈退避阈值，可热调；留空回退环境变量/默认值" }
     },
     "nativeBridge": {
       "title": "Native Bridge",
@@ -1329,6 +1330,32 @@
       "switched": "后端开关已更新",
       "confirmTitle": "切换后端路由",
       "confirmRouting": "此开关影响所有后续请求的后端路由，在途会话可能受影响。确定切换吗？"
+    },
+    "breaker": {
+      "errorStreakThreshold": "错误熔断阈值（次）",
+      "errorStreakThreshold.hint": "窗口内累计错误达此数即禁用账号（默认 3）",
+      "errorWindowMin": "错误 streak 窗口（分钟）",
+      "errorWindowMin.hint": "早于此时长的错误重新计数（默认 30）",
+      "internalErrorThreshold": "内部错误隔离阈值（次）",
+      "internalErrorThreshold.hint": "连续上游内部错误达此数即隔离（默认 2）",
+      "internalQuarantineMin": "内部错误隔离时长（分钟）",
+      "internalQuarantineMin.hint": "被隔离账号的冷却时长（默认 5）",
+      "errorRecoveryMin": "半开恢复冷却（分钟）",
+      "errorRecoveryMin.hint": "熔断账号进入半开重试前的等待（默认 15）",
+      "enabled": "指数退避升级",
+      "baseMin": "退避基数（分钟）",
+      "baseMin.hint": "指数退避的基础冷却（默认=恢复冷却）",
+      "factor": "退避倍数",
+      "factor.hint": "每次重犯的冷却倍数（默认 1.5，须 >1）",
+      "maxMin": "退避上限（分钟）",
+      "maxMin.hint": "退避冷却的硬上限（默认 60）",
+      "streakStart": "退避启动 streak",
+      "streakStart.hint": "从第几次重犯 episode 开始升级（默认 2）",
+      "graceMin": "新账号宽限（分钟）",
+      "graceMin.hint": "新账号此时长内免于升级；0=关闭（默认 10）",
+      "lastAccountExempt": "末位账号豁免",
+      "newAccountBaseline": "新账号 LRU 基线",
+      "retroHint": "调低阈值在下一次错误时生效。errorCount 持久累加，已接近上限的账号在你调低后可能立刻被熔断。"
     }
   }
 }

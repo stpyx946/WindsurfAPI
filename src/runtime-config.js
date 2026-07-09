@@ -88,6 +88,18 @@ const DEFAULTS = {
     loginHostFallback: null,  // DEVIN_CONNECT_LOGIN_HOST_FALLBACK — devin.ai auth1 fallback
     autoRelogin: null,        // DEVIN_CONNECT_AUTO_RELOGIN — dead-token recovery
   },
+  // v3.0.3 — circuit-breaker / rate-limit tunables migrated from the
+  // WINDSURFAPI_* env vars + hardcoded auth.js constants so an operator can
+  // hot-flip thresholds from Settings WITHOUT a redeploy. Same three-tier
+  // contract as backendSwitches: null = "unset → env var, then historical
+  // default". Every key starts null so an env-only deploy is byte-identical.
+  breaker: {
+    errorStreakThreshold: null, errorWindowMs: null,
+    internalErrorThreshold: null, internalQuarantineMs: null,
+    errorRecoveryMs: null, breakerEnabled: null, breakerBaseMs: null,
+    breakerFactor: null, breakerMaxMs: null, breakerStreakStart: null,
+    newAccountGraceMs: null, lastAccountExempt: null, newAccountBaseline: null,
+  },
   // Dashboard UI preferences shared across browsers/devices (persisted here,
   // not in each browser's localStorage). Booleans only; toggle from the
   // global Settings page.
@@ -361,6 +373,83 @@ export function setBackendSwitches(patch) {
   _state.backendSwitches = next;
   persist();
   return getBackendSwitchOverrides();
+}
+
+// ─── Circuit-breaker / rate-limit tunables (v3.0.3 env→runtime-config) ──
+// Table-driven. Each entry: env var, kind, historical default, [min,max] for
+// the OVERRIDE path. The ENV path replicates each helper's ORIGINAL guard
+// exactly (env-only deploys unchanged); only an explicit override is clamped.
+// breakerBaseMs def:null means "resolve to errorRecoveryMs" (dynamic default).
+const BREAKER_TUNABLES = {
+  errorStreakThreshold:   { env: 'WINDSURFAPI_ERROR_STREAK_THRESHOLD',   kind: 'int',   def: 3,       min: 1,    max: 50 },
+  errorWindowMs:          { env: 'WINDSURFAPI_ERROR_WINDOW_MS',          kind: 'int',   def: 1800000, min: 1000, max: 86400000 },
+  internalErrorThreshold: { env: 'WINDSURFAPI_INTERNAL_ERROR_THRESHOLD', kind: 'int',   def: 2,       min: 1,    max: 50 },
+  internalQuarantineMs:   { env: 'WINDSURFAPI_INTERNAL_QUARANTINE_MS',   kind: 'int',   def: 300000,  min: 1000, max: 86400000 },
+  errorRecoveryMs:        { env: 'WINDSURFAPI_ERROR_RECOVERY_MS',        kind: 'int',   def: 900000,  min: 1000, max: 86400000 },
+  breakerEnabled:         { env: 'WINDSURFAPI_BREAKER',                  kind: 'bool',  def: true },
+  breakerBaseMs:          { env: 'WINDSURFAPI_BREAKER_BASE_MS',          kind: 'int',   def: null,    min: 1000, max: 86400000 },
+  breakerFactor:          { env: 'WINDSURFAPI_BREAKER_FACTOR',           kind: 'float', def: 1.5,     min: 1.1,  max: 10 },
+  breakerMaxMs:           { env: 'WINDSURFAPI_BREAKER_MAX_MS',           kind: 'int',   def: 3600000, min: 1000, max: 86400000 },
+  breakerStreakStart:     { env: 'WINDSURFAPI_BREAKER_STREAK_START',     kind: 'int',   def: 2,       min: 1,    max: 50 },
+  newAccountGraceMs:      { env: 'WINDSURFAPI_NEW_ACCOUNT_GRACE_MS',     kind: 'int',   def: 600000,  min: 0,    max: 86400000 },
+  lastAccountExempt:      { env: 'WINDSURFAPI_LAST_ACCOUNT_EXEMPT',      kind: 'bool',  def: true },
+  newAccountBaseline:     { env: 'WINDSURFAPI_NEW_ACCOUNT_BASELINE',     kind: 'bool',  def: true },
+};
+const BREAKER_KEYS = new Set(Object.keys(BREAKER_TUNABLES));
+
+// Breaker bool env semantics: default ON, only literal '0' turns off (matches
+// legacy `env.X !== '0'`). UNSET env stays default (true).
+function breakerEnvNotZero(env, name) {
+  return String(env?.[name] ?? '').trim() !== '0';
+}
+
+// Resolve one knob: override (clamped) → env (legacy guard) → historical default.
+export function getBreakerTunable(key, env = process.env) {
+  const spec = BREAKER_TUNABLES[key];
+  if (!spec) return undefined;
+  const override = _state.breaker?.[key];
+  if (spec.kind === 'bool') {
+    if (typeof override === 'boolean') return override;
+    if (env?.[spec.env] != null && String(env[spec.env]).trim() !== '')
+      return breakerEnvNotZero(env, spec.env);
+    return spec.def;
+  }
+  if (typeof override === 'number' && Number.isFinite(override)) {
+    return Math.max(spec.min, Math.min(spec.max, override));
+  }
+  // env path replicates ORIGINAL guard (factor strict >1; grace >=0; ms >=1000;
+  // thresholds >=1) with NO max clamp — env-only deploy unchanged.
+  const raw = Number(env?.[spec.env]);
+  const strict = key === 'breakerFactor';
+  const floor = strict ? 1 : spec.min;
+  if (Number.isFinite(raw) && (strict ? raw > floor : raw >= floor)) return raw;
+  return (spec.def == null && key === 'breakerBaseMs')
+    ? getBreakerTunable('errorRecoveryMs', env) : spec.def;
+}
+export function getBreakerTunables(env = process.env) {
+  const out = {}; for (const k of BREAKER_KEYS) out[k] = getBreakerTunable(k, env); return out;
+}
+export function getBreakerOverrides() {
+  const out = {};
+  for (const k of BREAKER_KEYS) { const v = _state.breaker?.[k]; out[k] = v === undefined ? null : v; }
+  return out;
+}
+// Apply patch. Whitelist only. null CLEARS (env fallback). Bools coerced;
+// numerics clamped to [min,max]. Empty/whitespace string IGNORED (never coerced
+// to 0) so a cleared box can't silently disable a safety knob (same as setTunables).
+export function setBreakerTunables(patch) {
+  if (!patch || typeof patch !== 'object') return getBreakerOverrides();
+  const next = { ...(_state.breaker || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (!BREAKER_KEYS.has(k)) continue;
+    if (v === null) { next[k] = null; continue; }
+    const spec = BREAKER_TUNABLES[k];
+    if (spec.kind === 'bool') { next[k] = !!v; continue; }
+    if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '')) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) next[k] = Math.max(spec.min, Math.min(spec.max, n));
+  }
+  _state.breaker = next; persist(); return getBreakerOverrides();
 }
 
 export function getSystemPrompts() {

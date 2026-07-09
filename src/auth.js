@@ -12,7 +12,7 @@
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
-import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch } from './runtime-config.js';
+import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable } from './runtime-config.js';
 import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { safeAccountRef } from './log-safety.js';
@@ -1549,10 +1549,7 @@ export function refundReservation(apiKey, timestamp) {
  * (reportSuccess clears errorCount) or fails (reportError re-disables it).
  * 'banned' accounts are intentionally NOT auto-recovered — those stay manual.
  */
-function errorRecoveryTtlMs() {
-  const raw = Number(process.env.WINDSURFAPI_ERROR_RECOVERY_MS);
-  return Number.isFinite(raw) && raw >= 1000 ? raw : 15 * 60 * 1000;
-}
+function errorRecoveryTtlMs() { return getBreakerTunable('errorRecoveryMs'); }
 
 // ─── RB2/B1: account-level exponential backoff knobs ────────────────────────
 // transient-first: this backoff ONLY stretches the SELF-HEALING cooldown of an
@@ -1562,26 +1559,15 @@ function errorRecoveryTtlMs() {
 // from here to a permanent disable. Transients (CAPACITY/UPSTREAM_INTERNAL/
 // RATE_LIMITED) never reach reportError at all (chat.js routes them elsewhere),
 // so they can never be escalated by this ladder.
-function breakerEnabled() {
-  return process.env.WINDSURFAPI_BREAKER !== '0';
-}
-function breakerBaseMs() {
-  // Default base = the half-open recovery TTL, so a FIRST error episode behaves
-  // exactly like today (no extra cooldown is applied at streak 1 — see
-  // reportError). Only repeated episodes escalate beyond this.
-  const raw = Number(process.env.WINDSURFAPI_BREAKER_BASE_MS);
-  return Number.isFinite(raw) && raw >= 1000 ? raw : errorRecoveryTtlMs();
-}
-function breakerFactor() {
-  const raw = Number(process.env.WINDSURFAPI_BREAKER_FACTOR);
-  return Number.isFinite(raw) && raw > 1 ? raw : 1.5;
-}
-function breakerMaxMs() {
-  // Hard ceiling on the backoff. NEVER "permanent" — 60min by default. The
-  // account re-enters the candidate pool the moment this expires.
-  const raw = Number(process.env.WINDSURFAPI_BREAKER_MAX_MS);
-  return Number.isFinite(raw) && raw >= 1000 ? raw : 60 * 60 * 1000;
-}
+function breakerEnabled() { return getBreakerTunable('breakerEnabled'); }
+// Default base = the half-open recovery TTL (breakerBaseMs resolves to
+// errorRecoveryMs when unset), so a FIRST error episode behaves exactly like
+// today; only repeated episodes escalate beyond this.
+function breakerBaseMs() { return getBreakerTunable('breakerBaseMs'); }
+function breakerFactor() { return getBreakerTunable('breakerFactor'); }
+// Hard ceiling on the backoff. NEVER "permanent" — 60min default. The account
+// re-enters the candidate pool the moment this expires.
+function breakerMaxMs() { return getBreakerTunable('breakerMaxMs'); }
 
 // ─── RB2/T3: new-credential thunderstorm grace window ───────────────────────
 // A freshly-added account hasn't earned a behavioural track record. While it's
@@ -1589,10 +1575,7 @@ function breakerMaxMs() {
 // of "oldest" so a batch isn't all first-picked at once (see addAccount*), and
 // (b) exempt it from the exponential backoff escalation so transient onboarding
 // wobble can't be ramped into long lockouts. Set the window to 0 to disable T3b.
-function newAccountGraceMs() {
-  const raw = Number(process.env.WINDSURFAPI_NEW_ACCOUNT_GRACE_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 10 * 60 * 1000;
-}
+function newAccountGraceMs() { return getBreakerTunable('newAccountGraceMs'); }
 function isNewAccount(account, now = Date.now()) {
   const added = account?.addedAt || 0;
   if (!added) return false;
@@ -1612,9 +1595,7 @@ function isNewAccount(account, now = Date.now()) {
 // moment a second usable account exists the normal breaker resumes with full
 // history — this only suppresses the terminal REMOVAL, nothing else.
 // Set WINDSURFAPI_LAST_ACCOUNT_EXEMPT=0 to restore the strict trip-always behaviour.
-function lastAccountExemptEnabled() {
-  return process.env.WINDSURFAPI_LAST_ACCOUNT_EXEMPT !== '0';
-}
+function lastAccountExemptEnabled() { return getBreakerTunable('lastAccountExempt'); }
 // True when `account` is the last one that would still be selectable if we took
 // it out of rotation — i.e. no OTHER account is currently active and free of a
 // cooldown (rateLimitedUntil / quotaResetAt / per-model). Account-wide view
@@ -1645,9 +1626,7 @@ function isLastUsableAccount(account, now = Date.now()) {
 // running history (empty / all lastUsed=0, e.g. fresh boot or unit tests) we
 // leave lastUsed=0 untouched so existing behaviour is unchanged. Toggle off via
 // WINDSURFAPI_NEW_ACCOUNT_BASELINE=0.
-function newAccountBaselineEnabled() {
-  return process.env.WINDSURFAPI_NEW_ACCOUNT_BASELINE !== '0';
-}
+function newAccountBaselineEnabled() { return getBreakerTunable('newAccountBaseline'); }
 function _poolMedianLastUsed() {
   const vals = accounts
     .filter(a => a.status === 'active' && (a.lastUsed || 0) > 0)
@@ -1780,7 +1759,7 @@ function isRateLimitedForModel(account, modelKey, now) {
  * a Windsurf deploy — must NOT permanently disable a healthy key. Only three
  * failures inside `windowMs` (with no success resetting them) disable it.
  */
-export function reportError(apiKey, { windowMs = 30 * 60 * 1000 } = {}) {
+export function reportError(apiKey, { windowMs = getBreakerTunable('errorWindowMs') } = {}) {
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
   const now = Date.now();
@@ -1790,7 +1769,7 @@ export function reportError(apiKey, { windowMs = 30 * 60 * 1000 } = {}) {
   // a months-old failure count into a fresh blip.
   account.errorCount = (now - last < windowMs) ? (account.errorCount || 0) + 1 : 1;
   account._errorAt = now;
-  if (account.errorCount >= 3 && account.status !== 'error') {
+  if (account.errorCount >= getBreakerTunable('errorStreakThreshold') && account.status !== 'error') {
     // LB: never take the LAST usable account out of rotation. errorCount keeps
     // climbing above, so the moment a healthy peer exists the next error flips
     // it normally with full history — this only defers the terminal removal in a
@@ -1818,7 +1797,7 @@ export function reportError(apiKey, { windowMs = 30 * 60 * 1000 } = {}) {
     // only repeat offenders (streak >= 2) get pushed further out. New accounts
     // (T3b) are exempt from escalation so onboarding wobble can't ramp up.
     account._breakerStreak = (account._breakerStreak || 0) + 1;
-    if (breakerEnabled() && account._breakerStreak >= 2 && !isNewAccount(account, now)) {
+    if (breakerEnabled() && account._breakerStreak >= getBreakerTunable('breakerStreakStart') && !isNewAccount(account, now)) {
       const raw = breakerBaseMs() * Math.pow(breakerFactor(), account._breakerStreak - 1);
       const cooldown = Math.min(raw, breakerMaxMs());
       account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, now + cooldown);
@@ -1870,7 +1849,7 @@ export function reportInternalError(apiKey) {
   if (!account) return;
   recordHealthEvent(account, 'e');
   account.internalErrorStreak = (account.internalErrorStreak || 0) + 1;
-  if (account.internalErrorStreak >= 2) {
+  if (account.internalErrorStreak >= getBreakerTunable('internalErrorThreshold')) {
     const now = Date.now();
     // LB: never quarantine the LAST usable account — in a single-account pool a
     // 5min quarantine is a 5min total outage (every request 529s). The streak
@@ -1881,8 +1860,8 @@ export function reportInternalError(apiKey) {
       log.warn(`Account ${safeAccountRef(account)} hit ${account.internalErrorStreak} consecutive upstream internal errors but is the LAST usable account — NOT quarantined (single-account exemption)`);
       return;
     }
-    account.rateLimitedUntil = now + 5 * 60 * 1000;
-    log.warn(`Account ${safeAccountRef(account)} quarantined 5min after ${account.internalErrorStreak} consecutive upstream internal errors`);
+    account.rateLimitedUntil = now + getBreakerTunable('internalQuarantineMs');
+    log.warn(`Account ${safeAccountRef(account)} quarantined after ${account.internalErrorStreak} consecutive upstream internal errors`);
   }
 }
 

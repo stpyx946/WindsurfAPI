@@ -2560,6 +2560,16 @@ tbody tr:hover td { background: var(--surface-2); }
         <div class="text-sm text-muted" data-i18n="credentials.bruteForceHint">为防暴破：同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（2.0.56 起）。</div>
       </div>
     </div>
+
+    <div class="section" style="margin-top:24px">
+      <div class="section-header"><div>
+        <div class="section-title" data-i18n="section.settings.breaker.title">熔断与限流</div>
+        <div class="section-desc" data-i18n="section.settings.breaker.desc">账号错误熔断与自愈退避阈值，可热调，空则回退环境变量/默认</div>
+      </div></div>
+      <div class="section-body" id="set-breaker-body">
+        <div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div>
+      </div>
+    </div>
   </section>
 
   <section class="panel" id="p-models">
@@ -7923,6 +7933,58 @@ docker compose up -d --force-recreate</pre>
     // Credentials + system prompts (moved here from the experimental panel).
     this.loadCredentials();
     this.loadSystemPrompts();
+    // Circuit-breaker / rate-limit tunables (hot-flippable).
+    this.renderBreakerSettings();
+  },
+
+  async renderBreakerSettings() {
+    const body = document.getElementById('set-breaker-body');
+    if (!body) return;
+    let k = {};
+    try { k = (await this.api('GET', '/breaker-config'))?.knobs || {}; } catch { /* defaults */ }
+    const v = (key, d) => (k[key]?.value ?? d);
+    const min = (ms) => Math.round(ms / 60000);
+    const num = (id, key, val, lo, hi, step, labelKey, hintKey) => `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <label class="field-label" style="margin:0;min-width:240px" for="${id}">${this.esc(I18n.t(labelKey))}</label>
+        <input type="number" id="${id}" class="input" min="${lo}" max="${hi}" step="${step}" style="max-width:120px" value="${val}"
+          onchange="App.saveBreaker('${key}', this.value, ${lo}, ${hi}, ${step < 1 ? 0 : 1})">
+        <span class="text-sm text-muted">${this.esc(I18n.t(hintKey))}</span>
+      </div>`;
+    const bool = (key, val, labelKey) => `
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)">
+        <span class="text-sm">${this.esc(I18n.t(labelKey))}</span>
+        <label class="switch"><input type="checkbox" ${val ? 'checked' : ''} onchange="App.saveBreaker('${key}', this.checked)"><span class="switch-slider"></span></label>
+      </div>`;
+    body.innerHTML =
+        num('brk-err-threshold','errorStreakThreshold', v('errorStreakThreshold',3),1,50,1,'settings.breaker.errorStreakThreshold','settings.breaker.errorStreakThreshold.hint')
+      + num('brk-err-window','errorWindowMs', min(v('errorWindowMs',1800000)),1,1440,1,'settings.breaker.errorWindowMin','settings.breaker.errorWindowMin.hint')
+      + num('brk-int-threshold','internalErrorThreshold', v('internalErrorThreshold',2),1,50,1,'settings.breaker.internalErrorThreshold','settings.breaker.internalErrorThreshold.hint')
+      + num('brk-int-quar','internalQuarantineMs', min(v('internalQuarantineMs',300000)),1,1440,1,'settings.breaker.internalQuarantineMin','settings.breaker.internalQuarantineMin.hint')
+      + num('brk-recovery','errorRecoveryMs', min(v('errorRecoveryMs',900000)),1,1440,1,'settings.breaker.errorRecoveryMin','settings.breaker.errorRecoveryMin.hint')
+      + num('brk-base','breakerBaseMs', min(v('breakerBaseMs',900000)),1,1440,1,'settings.breaker.baseMin','settings.breaker.baseMin.hint')
+      + num('brk-factor','breakerFactor', v('breakerFactor',1.5),1.1,10,0.1,'settings.breaker.factor','settings.breaker.factor.hint')
+      + num('brk-max','breakerMaxMs', min(v('breakerMaxMs',3600000)),1,1440,1,'settings.breaker.maxMin','settings.breaker.maxMin.hint')
+      + num('brk-streak','breakerStreakStart', v('breakerStreakStart',2),1,50,1,'settings.breaker.streakStart','settings.breaker.streakStart.hint')
+      + num('brk-grace','newAccountGraceMs', min(v('newAccountGraceMs',600000)),0,1440,1,'settings.breaker.graceMin','settings.breaker.graceMin.hint')
+      + bool('breakerEnabled', v('breakerEnabled',true), 'settings.breaker.enabled')
+      + bool('lastAccountExempt', v('lastAccountExempt',true), 'settings.breaker.lastAccountExempt')
+      + bool('newAccountBaseline', v('newAccountBaseline',true), 'settings.breaker.newAccountBaseline')
+      + `<div class="field-hint" style="margin-top:10px">${this.esc(I18n.t('settings.breaker.retroHint'))}</div>`;
+    this.enhanceControls(body);
+  },
+  // Keys ending in "Ms" are shown in MINUTES; convert to ms before PUT.
+  async saveBreaker(key, value, lo, hi, decimals) {
+    let payload;
+    if (typeof value === 'boolean') payload = value;
+    else {
+      let n = Number(value); if (!Number.isFinite(n)) return;
+      n = Math.max(lo, Math.min(hi, n));
+      payload = /Ms$/.test(key) ? Math.round(n * 60000) : (decimals ? Math.round(n * 10) / 10 : Math.round(n));
+    }
+    try { await this.api('PUT', '/breaker-config', { [key]: payload }); this.toast(I18n.t('toast.settingSaved'), 'success'); }
+    catch (e) { this.toast(I18n.t('toast.toggleFailed', { error: e.message || '' }), 'error'); }
+    this.renderBreakerSettings();
   },
 
   async renderRuntimeEnvStatus() {

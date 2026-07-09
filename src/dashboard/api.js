@@ -26,6 +26,7 @@ import {
   getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
   getBackendSwitch, getBackendSwitchOverrides, setBackendSwitches,
+  getBreakerTunables, getBreakerOverrides, setBreakerTunables,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
@@ -624,6 +625,19 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       };
     }
     return json(res, 200, { success: true, switches });
+  }
+
+  // ─── Circuit-breaker / rate-limit tunables (hot-flippable) ──
+  const breakerPayload = () => {
+    const eff = getBreakerTunables(), ov = getBreakerOverrides(), knobs = {};
+    for (const k of Object.keys(eff))
+      knobs[k] = { value: eff[k], override: ov[k], source: ov[k] === null ? 'env' : 'config' };
+    return { knobs };
+  };
+  if (subpath === '/breaker-config' && method === 'GET') return json(res, 200, breakerPayload());
+  if (subpath === '/breaker-config' && method === 'PUT') {
+    setBreakerTunables(body || {});
+    return json(res, 200, { success: true, ...breakerPayload() });
   }
 
   // ─── Proxy test — try an HTTP CONNECT through the given proxy ──

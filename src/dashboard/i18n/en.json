@@ -194,7 +194,8 @@
     "settings": {
       "ux": { "title": "Interface Preferences", "desc": "Shared across browsers / devices (stored on the server)" },
       "security": { "title": "Security & Lockout", "desc": "Login-failure lockout thresholds and durations — adjustable or off" },
-      "runtimeEnv": { "title": "Runtime Backend", "desc": "These switches are set by deploy-time environment variables and need a process restart to change; shown here as read-only status" }
+      "runtimeEnv": { "title": "Runtime Backend", "desc": "These switches are set by deploy-time environment variables and need a process restart to change; shown here as read-only status" },
+      "breaker": { "title": "Circuit Breaker & Rate Limiting", "desc": "Per-account error breaker + self-healing backoff thresholds. Hot-editable; blank follows the env var / default." }
     },
     "nativeBridge": {
       "title": "Native Bridge",
@@ -1329,6 +1330,32 @@
       "switched": "Backend switch updated",
       "confirmTitle": "Switch backend routing",
       "confirmRouting": "This switch affects the backend routing of all subsequent requests; in-flight sessions may be disrupted. Continue?"
+    },
+    "breaker": {
+      "errorStreakThreshold": "Error trip threshold",
+      "errorStreakThreshold.hint": "Errors within the window before the account is disabled (default 3)",
+      "errorWindowMin": "Error streak window (min)",
+      "errorWindowMin.hint": "Errors older than this reset the streak (default 30)",
+      "internalErrorThreshold": "Internal-error quarantine threshold",
+      "internalErrorThreshold.hint": "Consecutive upstream internal errors before a quarantine (default 2)",
+      "internalQuarantineMin": "Internal-error quarantine (min)",
+      "internalQuarantineMin.hint": "How long a quarantined account stays out (default 5)",
+      "errorRecoveryMin": "Half-open recovery TTL (min)",
+      "errorRecoveryMin.hint": "How long an error'd account waits before a half-open retry (default 15)",
+      "enabled": "Exponential backoff escalation",
+      "baseMin": "Backoff base (min)",
+      "baseMin.hint": "Base cooldown for the exponential ladder (default = recovery TTL)",
+      "factor": "Backoff factor",
+      "factor.hint": "Cooldown multiplier per repeat episode (default 1.5, must be >1)",
+      "maxMin": "Backoff cap (min)",
+      "maxMin.hint": "Hard ceiling on the backoff cooldown (default 60)",
+      "streakStart": "Backoff start streak",
+      "streakStart.hint": "Episode count at which escalation begins (default 2)",
+      "graceMin": "New-account grace (min)",
+      "graceMin.hint": "New accounts are exempt from escalation this long; 0 disables (default 10)",
+      "lastAccountExempt": "Last-account exemption",
+      "newAccountBaseline": "New-account LRU baseline",
+      "retroHint": "Lowering a threshold takes effect on the next error. errorCount accumulates persistently, so an account already near the limit may trip immediately after you lower it."
     }
   }
 }
