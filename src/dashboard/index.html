@@ -7439,18 +7439,12 @@ docker compose up -d --force-recreate</pre>
     const rOuter = Math.min(W, H) / 2 - 6;
     const rInner = rOuter * 0.58;
 
+    // Compute the final segment geometry once (used for hover + each anim frame).
     const segments = [];
     let angle = -Math.PI / 2;
     top.forEach((seg, i) => {
       const frac = seg.count / total;
       const a2 = angle + frac * Math.PI * 2;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(angle) * rInner, cy + Math.sin(angle) * rInner);
-      ctx.arc(cx, cy, rOuter, angle, a2);
-      ctx.arc(cx, cy, rInner, a2, angle, true);
-      ctx.closePath();
-      ctx.fillStyle = this._pieColors[i % this._pieColors.length];
-      ctx.fill();
       segments.push({ ...seg, color: this._pieColors[i % this._pieColors.length], startAngle: angle, endAngle: a2 });
       angle = a2;
     });
@@ -7458,15 +7452,54 @@ docker compose up -d --force-recreate</pre>
     this._pieHitMap = { cx, cy, rOuter, rInner, total, segments, W, H };
     this._bindPieHover();
 
-    // Center label — resolve theme vars (canvas can't read CSS var()).
-    ctx.fillStyle = this._cssColor('--ink', '#f0efe9');
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.font = "600 22px 'JetBrains Mono', 'Cascadia Code', Consolas, monospace";
-    ctx.fillText(total, cx, cy - 6);
-    ctx.fillStyle = this._hexA(this._cssColor('--text-muted', '#9a988f'), 0.85);
-    ctx.font = '10px sans-serif';
-    ctx.fillText(I18n.t('section.requestChart.legendRequests'), cx, cy + 12);
+    const startAt = -Math.PI / 2;
+    const legendRequests = I18n.t('section.requestChart.legendRequests');
+    // Paint the donut swept to `p` of full rotation, mirroring the main chart's
+    // 0→1 grow-in so the stats page feels as smooth as the dashboard. Center
+    // label fades in over the last third of the sweep. Hover repaints call p=1.
+    const paint = (p) => {
+      ctx.clearRect(0, 0, W, H);
+      const sweepEnd = startAt + p * Math.PI * 2;
+      for (const seg of segments) {
+        const a1 = seg.startAngle;
+        const a2 = Math.min(seg.endAngle, sweepEnd);
+        if (a2 <= a1) continue;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a1) * rInner, cy + Math.sin(a1) * rInner);
+        ctx.arc(cx, cy, rOuter, a1, a2);
+        ctx.arc(cx, cy, rInner, a2, a1, true);
+        ctx.closePath();
+        ctx.fillStyle = seg.color;
+        ctx.fill();
+      }
+      // Center label — resolve theme vars (canvas can't read CSS var()).
+      const labelAlpha = Math.max(0, Math.min(1, (p - 0.66) / 0.34));
+      if (labelAlpha > 0) {
+        ctx.save();
+        ctx.globalAlpha = labelAlpha;
+        ctx.fillStyle = this._cssColor('--ink', '#f0efe9');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = "600 22px 'JetBrains Mono', 'Cascadia Code', Consolas, monospace";
+        ctx.fillText(total, cx, cy - 6);
+        ctx.fillStyle = this._hexA(this._cssColor('--text-muted', '#9a988f'), 0.85);
+        ctx.font = '10px sans-serif';
+        ctx.fillText(legendRequests, cx, cy + 12);
+        ctx.restore();
+      }
+    };
+    this._piePaint = paint; // hover handler repaints via this at p=1
+
+    // Animate the sweep (cubic ease-out, ~600ms), matching renderMainChart.
+    cancelAnimationFrame(this._pieAnim || 0);
+    const dur = 600, t0 = performance.now();
+    const loop = (now) => {
+      const t = Math.min(1, (now - t0) / dur);
+      const p = 1 - Math.pow(1 - t, 3);
+      paint(p);
+      if (t < 1) this._pieAnim = requestAnimationFrame(loop);
+    };
+    this._pieAnim = requestAnimationFrame(loop);
 
     if (legend) {
       legend.innerHTML = top.map((seg, i) => {
