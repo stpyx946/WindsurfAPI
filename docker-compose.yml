@@ -26,6 +26,15 @@ services:
     environment:
       PORT: 3003
       DATA_DIR: /data
+      # DEVIN_CONNECT defaults ON in Docker so a fresh `docker compose up` uses
+      # the pure-HTTP cloud egress + native tool_call path out of the box —
+      # native is what lets weaker models (glm-5.2 etc.) follow the tool
+      # protocol reliably in agentic clients (Claude Code/Cline/Codex). With it
+      # OFF, requests fall back to Cascade + prompt-emulation, where those
+      # models intermittently narrate instead of emitting a tool_call (#210).
+      # `${VAR:-1}` keeps it overridable: set DEVIN_CONNECT=0 in your .env to
+      # force the legacy Cascade path.
+      DEVIN_CONNECT: ${DEVIN_CONNECT:-1}
       # Bundled nginx LB is the only hop in front of the app in this topology,
       # so trust its X-Forwarded-For — otherwise every caller looks like the
       # nginx container IP and the per-caller brute-force lockout collapses to
