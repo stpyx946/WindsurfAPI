@@ -57,6 +57,89 @@ function isWhitelisted(line) {
   return WHITELIST_PATTERNS.some(p => p.test(line));
 }
 
+// ---- Check #8 helpers: hardcoded English literals in the App <script> region ----
+
+// DOM sinks whose assigned string is rendered to the user.
+const COPY_SINK = '(?:textContent|innerText|placeholder|title|value|label|alt|ariaLabel)';
+const HTML_SINK = '(?:innerHTML|outerHTML)';
+const QUOTE = "['\"`]";
+
+// Technical tokens that read identically in any locale — never worth translating.
+const UNIVERSAL_TERMS = new Set([
+  'pid', 'rss', 'cpu', 'ram', 'gpu', 'sqlite', 'url', 'uri', 'api', 'id', 'ip',
+  'http', 'https', 'json', 'html', 'css', 'dns', 'tls', 'ssl', 'ok', 'uuid',
+  'cap', 'sse', 'acp', 'ls', 'rpc', 'jwt', 'ttl', 'md5', 'sha', 'utc', 'io',
+]);
+
+// Distinguish user-facing display copy from code (identifiers, CSS, URLs, enums,
+// acronyms, config samples). Multi-word phrases are almost always copy; single
+// tokens must clear a stack of code-shaped exclusions.
+function looksLikeDisplayCopy(text) {
+  const t = String(text).trim();
+  if (!t) return false;
+  if (t.includes('${') || t.includes('{{')) return false;         // interpolated
+  if (!/[A-Za-z]{2,}/.test(t)) return false;                      // needs real letters
+  if (/^[\d.,\s%+×x/:()[\]|·—–-]+$/.test(t)) return false;        // pure numbers/units/symbols
+  if (/\n/.test(t)) return false;                                 // multiline = code/config sample
+  if (/^[#/]/.test(t)) return false;                              // comment / path / hash
+  if (/[A-Za-z0-9_]+=[^=]/.test(t) && !/\s\S+\s/.test(t)) return false; // KEY=value with no prose
+  if (/[a-z-]+\s*:\s*[^;]+;/.test(t)) return false;               // inline css declaration
+  const isMultiWord = /\S\s+\S/.test(t);
+  if (!isMultiWord) {
+    if (/^[a-z][\w-]*$/.test(t)) return false;                    // camel/kebab identifier
+    if (/^[A-Z][A-Z0-9_]+$/.test(t)) return false;                // CONSTANT
+    if (/^[\w-]+\.[\w.-]+$/.test(t)) return false;                // dotted key / filename
+    if (/^https?:/.test(t) || /\.(js|css|html|json|svg|png)$/.test(t)) return false;
+    if (/^\d*\s*(ms|px|em|rem|s|kb|mb|gb|%)$/i.test(t)) return false; // unit
+    const bare = t.replace(/[^A-Za-z0-9]/g, '');
+    if (bare.length < 4) return false;                            // short = abbreviation/acronym
+    if (UNIVERSAL_TERMS.has(bare.toLowerCase())) return false;
+  }
+  return true;
+}
+
+// Scan the App <script>...</script> region for hardcoded English string literals
+// that reach the user. Returns [{ kind, text, line }]. Deliberately conservative:
+// tuned to 0 findings on the current index.html so any hit is a genuine regression.
+// Not exported: this module runs checks + process.exit() at load, so it must not
+// be imported. Check #8 is exercised via subprocess in test/check-i18n.test.js.
+function scanScriptRegionForEnglish(htmlContent) {
+  const bodyStart = htmlContent.indexOf('<body>');
+  const scriptStart = htmlContent.indexOf('<script>', bodyStart >= 0 ? bodyStart : 0);
+  if (scriptStart < 0) return [];
+  const script = htmlContent.slice(scriptStart);
+  const baseLine = htmlContent.slice(0, scriptStart).split('\n').length - 1;
+  const lineAt = (idx) => baseLine + script.slice(0, idx).split('\n').length;
+
+  const findings = [];
+  const litRe = '(' + QUOTE + ')((?:\\\\.|(?!\\1)[^\\\\])*)\\1';
+  let m;
+
+  // Copy sinks: the whole RHS literal is user text.
+  const copyRe = new RegExp('\\.' + COPY_SINK + '\\s*\\+?=\\s*' + litRe, 'g');
+  while ((m = copyRe.exec(script)) !== null) {
+    if (m[1] === '`' && m[2].includes('${')) continue;
+    if (looksLikeDisplayCopy(m[2])) findings.push({ kind: 'copy', text: m[2].slice(0, 60), line: lineAt(m.index) });
+  }
+
+  // HTML sinks: extract text nodes between tags. Strip ${...} interpolations first
+  // (their JS — arrow =>, comparisons — carries stray < > that fake tag/text
+  // boundaries), then split metadata rows ("PID … · RSS …") on separators so an
+  // acronym label list does not read as one blob while real prose still flags.
+  const htmlRe = new RegExp('\\.' + HTML_SINK + '\\s*\\+?=\\s*' + litRe, 'g');
+  while ((m = htmlRe.exec(script)) !== null) {
+    const frag = m[2].replace(/\$\{[^}]*\}/g, ' ');
+    const textRe = />([^<>]+)</g;
+    let t;
+    while ((t = textRe.exec(frag)) !== null) {
+      for (const phrase of t[1].split(/\s*[·|]\s*/)) {
+        if (looksLikeDisplayCopy(phrase)) findings.push({ kind: 'html', text: phrase.trim().slice(0, 60), line: lineAt(m.index) });
+      }
+    }
+  }
+  return findings;
+}
+
 function checkFileForChinese(filePath, content) {
   const lines = content.split('\n');
   let found = false;
@@ -318,6 +401,24 @@ while ((tok = tokenRe.exec(bodyHtml)) !== null) {
 }
 if (hardcodedEnglishViolations === 0) {
   logOk('No hardcoded English text nodes in static HTML body');
+}
+
+// 8. Hardcoded English string literals in the App <script> region.
+// Checks #6/#7 stop at the <script> tag, so the entire JS half — where most
+// runtime copy is generated — was unguarded: `el.textContent = 'Save'` or an
+// innerHTML template with English text nodes ships untranslated with a green
+// gate (and `I18n.t('k') || 'English'` fallbacks are a fake safety net). This
+// scan flags literals assigned to DOM copy sinks / text nodes inside innerHTML
+// that bypass I18n.t(). It is calibrated to 0 findings on the current file;
+// WARN-FIRST (never touches exitCode) so a future regression is visible without
+// breaking the tree — promote to logError once the codebase stays clean.
+console.log('\nChecking App <script> region for hardcoded (non-i18n) English string literals...');
+const jsEnglishFindings = scanScriptRegionForEnglish(htmlContent);
+if (jsEnglishFindings.length === 0) {
+  logOk('No hardcoded English string literals in App <script> region');
+} else {
+  logWarn(`Hardcoded English string literal(s) in App <script> region (${jsEnglishFindings.length}) — wrap in I18n.t():`);
+  jsEnglishFindings.forEach((f) => console.log(`  - index.html:${f.line}: [${f.kind}] "${f.text}"`));
 }
 
 // Summary

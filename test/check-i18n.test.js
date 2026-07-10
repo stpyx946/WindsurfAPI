@@ -62,4 +62,69 @@ describe('scripts/check-i18n.js', () => {
       rmSync(workspace, { recursive: true, force: true });
     }
   });
+
+  // Check #8: hardcoded English string literals in the App <script> region.
+  // The English scan (#7) stops at <script>, so JS-generated copy that bypasses
+  // I18n.t() used to ship untranslated with a green gate. #8 flags it WARN-FIRST
+  // (visible, but does not fail the build) so a regression is caught without
+  // blocking unrelated PRs on the large existing script region.
+
+  // Inject a snippet just before the App IIFE opener so it lands inside the
+  // <script> region that check #8 scans.
+  function injectIntoScript(indexPath, snippet) {
+    const html = readFileSync(indexPath, 'utf8');
+    const bodyStart = html.indexOf('<body>');
+    const scriptOpen = html.indexOf('<script>', bodyStart);
+    const insertAt = scriptOpen + '<script>'.length;
+    const patched = `${html.slice(0, insertAt)}\n${snippet}\n${html.slice(insertAt)}`;
+    writeFileSync(indexPath, patched, 'utf8');
+  }
+
+  it('warns (does NOT fail) on hardcoded English literals in the App <script> region', () => {
+    const workspace = makeWorkspace();
+    try {
+      const indexPath = join(workspace, 'src', 'dashboard', 'index.html');
+      injectIntoScript(indexPath, `
+        el.textContent = 'Save all changes';
+        node.innerHTML = '<span>Loading data now</span>';
+        input.placeholder = 'Type your search here';
+      `);
+
+      const result = runCheck(workspace);
+      // WARN-first: violations are reported but the gate stays green.
+      assert.equal(result.status, 0, 'check #8 must not fail the build (warn-first)');
+      assert.match(result.stdout, /App <script> region/);
+      assert.match(result.stdout, /Hardcoded English string literal/);
+      assert.match(result.stdout, /Save all changes/);
+      assert.match(result.stdout, /Loading data now/);
+      assert.match(result.stdout, /Type your search here/);
+      assert.match(result.stdout, /All i18n checks passed/);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('does NOT warn on I18n.t() calls or code-shaped literals in the App <script> region', () => {
+    const workspace = makeWorkspace();
+    try {
+      const indexPath = join(workspace, 'src', 'dashboard', 'index.html');
+      injectIntoScript(indexPath, `
+        el.textContent = I18n.t('nav.group.overview');
+        el.className = 'seg-btn active';
+        el.setAttribute('data-view', 'grid');
+        node.style.color = 'var(--success)';
+        const u = 'https://windsurf.com/docs';
+        el.textContent = key;
+        el.textContent = \`\${count} items\`;
+        meta.innerHTML = \`<div>PID \${p} · RSS \${r} · Cap \${c}</div>\`;
+      `);
+
+      const result = runCheck(workspace);
+      assert.equal(result.status, 0);
+      // The clean OK line for #8 must appear (no findings from the injected code).
+      assert.match(result.stdout, /No hardcoded English string literals in App <script> region/);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
 });
