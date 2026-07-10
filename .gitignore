@@ -82,3 +82,14 @@ ghidra-proj/
 *-context-dump.txt
 上下文*.txt
 docs/*.bak
+
+# Full-chain request traces + raw wire dumps (self-use debug/RE, never commit)
+.trace/
+.wire-dump/
+.wire-dump-pull/
+
+# Exported chat-session transcripts (/export output — never commit)
+2026-*-local-command-*.txt
+2026-*dprojectwindsurfapiclaudetxt*.txt
+*这个是*.txt
+*这也是*.txt
