@@ -332,6 +332,15 @@
       "mergedAt": "2026-06-28",
       "title": "fix(tool-emulation): use gpt_native dialect for glm-5.2",
       "summary": "首次贡献就解了 glm-5.2 的工具调用哑火。glm 系列默认走 glm47 那套 XML tool-call 标记，但 glm-5.2 直接无视标记、用纯文本作答，工具调用根本 emit 不出来。lovivi 在 pickToolDialect 里给 glm-5.2 和它的 glm-5-2-* SKU 别名单独切到 gpt_native 的 function_call JSON dialect —— 这套是模型稳定 emit、parser 也能正确解析的；老 GLM 维持 glm47 不动，没经验证不乱动。顺手加了 WINDSURFAPI_FORCE_TOOL_DIALECT 环境变量（限定 glm47/openai_json_xml/kimi_k2/gpt_native 四值）方便测试时强制方言。10 行精准改动，是新模型上线后\"工具协议方言对不上\"这类长尾问题的标准排查范式。"
+    },
+    {
+      "login": "clarezoe",
+      "pr": 206,
+      "weight": "S",
+      "weightLabel": "模型 catalog 激活时重试同步 · 根因修复 + 全量测试",
+      "mergedAt": "2026-07-06",
+      "title": "fix: retry cloud model catalog sync when first account becomes active",
+      "summary": "根因修复 + 带全套测试，一次到位。fetchAndMergeModelCatalog() 只在 initAuth() 启动时跑一次：如果那一刻池里没有活跃账号，云端 catalog 同步就被整个跳过、再也不重试 —— 后来才加进来的账号永远触发不了 re-sync，导致新上线的上游模型（比如 2026-07-01 重新部署的 Claude Fable 5）不手动重启就不出现在 /v1/models。clarezoe 加了 _modelCatalogSynced 标志 + trySyncModelCatalog() 这个会合并并发调用的 fire-and-forget 包装，并把它挂到每一条账号激活路径上：addAccountByKey / addAccountByToken / addAccountByEmail / setAccountStatus(active) / resetAccountErrors / reportSuccess / maybeRecoverErrorAccount —— 加号、登录、手动改状态、错误重置、成功自愈、半开恢复,任意一条让账号变活都会补触发同步；四道 guard(已同步 / 同步进行中 / 无活跃账号 / 否则后台 fire)避免重复和并发风暴。PR 本身还捎带了 opus-4-8 全 effort 梯队、reasoning_effort 替换、以及从 thinking 里提取 tool_call（这块正好治 #178 那类工具不被调用）。+392/-32 跨 auth / chat / models / server 五个源文件 + 四个测试文件。作者已 rebase 手动合进 master(d4c7259..baa8524),去重一处路由 + 一行调试日志,其余原样保留,全量测试绿。"
     }
   ]
 }
