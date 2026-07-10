@@ -116,6 +116,75 @@ describe('buildGetChatMessageRequest', () => {
     assert.ok(!getField(fields, 22, 2), '#22 request_id is absent on a turn-1 request');
   });
 
+  // ★ 2026-07-10: empty-system + tools guard. Verified from live devin.exe capture
+  // + boundary experiment: Devin's upstream returns "internal error occurred" for a
+  // Claude-family request that declares tools (#10) but has an EMPTY/absent system
+  // prompt (#2). A single char of system is enough to pass. We inject a minimal
+  // system when tools are present and system is empty.
+  it('injects a non-empty system #2 when tools are present but no system given', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'edit', description: 'edit', parameters: { type: 'object', properties: {} } } }],
+      nativeToolCall: true,
+    });
+    const f2 = getField(parseFields(proto), 2, 2);
+    assert.ok(f2 && f2.value.length > 0, '#2 system_prompt is non-empty when tools present');
+  });
+
+  it('does NOT inject a system when no tools (empty system stays empty)', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    const f2 = getField(parseFields(proto), 2, 2);
+    // no system + no tools → #2 empty (length 0) or absent; must NOT fabricate one
+    assert.ok(!f2 || f2.value.length === 0, '#2 stays empty when no tools and no system');
+  });
+
+  it('preserves a caller-supplied system verbatim even with tools', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'system', content: 'be nice' }, { role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'edit', description: 'edit', parameters: { type: 'object', properties: {} } } }],
+      nativeToolCall: true,
+    });
+    assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), 'be nice');
+  });
+
+  // ★ 2026-07-10: tool-description length cap. Verified live — a Claude-family
+  // native request with a very long tool description (Claude Code's TaskOutput,
+  // 1080 chars) returns upstream "internal error"; capped it passes. We truncate
+  // the description (a model hint) without touching name/schema.
+  it('caps a very long tool description in the encoded #10 ToolDef', () => {
+    const longDesc = 'x'.repeat(1200);
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'edit', description: longDesc, parameters: { type: 'object', properties: {} } } }],
+      nativeToolCall: true,
+    });
+    const fields = parseFields(proto);
+    const td = getField(fields, 10, 2);
+    assert.ok(td, 'has #10 ToolDef');
+    const inner = parseFields(td.value);
+    const desc = getField(inner, 2, 2).value.toString('utf8');
+    assert.ok(desc.length <= 500, `description capped to <=500 (got ${desc.length})`);
+    // name (#1) still intact
+    assert.equal(getField(inner, 1, 2).value.toString('utf8'), 'edit');
+  });
+
+  it('leaves a short tool description untouched', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
+      tools: [{ type: 'function', function: { name: 'edit', description: 'edit a file', parameters: { type: 'object', properties: {} } } }],
+      nativeToolCall: true,
+    });
+    const inner = parseFields(getField(parseFields(proto), 10, 2).value);
+    assert.equal(getField(inner, 2, 2).value.toString('utf8'), 'edit a file');
+  });
+
   it('embeds the SINGLE token in ClientMetadata #3 (header doubling is separate)', () => {
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'm', messages: [{ role: 'user', content: 'x' }],

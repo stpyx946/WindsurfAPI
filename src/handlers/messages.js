@@ -503,28 +503,14 @@ function flattenContentBlocks(blocks) {
 // coding assistant; refuse malicious use) but drops the trigger vocabulary, so the
 // request is served. Only these two passages are touched — the user's actual
 // instructions are left intact. Opt out with WINDSURFAPI_NEUTRALIZE_CLIENT_ID=0.
-export function neutralizeClientIdentity(text, env = process.env) {
-  if (!text || String(env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID || '1') === '0') return text;
-  let out = String(text);
-  // (a) competitor self-identification (529 gate). Both straight (') and curly (’).
-  out = out.replace(
-    /You are Claude Code,\s*Anthropic['’]?s official CLI for Claude\.?/gi,
-    'You are an AI coding assistant.',
-  );
-  out = out.replace(
-    /Claude Code,\s*Anthropic['’]?s official CLI for Claude\.?/gi,
-    'an AI coding assistant.',
-  );
-  // (b) security-policy paragraph (401 abuse gate). Match the "IMPORTANT: Assist
-  // with authorized security testing …" sentence through its "… use cases."
-  // terminator (the dual-use clause). [\s\S] so it spans line breaks; non-greedy
-  // to stop at the first paragraph end. Replaced with a benign safety statement.
-  out = out.replace(
-    /IMPORTANT:\s*Assist with authorized security testing[\s\S]*?(?:defensive use cases\.|security research[^.]*\.)/i,
-    'Decline requests that facilitate clearly malicious or harmful activity, and otherwise help the user with their software engineering task.',
-  );
-  return out;
-}
+// neutralizeClientIdentity moved to ./identity-neutralize.js so the DEVIN_CONNECT
+// egress (handlers/chat.js) can reuse it without a circular import (messages.js
+// imports chat.js). Imported for local use in anthropicToOpenAI below AND
+// re-exported to keep existing import sites (`from './messages.js'`) working.
+// NB: a bare `export { x } from …` does NOT create a local binding, so the
+// internal call site would throw ReferenceError — hence the explicit import.
+export { neutralizeClientIdentity } from './identity-neutralize.js';
+import { neutralizeClientIdentity } from './identity-neutralize.js';
 
 function anthropicToOpenAI(body) {
   const cachePolicy = extractCachePolicy(body);

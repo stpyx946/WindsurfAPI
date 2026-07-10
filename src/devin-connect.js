@@ -48,17 +48,33 @@ const PATH = '/exa.api_server_pb.ApiServerService/GetChatMessage';
 // is a temporary self-use debug aid, never a served endpoint.
 let _wireSeq = 0;
 function dumpWire(kind, bytes, meta = {}) {
-  if (String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') !== '1') return;
+  const wireDump = String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') === '1';
+  const traced = String(process.env.WINDSURFAPI_TRACE || '') === '1' && meta.traceId;
+  if (!wireDump && !traced) return;
   if (!bytes || !bytes.length) return;
   try {
-    const dir = process.env.DEVIN_CONNECT_WIRE_DUMP_DIR || _wirePath.resolve(process.cwd(), '.wire-dump');
-    _wireFs.mkdirSync(dir, { recursive: true });
-    const seq = String(++_wireSeq).padStart(4, '0');
-    const model = String(meta.model || 'model').replace(/[^\w.-]/g, '_').slice(0, 40);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const base = `${stamp}-${seq}-${model}-${kind}`;
-    _wireFs.writeFileSync(_wirePath.join(dir, `${base}.bin`), bytes);
-    if (meta.note) _wireFs.writeFileSync(_wirePath.join(dir, `${base}.txt`), meta.note);
+    // Full-chain trace mode: drop the raw bytes into this request's trace dir
+    // under the fixed leg name (03=req, 04=res) the manifest expects, so the
+    // Devin wire bytes sit next to 01-client-req / 02-routing / 05-client-res.
+    if (traced) {
+      const root = process.env.WINDSURFAPI_TRACE_DIR || _wirePath.resolve(process.cwd(), '.trace');
+      const tdir = _wirePath.join(root, String(meta.traceId).replace(/[^\w.-]/g, '_'));
+      _wireFs.mkdirSync(tdir, { recursive: true });
+      const leg = kind === 'req' ? '03-upstream-req' : '04-upstream-res';
+      _wireFs.writeFileSync(_wirePath.join(tdir, `${leg}.bin`), bytes);
+      if (meta.note) _wireFs.writeFileSync(_wirePath.join(tdir, `${leg}.txt`), meta.note);
+    }
+    // Standalone wire-dump mode (offline RE, no trace correlation needed).
+    if (wireDump) {
+      const dir = process.env.DEVIN_CONNECT_WIRE_DUMP_DIR || _wirePath.resolve(process.cwd(), '.wire-dump');
+      _wireFs.mkdirSync(dir, { recursive: true });
+      const seq = String(++_wireSeq).padStart(4, '0');
+      const model = String(meta.model || 'model').replace(/[^\w.-]/g, '_').slice(0, 40);
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const base = `${stamp}-${seq}-${model}-${kind}`;
+      _wireFs.writeFileSync(_wirePath.join(dir, `${base}.bin`), bytes);
+      if (meta.note) _wireFs.writeFileSync(_wirePath.join(dir, `${base}.txt`), meta.note);
+    }
   } catch (e) {
     log.warn(`wire-dump failed: ${e.message}`);
   }
@@ -534,11 +550,32 @@ export function normalizeToolSchema(schema) {
   return out;
 }
 
+// ★ Tool-description length cap (2026-07-10, verified from live paid probes).
+// Devin's upstream returns "an internal error occurred" for a Claude-family
+// NATIVE request when a tool's `description` is long enough to cross an upstream
+// content/complexity threshold (isolated live: Claude Code's `TaskOutput` 1080-char
+// description alone trips it; capped to 500 it passes; ALL 24 CC tools with every
+// description ≤500 pass). It's a cumulative content limit, not a specific string.
+// gpt/swe-family tolerate the long descriptions; Claude-family does not. Truncating
+// the DESCRIPTION only degrades the model's tool-usage hint slightly — it never
+// changes which tool is called or its schema — so a generous cap is safe. Default
+// 500 (proven-safe); env WINDSURFAPI_TOOL_DESC_MAX overrides (0 = no cap).
+function toolDescMax(env = process.env) {
+  const raw = Number(env.WINDSURFAPI_TOOL_DESC_MAX);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 500;
+}
+function capToolDescription(desc, env = process.env) {
+  const cap = toolDescMax(env);
+  const s = String(desc);
+  if (cap <= 0 || s.length <= cap) return s;
+  return s.slice(0, cap);
+}
+
 function encodeToolDef(tool, tags) {
   const fn = tool?.function || {};
   const fields = [];
   if (fn.name) fields.push(writeStringField(tags.name, String(fn.name)));
-  if (fn.description) fields.push(writeStringField(tags.description, String(fn.description)));
+  if (fn.description) fields.push(writeStringField(tags.description, capToolDescription(fn.description)));
   if (fn.parameters !== undefined) {
     // SWITCH POINT (see header): string today; writeBytesField if RE/capture proves bytes.
     // Normalize the schema envelope first so a malformed client/MCP schema can't
@@ -698,6 +735,20 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
       writeVarintField(2, source),
       writeStringField(3, text),
     ]));
+  }
+
+  // ★ EMPTY-SYSTEM + TOOLS GUARD (2026-07-10, verified from live devin.exe capture).
+  // Devin's upstream rejects a Claude-family request that declares tools (#10
+  // ToolDef) but carries an EMPTY/absent system prompt (#2) → "an internal error
+  // occurred (trace ID ...)". Boundary nailed live: no-system + tools = ERR;
+  // empty-string system + tools = ERR; a SINGLE character of system + tools = OK.
+  // Real devin.exe always sends a ~20KB system, so it never hit this; a bare
+  // API client (curl / a minimal agent) that sends tools without a system did.
+  // gpt/swe-family tolerate an empty system; Claude-family does not. When we have
+  // tool defs but no system text, inject a minimal benign system so the request is
+  // well-formed. Harmless for models that don't need it (one short sentence).
+  if (!systemPrompt && Array.isArray(tools) && tools.length > 0) {
+    systemPrompt = 'You are a helpful assistant. Use the available tools when appropriate.';
   }
 
   // ModelConfig #15. RE-CALIBRATED FROM THE FULL CAPTURE SET (not just req022):
@@ -1376,6 +1427,21 @@ export function classifyUpstreamError(text, code = null, status = null) {
   if (/internal error occurred/i.test(lc)) {
     return { code: 'UPSTREAM_INTERNAL', message: body || 'DEVIN_CONNECT: upstream internal error' };
   }
+  // CONTENT POLICY block (2026-07-10, live-confirmed). Upstream returns
+  // `permission_denied` with "blocked by our content policy / remove sensitive or
+  // unsafe content from your prompt" when the REQUEST CONTENT trips Devin's policy
+  // (observed: a full Claude-Code system prompt with git status + security-flavored
+  // commit messages). This is a PER-REQUEST content rejection, NOT an auth failure
+  // — the session token is perfectly alive (a plain prompt on the same account
+  // succeeds immediately after). It MUST be matched BEFORE the UNAUTHORIZED branch
+  // below, because that branch's `permission_denied` pattern would otherwise read
+  // it as a dead token → re-login storm + the account cooled/failed-over → a live
+  // account wrongly benched and the client told "all accounts exhausted (dead
+  // session tokens)" instead of the real "your content was blocked". Non-retryable
+  // (retrying identical content just re-trips the policy) and NO account penalty.
+  if (/blocked by (our |the )?content policy|remove (sensitive|unsafe) content|content[_ ]policy/i.test(lc)) {
+    return { code: 'CONTENT_BLOCKED', message: body || 'DEVIN_CONNECT: request blocked by upstream content policy' };
+  }
 
   // ── ACCOUNT-STATE / PERMANENT ────────────────────────────────────────────
   // Out-of-credit/quota is an ACCOUNT state (cool it down), checked before the
@@ -1504,7 +1570,7 @@ export function mapFinishReason(finish, env = process.env) {
  */
 export async function* streamChat({
   messages, model, sessionId, completion, tools,
-  token, signal, timeoutMs, deadlineMs, host, env = process.env, nativeToolCall = false,
+  token, signal, timeoutMs, deadlineMs, host, env = process.env, nativeToolCall = false, traceId = null,
 } = {}) {
   // Idle timeout: socket inactivity. Absolute deadline: total wall-clock from
   // request start — this is the one that catches a stream that keeps dribbling
@@ -1550,7 +1616,7 @@ export async function* streamChat({
 
   // Wire capture (gated): dump the exact request protobuf (pre-envelope `proto`,
   // the clean bytes) for offline RE. No-op unless DEVIN_CONNECT_WIRE_DUMP=1.
-  dumpWire('req', proto, { model, note: `model=${model} sessionId=${sessionId || ''} tools=${Array.isArray(tools) ? tools.length : 0} nativeToolCall=${nativeToolCall}` });
+  dumpWire('req', proto, { model, traceId, note: `model=${model} sessionId=${sessionId || ''} tools=${Array.isArray(tools) ? tools.length : 0} nativeToolCall=${nativeToolCall}` });
 
   // AUTH (critical): the header token is the session token doubled, dash-joined.
   const authHeader = `Basic ${sessionToken}-${sessionToken}`;
@@ -1621,7 +1687,9 @@ export async function* streamChat({
       return;
     }
     const parser = new StreamingFrameParser();
-    const _wireResChunks = String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') === '1' ? [] : null;
+    const _wireCapture = String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') === '1'
+      || (String(process.env.WINDSURFAPI_TRACE || '') === '1' && !!traceId);
+    const _wireResChunks = _wireCapture ? [] : null;
     res.on('data', (chunk) => {
       if (_wireResChunks) _wireResChunks.push(chunk);
       parser.push(chunk);
@@ -1648,7 +1716,7 @@ export async function* streamChat({
               }
             } catch { /* non-JSON trailer — leave as success */ }
           }
-          if (_wireResChunks) dumpWire('res', Buffer.concat(_wireResChunks), { model, note: `raw connect frames (gzip-as-sent), trailer=${text.slice(0, 200)}` });
+          if (_wireResChunks) dumpWire('res', Buffer.concat(_wireResChunks), { model, traceId, note: `raw connect frames (gzip-as-sent), trailer=${text.slice(0, 200)}` });
           done = true;
           pump();
           return;

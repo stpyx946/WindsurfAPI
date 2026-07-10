@@ -179,3 +179,35 @@ describe('connectErrorToHttp — UPSTREAM_INTERNAL mapping', () => {
     });
   });
 });
+
+// CONTENT_BLOCKED (2026-07-10, live-confirmed) — upstream `permission_denied` with
+// "blocked by our content policy" is a PER-REQUEST content rejection, NOT a dead
+// token. Misclassifying it as UNAUTHORIZED benched a live account and lied to the
+// client with "all accounts exhausted (dead session tokens)".
+describe('classifyUpstreamError — content-policy class', () => {
+  const POLICY = 'Your request was blocked by our content policy. Please remove sensitive or unsafe content from your prompt, memories, and other settings and try again. (trace ID: abc123)';
+
+  it('classifies a content-policy block as CONTENT_BLOCKED, not UNAUTHORIZED', () => {
+    assert.equal(classifyUpstreamError(POLICY, 'permission_denied', 403).code, 'CONTENT_BLOCKED');
+    assert.equal(classifyUpstreamError(POLICY, null, 401).code, 'CONTENT_BLOCKED');
+  });
+
+  it('matches the "remove sensitive/unsafe content" phrasing too', () => {
+    assert.equal(classifyUpstreamError('please remove unsafe content from your prompt', 'permission_denied', 403).code, 'CONTENT_BLOCKED');
+  });
+
+  it('a genuine auth failure is still UNAUTHORIZED (no over-match)', () => {
+    assert.equal(classifyUpstreamError('unauthenticated', null, 401).code, 'UNAUTHORIZED');
+    assert.equal(classifyUpstreamError('invalid token', 'permission_denied', 403).code, 'UNAUTHORIZED');
+  });
+
+  it('is NOT retryable (retrying identical content just re-trips the policy)', () => {
+    assert.equal(isRetryable({ code: 'CONTENT_BLOCKED' }), false);
+  });
+
+  it('maps to 400 invalid_request_error (caller must change the prompt, not re-auth)', () => {
+    assert.deepEqual(connectErrorToHttp('CONTENT_BLOCKED'), {
+      status: 400, type: 'invalid_request_error',
+    });
+  });
+});
