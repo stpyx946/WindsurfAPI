@@ -689,6 +689,10 @@
     "customCancel": "取消",
     "customHint": "最多显示最近 30 天数据"
   },
+  "poolView": {
+    "grid": "发光网格",
+    "bars": "状态条"
+  },
   "credits": {
     "contributors": "核心贡献者",
     "history": "贡献历史 · {{count}} 项",
@@ -758,7 +762,9 @@
       "promptCredits": "Prompt 额度：套餐每月包含的 prompt 模型请求配额，显示为 剩余 / 上限。用尽后按套餐停止或转为按量计费（overage）。",
       "flowCredits": "Flow 额度（即 flex 额度）：每月包含的 agentic/flow 动作配额，与 prompt 额度分开，显示为 剩余 / 上限。",
       "overage": "按量（overage）余额：超出包含额度后的按用量计费，单位美元。仅在包含额度用尽后累计。",
-      "weeklyQuota": "本周配额 %：账号滚动周额度的已用比例。所有账号都偏低时触发 drought 模式。"
+      "weeklyQuota": "本周配额 %：账号滚动周额度的已用比例。所有账号都偏低时触发 drought 模式。",
+      "poolHealthView": "发光网格：每个账号一个呼吸核心，按健康度着色，RPM 打满会燃烧火焰、请求流过时闪光。状态条：每号一横条，密集展示 RPM/在途/成功失败/最近使用。悬停任一账号查看详情。",
+      "trendRange": "切换请求趋势的时间范围：24 小时（按小时）、7 天或 30 天（按天聚合）。数据来自本地遥测，无上游调用。"
     }
   },
   "credentials": {
@@ -950,6 +956,26 @@
     "resetErrors": "错误已重置",
     "tierSet": "层级已设为 {{tier}}",
     "editModels": "编辑可用模型",
+    "spend": {
+      "title": "消费余额策略",
+      "policy": "订阅额度用完后",
+      "reserve": "余额保护线",
+      "reservePlaceholder": "继承全局",
+      "saved": "策略已保存",
+      "opt": {
+        "inherit": "继承全局默认",
+        "on": "动用消费余额（继续服务）",
+        "off": "停止使用（额度完就停）"
+      },
+      "effOn": "额度用完后将继续用预付余额服务，保留至少 ${{reserve}} 不烧。",
+      "effOff": "额度用完后停止使用该账号，不动用预付余额。",
+      "state": {
+        "spending": "正在动用余额",
+        "cooled": "已冷却保护",
+        "stopWhenDry": "额度完即停",
+        "ok": "额度充足"
+      }
+    },
     "probe": {
       "doing": "探测中，约需 10-30 秒...",
       "complete": "探测完成：{{result}}",
@@ -1281,7 +1307,15 @@
       "empty": "暂无号池遥测",
       "emptyHint": "添加账号并发起请求后，各账号健康信号会显示在这里。",
       "unavailable": "号池遥测暂不可用",
-      "unavailableHint": "/connect-metrics 未响应，本面板每 15 秒自动重试。"
+      "unavailableHint": "/connect-metrics 未响应，本面板每 15 秒自动重试。",
+      "inflight": "在途",
+      "onFire": "火力全开",
+      "hoverTier": "层级",
+      "hoverState": "状态",
+      "hoverOk": "成功",
+      "hoverErr": "失败",
+      "hoverLast": "最近使用",
+      "lastNever": "从未"
     },
     "connect": {
       "reloginOk": "重登成功",
@@ -1296,6 +1330,25 @@
       "credDecryptFail": "凭证解密失败",
       "silentOk": "正常",
       "empty": "暂无连接指标"
+    },
+    "guard": {
+      "blocked": "内存守卫已拦截",
+      "ok": "内存守卫正常",
+      "unknown": "内存守卫未知"
+    },
+    "nativeBridge": {
+      "title": "原生工具桥接",
+      "decisions": "决策",
+      "decisionsVal": "共 {{total}} · 开 {{on}} · 关 {{off}}",
+      "lastReason": "最近原因",
+      "tools": "工具",
+      "gates": "门控",
+      "topReasons": "主要原因",
+      "none": "无",
+      "defaultTools": "（默认仅 Bash）",
+      "empty": "尚无原生桥接路由决策记录。",
+      "mapped": "已映射",
+      "unmapped": "未映射"
     },
     "rankings": {
       "reqUnit": "{{count}} 次",
@@ -1358,7 +1411,7 @@
       "internalErrorThreshold": "内部错误隔离阈值（次）",
       "internalErrorThreshold.hint": "连续上游内部错误达此数即隔离（默认 2）",
       "internalQuarantineMin": "内部错误隔离时长（分钟）",
-      "internalQuarantineMin.hint": "被隔离账号的冷却时长（默认 5）",
+      "internalQuarantineMin.hint": "被隔离账号的冷却时长（默认 2）",
       "errorRecoveryMin": "半开恢复冷却（分钟）",
       "errorRecoveryMin.hint": "熔断账号进入半开重试前的等待（默认 15）",
       "enabled": "指数退避升级",

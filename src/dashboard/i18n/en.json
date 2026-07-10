@@ -458,7 +458,7 @@
     },
     "key": {
       "label": "Key / Token",
-      "placeholder": "Paste Auth Token (from windsurf.com/show-auth-token)"
+      "placeholder": "Paste Auth Token"
     },
     "label": {
       "label": "Label",
@@ -689,6 +689,10 @@
     "customCancel": "Cancel",
     "customHint": "Showing up to last 30 days"
   },
+  "poolView": {
+    "grid": "Glow grid",
+    "bars": "Status bars"
+  },
   "credits": {
     "contributors": "Core Contributors",
     "history": "Contributions · {{count}}",
@@ -758,7 +762,9 @@
       "promptCredits": "Prompt credits are your plan's included monthly quota for prompt-model requests, shown as remaining / limit. Once exhausted, requests either stop or spill to on-demand (overage) depending on the plan.",
       "flowCredits": "Flow credits (a.k.a. flex credits) are the included monthly quota for agentic/flow actions, separate from prompt credits, shown as remaining / limit.",
       "overage": "On-demand (overage) balance: usage-based spend billed beyond your included quota, in USD. Accrues only after included credits run out.",
-      "weeklyQuota": "Weekly quota %: portion of the account's rolling weekly allowance consumed. Low values across all accounts trigger drought mode."
+      "weeklyQuota": "Weekly quota %: portion of the account's rolling weekly allowance consumed. Low values across all accounts trigger drought mode.",
+      "poolHealthView": "Glow grid: one breathing core per account, tinted by health — cores catch fire when RPM saturates and flash when a request flows through. Status bars: one dense row per account showing RPM / in-flight / success·fail / last-used. Hover any account for details.",
+      "trendRange": "Switch the request-trend window: 24 hours (hourly), 7 days or 30 days (aggregated per day). Data is local telemetry, no upstream call."
     }
   },
   "credentials": {
@@ -950,6 +956,26 @@
     "resetErrors": "Errors reset",
     "tierSet": "Tier set to {{tier}}",
     "editModels": "Edit available models",
+    "spend": {
+      "title": "On-demand spend policy",
+      "policy": "When included quota is dry",
+      "reserve": "Balance reserve",
+      "reservePlaceholder": "inherit global",
+      "saved": "Policy saved",
+      "opt": {
+        "inherit": "Inherit global default",
+        "on": "Spend on-demand balance (keep serving)",
+        "off": "Stop when dry (don't burn balance)"
+      },
+      "effOn": "When quota runs out this account keeps serving off its prepaid balance, keeping at least ${{reserve}} in reserve.",
+      "effOff": "When quota runs out this account stops; its prepaid balance is not spent.",
+      "state": {
+        "spending": "Spending balance",
+        "cooled": "Cooled (protected)",
+        "stopWhenDry": "Stops when dry",
+        "ok": "Quota healthy"
+      }
+    },
     "probe": {
       "doing": "Probing, takes about 10-30 seconds...",
       "complete": "Probe complete: {{result}}",
@@ -1281,7 +1307,15 @@
       "empty": "No pool telemetry",
       "emptyHint": "Add accounts and send a request; health signals show up here.",
       "unavailable": "Pool telemetry unavailable",
-      "unavailableHint": "The /connect-metrics endpoint didn't respond. This panel refreshes every 15s."
+      "unavailableHint": "The /connect-metrics endpoint didn't respond. This panel refreshes every 15s.",
+      "inflight": "In-flight",
+      "onFire": "On fire",
+      "hoverTier": "Tier",
+      "hoverState": "State",
+      "hoverOk": "OK",
+      "hoverErr": "Errors",
+      "hoverLast": "Last used",
+      "lastNever": "never"
     },
     "connect": {
       "reloginOk": "Relogin OK",
@@ -1296,6 +1330,25 @@
       "credDecryptFail": "Cred decrypt fail",
       "silentOk": "Nominal",
       "empty": "No connection metrics"
+    },
+    "guard": {
+      "blocked": "Guard blocked",
+      "ok": "Guard ok",
+      "unknown": "Guard unknown"
+    },
+    "nativeBridge": {
+      "title": "Native tool bridge",
+      "decisions": "decisions",
+      "decisionsVal": "{{total}} total · {{on}} on · {{off}} off",
+      "lastReason": "last reason",
+      "tools": "tools",
+      "gates": "gates",
+      "topReasons": "top reasons",
+      "none": "none",
+      "defaultTools": "(default Bash only)",
+      "empty": "No native bridge routing decisions recorded yet.",
+      "mapped": "mapped",
+      "unmapped": "unmapped"
     },
     "rankings": {
       "reqUnit": "{{count}} req",
@@ -1358,7 +1411,7 @@
       "internalErrorThreshold": "Internal-error quarantine threshold",
       "internalErrorThreshold.hint": "Consecutive upstream internal errors before a quarantine (default 2)",
       "internalQuarantineMin": "Internal-error quarantine (min)",
-      "internalQuarantineMin.hint": "How long a quarantined account stays out (default 5)",
+      "internalQuarantineMin.hint": "How long a quarantined account stays out (default 2)",
       "errorRecoveryMin": "Half-open recovery TTL (min)",
       "errorRecoveryMin.hint": "How long an error'd account waits before a half-open retry (default 15)",
       "enabled": "Exponential backoff escalation",

@@ -11,7 +11,7 @@ import {
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
-  setAccountBlockedModels, setAccountTokens, setAccountTier,
+  setAccountBlockedModels, setAccountTokens, setAccountTier, setAccountSpendPolicy,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
   checkLockout, failedAuthAttempt, successfulAuthAttempt,
   getDroughtSummary, getPoolHealthWindow,
@@ -27,6 +27,7 @@ import {
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
   getBackendSwitch, getBackendSwitchOverrides, setBackendSwitches,
   getBreakerTunables, getBreakerOverrides, setBreakerTunables,
+  getQuotaTunables, getQuotaOverrides, setQuotaTunables,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
@@ -644,6 +645,21 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { success: true, ...breakerPayload() });
   }
 
+  // ─── Quota / on-demand spend tunables (global defaults, hot-flippable) ──
+  // spendOnDemand + onDemandReserveUsd are the pool-wide defaults; each account
+  // can still override them via PATCH /accounts/:id.
+  const quotaPayload = () => {
+    const eff = getQuotaTunables(), ov = getQuotaOverrides(), knobs = {};
+    for (const k of Object.keys(eff))
+      knobs[k] = { value: eff[k], override: ov[k], source: ov[k] === null ? 'env' : 'config' };
+    return { knobs };
+  };
+  if (subpath === '/quota-config' && method === 'GET') return json(res, 200, quotaPayload());
+  if (subpath === '/quota-config' && method === 'PUT') {
+    setQuotaTunables(body || {});
+    return json(res, 200, { success: true, ...quotaPayload() });
+  }
+
   // ─── Proxy test — try an HTTP CONNECT through the given proxy ──
   if (subpath === '/test-proxy' && method === 'POST') {
     const { host, port, username, password, type = 'http' } = body || {};
@@ -1048,6 +1064,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     if (body.resetErrors) resetAccountErrors(id);
     if (Array.isArray(body.blockedModels)) setAccountBlockedModels(id, body.blockedModels);
     if (body.tier) setAccountTier(id, body.tier);
+    // v3.0.3: per-account on-demand spend policy. Only the keys present are
+    // touched (each can be set alone). spendOnDemand: true | false | null(inherit);
+    // onDemandReserve: number | null/''(inherit).
+    if ('spendOnDemand' in body || 'onDemandReserve' in body) {
+      const patch = {};
+      if ('spendOnDemand' in body) patch.spendOnDemand = body.spendOnDemand;
+      if ('onDemandReserve' in body) patch.reserve = body.onDemandReserve;
+      setAccountSpendPolicy(id, patch);
+    }
     return json(res, 200, { success: true });
   }
 
@@ -2128,9 +2153,13 @@ async function testProxy({ host, port, username, password, type }) {
     });
   }
 
-  // TLS handshake + GET to verify the tunnel works
+  // TLS handshake + GET to verify the tunnel works. SEC-W5: verify the cert —
+  // targetHost is a fixed, well-known host (api.ipify.org) with a valid public
+  // certificate, so there is no reason to accept an unverified cert. Leaving
+  // rejectUnauthorized:false would let a MITM (or a malicious proxy itself)
+  // present any cert and still pass the "tunnel works" check.
   return new Promise((resolve, reject) => {
-      const tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: false }, () => {
+      const tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: true }, () => {
         tlsSock.write(`GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\nUser-Agent: WindsurfAPI/ProxyTest\r\n\r\n`);
       });
       const chunks = [];

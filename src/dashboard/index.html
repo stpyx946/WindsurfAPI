@@ -16,25 +16,26 @@
 </script>
 <style>
 :root {
-  /* ── Warm light theme (calm, low-glare) ── */
-  --paper:      #f4f2ec;   /* soft warm grey-cream main background (was too-bright #faf9f5) */
-  --paper-2:    #eceae2;   /* secondary surface */
-  --paper-3:    #e2e0d6;   /* faint zone base */
-  --ink:        #23221f;   /* soft warm near-black (was harsh #141413) */
-  --ink-soft:   #45433d;
-  --mid-gray:   #b0aea5;
+  color-scheme: light;     /* native controls (date pickers, scrollbars) = light */
+  /* ── Cool-neutral light theme (KiroStudio-style: no warm cast) ── */
+  --paper:      #fafafa;   /* neutral grey-white main background */
+  --paper-2:    #f4f4f5;   /* secondary surface */
+  --paper-3:    #ececee;   /* faint zone base */
+  --ink:        #18181b;   /* neutral near-black (zinc-900) */
+  --ink-soft:   #3f3f46;
+  --mid-gray:   #a1a1aa;
 
   /* legacy var names kept (referenced site-wide), remapped to new semantics */
   --bg: var(--paper);
   --bg-elev: var(--paper);
-  --surface: #fbfaf6;
+  --surface: #ffffff;
   --surface-2: var(--paper-2);
   --surface-3: var(--paper-3);
-  --border: rgba(20,20,19,.10);
-  --border-strong: rgba(20,20,19,.20);
+  --border: rgba(24,24,27,.10);
+  --border-strong: rgba(24,24,27,.18);
   --text: var(--ink);
-  --text-muted: #6b6a63;
-  --text-dim: #94928a;
+  --text-muted: #71717a;
+  --text-dim: #a1a1aa;
 
   /* Anthropic accent — signature clay orange */
   --accent: #d97757;
@@ -48,26 +49,28 @@
   --warn-soft: rgba(217,162,87,.16);
   --error: #c65d4e;
   --error-soft: rgba(198,93,78,.14);
-  --tip-bg: rgba(28,27,25,.98);
-  --tip-fg: #f4f3ee;
-  --tip-border: rgba(240,239,233,.14);
+  --tip-bg: rgba(24,24,27,.98);
+  --tip-fg: #fafafa;
+  --tip-border: rgba(250,250,250,.14);
   --info: #6a9bcc;
   --info-soft: rgba(106,155,204,.16);
 
-  /* data-viz palette (warm tones, charts use these) */
-  --chart-req:  #d97757;
-  --chart-succ: #788c5d;
-  --chart-err:  #c65d4e;
-  --chart-blue: #6a9bcc;
-  --grid: rgba(20,20,19,.10);
+  /* data-viz palette — request trend reads bright sky-blue (KiroStudio-style):
+     crisp line, very light area wash (see _trendPaint gradient), no muddy fill.
+     req = blue line+area, succ = green rate, err = red. */
+  --chart-req:  #4c9aff;
+  --chart-succ: #4a9d6a;
+  --chart-err:  #e0524a;
+  --chart-blue: #4c9aff;
+  --grid: rgba(24,24,27,.09);
 
   /* modern geometry — soft, clean, no sketch */
   --radius: 12px;
   --radius-sm: 8px;
   --radius-lg: 16px;
-  --shadow-sm: 0 1px 2px rgba(20,20,19,.05), 0 1px 3px rgba(20,20,19,.08);
-  --shadow: 0 2px 4px rgba(20,20,19,.04), 0 4px 12px rgba(20,20,19,.06);
-  --shadow-lg: 0 8px 24px rgba(20,20,19,.10), 0 2px 8px rgba(20,20,19,.06);
+  --shadow-sm: 0 1px 2px rgba(24,24,27,.05), 0 1px 3px rgba(24,24,27,.08);
+  --shadow: 0 2px 4px rgba(24,24,27,.04), 0 4px 12px rgba(24,24,27,.06);
+  --shadow-lg: 0 8px 24px rgba(24,24,27,.10), 0 2px 8px rgba(24,24,27,.06);
   --ink-shadow-soft: var(--shadow-sm);
 
   /* font stacks */
@@ -79,31 +82,33 @@
 
 /* ── Dark theme (toggle via [data-theme="dark"] on <html>) ── */
 [data-theme="dark"] {
-  --paper: #16150f;
-  --paper-2: #1d1c15;
-  --paper-3: #26241c;
-  --ink: #ece9e1;
-  --ink-soft: #c4c1b8;
-  --mid-gray: #8a887e;
+  color-scheme: dark;      /* native controls follow the dark theme */
+  /* Cool-neutral dark theme (KiroStudio Vercel-style near-black, zero warm cast) */
+  --paper: #0a0a0a;
+  --paper-2: #141414;
+  --paper-3: #1f1f1f;
+  --ink: #ededed;
+  --ink-soft: #c4c4c6;
+  --mid-gray: #8a8a8f;
   --bg: var(--paper);
   --bg-elev: var(--paper-2);
-  --surface: #1b1a13;
-  --surface-2: #232219;
-  --surface-3: #2c2a20;
-  --border: rgba(236,233,225,.10);
-  --border-strong: rgba(236,233,225,.18);
+  --surface: #141414;
+  --surface-2: #1c1c1c;
+  --surface-3: #262626;
+  --border: rgba(255,255,255,.10);
+  --border-strong: rgba(255,255,255,.18);
   --text: var(--ink);
-  --text-muted: #9a988f;
-  --text-dim: #908e85;
+  --text-muted: #a1a1aa;
+  --text-dim: #71717a;
   --accent-soft: rgba(217,119,87,.20);
   --success-soft: rgba(120,140,93,.22);
   --warn-soft: rgba(217,162,87,.22);
   --error-soft: rgba(198,93,78,.22);
   --info-soft: rgba(106,155,204,.22);
-  --grid: rgba(240,239,233,.10);
-  --tip-bg: rgba(40,40,46,.98);
+  --grid: rgba(255,255,255,.09);
+  --tip-bg: rgba(28,28,30,.98);
   --tip-fg: var(--text);
-  --tip-border: rgba(240,239,233,.16);
+  --tip-border: rgba(255,255,255,.14);
   --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.4);
   --shadow: 0 2px 4px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.4);
   --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.4);
@@ -306,6 +311,119 @@ code {
 .heal-cell .heal-ok { font-size: 10px; color: var(--green); letter-spacing: .04em; }
 @keyframes healflash { 0% { transform: scale(.94); opacity: .6; } 14% { transform: scale(1.06); opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
 .heal-num.bump { animation: healflash .45s cubic-bezier(.16,1,.3,1); }
+
+/* ─── GlowGrid — account-pool "compute core" wall (KiroStudio-style) ───
+   Each account = a small breathing core, tinted by health, lit with a low-freq
+   glow. Hover lifts + intensifies the halo; a live hit flashes the core. */
+.gg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(24px, 1fr)); gap: 6px; }
+.gg-core {
+  position: relative; aspect-ratio: 1; border-radius: 5px; cursor: pointer;
+  transition: transform .2s ease-out;
+}
+.gg-core:hover { z-index: 10; transform: translateY(-2px) scale(1.18); }
+.gg-core-breathe {
+  position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
+  animation: gg-breathe var(--gg-dur, 4.4s) ease-in-out infinite;
+  animation-delay: var(--gg-delay, 0s);
+}
+@keyframes gg-breathe { 0%,100% { opacity: .4; } 50% { opacity: .62; } }
+.gg-core-spec { /* top lens highlight */
+  position: absolute; left: 2px; right: 2px; top: 2px; height: 33%;
+  border-radius: 999px; background: rgba(255,255,255,.12); filter: blur(1.5px);
+  pointer-events: none; transition: background .2s;
+}
+.gg-core:hover .gg-core-spec { background: rgba(255,255,255,.28); }
+.gg-core-halo { /* hover outer glow, transparent until hover */
+  position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
+  opacity: 0; transition: opacity .2s;
+}
+.gg-core:hover .gg-core-halo { opacity: 1; }
+.gg-core-flash { /* live-hit: white core + tint burst, single replay */
+  position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
+  animation: gg-flash .9s ease-out forwards;
+}
+@keyframes gg-flash { 0% { opacity: 1; transform: scale(.9); } 100% { opacity: 0; transform: scale(1.35); } }
+@media (prefers-reduced-motion: reduce) {
+  .gg-core-breathe, .gg-core-flash { animation: none; }
+  .gg-core-breathe { opacity: .7; }
+}
+.gg-legend { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-muted); }
+.gg-legend span.lg { display: inline-flex; align-items: center; gap: 6px; }
+.gg-legend .lg-sw { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+/* Saturated core "on fire": a flickering ember glow layer (canvas-free, cheap —
+   only the handful of RPM-saturated cores get it). Two offset flame flickers +
+   a rising hue give a live-fire feel without a WebGL context. */
+.gg-core.hot { z-index: 2; }
+.gg-core .gg-flame {
+  position: absolute; inset: -2px; border-radius: 6px; pointer-events: none;
+  background:
+    radial-gradient(60% 80% at 30% 100%, rgba(255,90,20,.95), rgba(255,60,10,.25) 55%, transparent 72%),
+    radial-gradient(55% 75% at 68% 100%, rgba(255,170,40,.9), rgba(255,110,20,.2) 55%, transparent 72%),
+    radial-gradient(50% 60% at 50% 100%, rgba(255,230,120,.95), transparent 65%);
+  mix-blend-mode: screen; filter: blur(1px);
+  animation: gg-flame 2.2s ease-in-out infinite alternate;
+}
+.gg-core .gg-flame::after {
+  content: ''; position: absolute; inset: 0; border-radius: 6px;
+  box-shadow: 0 0 10px 2px rgba(255,120,30,.7), 0 -3px 8px 1px rgba(255,80,15,.55);
+}
+@keyframes gg-flame {
+  0%   { transform: translateY(0) scaleY(1);    opacity: .9; }
+  100% { transform: translateY(-1px) scaleY(1.14); opacity: 1; }
+}
+/* Live-hit flash: a request just flowed through this core — white core + tint
+   burst that scales out and fades once (re-triggered by remounting via key). */
+.gg-core .gg-hit {
+  position: absolute; inset: 0; border-radius: 5px; pointer-events: none;
+  background: radial-gradient(circle at 50% 45%, rgba(255,255,255,.95), var(--gg-hit-tint, rgba(120,220,255,.6)) 55%, transparent 72%);
+  animation: gg-hit .7s ease-out forwards;
+}
+@keyframes gg-hit { 0% { opacity: 1; transform: scale(.85); } 100% { opacity: 0; transform: scale(1.4); } }
+@media (prefers-reduced-motion: reduce) {
+  .gg-core .gg-flame, .gg-core .gg-hit { animation: none; }
+}
+
+/* ─── StatusBars view (dense ops-panel rows) ─── */
+.sbar-list { display: flex; flex-direction: column; gap: 6px; }
+.sbar {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  height: 36px; padding: 0 12px 0 15px; border: 1px solid var(--border);
+  border-radius: 8px; overflow: hidden; cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.sbar:hover { border-color: var(--border-strong); }
+.sbar-band { position: absolute; inset: 0 auto 0 0; width: 3px; }
+.sbar-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.sbar-id { font-family: var(--mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--text); flex-shrink: 0; }
+.sbar-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--text-muted); }
+.sbar-tier { flex-shrink: 0; font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); background: var(--surface-2); border-radius: 4px; padding: 2px 6px; }
+.sbar-fire { flex-shrink: 0; font-size: 12px; }
+.sbar-metric { flex-shrink: 0; font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; text-align: right; min-width: 34px; }
+.sbar-metric .u { font-size: 8px; opacity: .6; }
+.sbar-rpm { color: #6ab0ff; }
+.sbar-inflight { color: var(--accent); min-width: 52px; }
+.sbar-ok { color: #4a9d6a; min-width: 30px; }
+.sbar-err { color: #e0524a; min-width: 26px; }
+.sbar-muted { color: var(--text-dim); min-width: 26px; }
+.sbar.hot { border-color: rgba(255,120,30,.5); box-shadow: 0 0 8px rgba(255,110,20,.25) inset; }
+
+/* ─── Mouse-following account hover card (both pool views) ─── */
+.pool-hover-card {
+  display: none; position: fixed; z-index: 300; pointer-events: none;
+  min-width: 180px; max-width: 260px; padding: 10px 12px;
+  background: var(--tip-bg); color: var(--tip-fg);
+  border: 1px solid var(--tip-border); border-radius: 10px;
+  box-shadow: var(--shadow-lg); font-size: 12px; line-height: 1.55;
+  animation: phc-rise .13s ease-out;
+}
+@keyframes phc-rise { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.phc-head { display: flex; align-items: center; gap: 6px; font-weight: 600; font-family: var(--mono); }
+.phc-dot { width: 8px; height: 8px; border-radius: 50%; }
+.phc-fire { font-size: 10px; font-weight: 500; color: #ff9a4d; }
+.phc-email { color: var(--text-muted); font-size: 11px; margin: 2px 0 6px; word-break: break-all; }
+.phc-row { display: flex; justify-content: space-between; gap: 14px; }
+.phc-k { color: var(--text-muted); }
+.phc-v { font-variant-numeric: tabular-nums; }
 
 /* ─── Rankings (C2) ─── */
 .rank-row { margin-bottom: 10px; }
@@ -1281,7 +1399,7 @@ tbody tr:hover td { background: var(--surface-2); }
 /* ─── Chart ───────────────────────────────────── */
 .chart {
   padding: 22px 24px 20px;
-  background: linear-gradient(135deg, var(--surface), var(--accent-soft));
+  background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 20px;
@@ -1428,7 +1546,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .custom-range-fields input[type="date"] {
   font-family: var(--mono);
   font-size: 12px;
-  color-scheme: dark;
+  color-scheme: light dark;  /* follow the active theme, not always dark */
 }
 .custom-range-hint {
   font-size: 11px;
@@ -1446,8 +1564,8 @@ tbody tr:hover td { background: var(--surface-2); }
 .chart-tooltip {
   position: absolute;
   pointer-events: none;
-  background: rgba(17,17,24,.96);
-  color: var(--text);
+  background: var(--tip-bg);
+  color: var(--tip-fg);
   padding: 8px 12px;
   border-radius: 8px;
   font-size: 12px;
@@ -2054,8 +2172,12 @@ tbody tr:hover td { background: var(--surface-2); }
     <div class="section" id="pool-health-overview">
       <div class="section-header">
         <div>
-          <div class="section-title" data-i18n="section.poolHealth.title">Account Pool Health</div>
-          <div class="section-desc" data-i18n="section.poolHealth.desc">Worst-first summary of per-account health signals</div>
+          <div class="section-title" data-i18n="section.poolHealth.title">账号池健康</div>
+          <div class="section-desc" data-i18n="section.poolHealth.desc">按最坏优先汇总各账号健康信号</div>
+        </div>
+        <div class="seg-group" role="tablist" id="pool-view-switch">
+          <button class="seg-btn pool-view-btn" data-view="grid" onclick="App.setPoolView('grid')" data-i18n="poolView.grid">发光网格</button>
+          <button class="seg-btn pool-view-btn active" data-view="bars" onclick="App.setPoolView('bars')" data-i18n="poolView.bars">状态条</button>
         </div>
       </div>
       <div class="section-body"><div id="pool-health-summary"></div></div>
@@ -2064,10 +2186,17 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section" id="overview-trend-section" style="order:-1;">
         <div class="section-header">
           <div>
-            <div class="section-title" data-i18n="section.overviewTrend.title">Request Trend (24h)</div>
-            <div class="section-desc" data-i18n="section.overviewTrend.desc">Requests and errors per hour</div>
+            <div class="section-title" data-i18n="section.overviewTrend.title">请求趋势</div>
+            <div class="section-desc" data-i18n="section.overviewTrend.desc">每小时请求与错误，来自本地遥测</div>
           </div>
-          <div class="trend-legend" id="overview-trend-legend"></div>
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            <div class="trend-legend" id="overview-trend-legend"></div>
+            <div class="seg-group" role="tablist" id="overview-trend-range">
+              <button class="seg-btn trend-range-btn active" data-range="24" onclick="App.setTrendRange(24)" data-i18n="range.24h">24小时</button>
+              <button class="seg-btn trend-range-btn" data-range="168" onclick="App.setTrendRange(168)" data-i18n="range.7d">7天</button>
+              <button class="seg-btn trend-range-btn" data-range="720" onclick="App.setTrendRange(720)" data-i18n="range.30d">30天</button>
+            </div>
+          </div>
         </div>
         <div class="section-body">
           <div class="overview-trend-wrap" style="position:relative;width:100%;height:340px;">
@@ -2080,8 +2209,8 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section" id="connect-metrics-overview">
         <div class="section-header">
           <div>
-            <div class="section-title" data-i18n="section.connectMetrics.title">Connection Self-Healing</div>
-            <div class="section-desc" data-i18n="section.connectMetrics.desc">Live recovery counters</div>
+            <div class="section-title" data-i18n="section.connectMetrics.title">连接自愈</div>
+            <div class="section-desc" data-i18n="section.connectMetrics.desc">实时恢复计数 — 重登、故障转移、限流、失效 token</div>
           </div>
         </div>
         <div class="section-body"><div id="connect-metrics-status" style="width:100%;"></div></div>
@@ -2090,8 +2219,8 @@ tbody tr:hover td { background: var(--surface-2); }
     <div class="section" id="overview-rankings">
       <div class="section-header">
         <div>
-          <div class="section-title" data-i18n="section.rankings.title">Rankings</div>
-          <div class="section-desc" data-i18n="section.rankings.desc">By request volume (local counters only)</div>
+          <div class="section-title" data-i18n="section.rankings.title">排行</div>
+          <div class="section-desc" data-i18n="section.rankings.desc">按请求量（仅本地计数器）</div>
         </div>
       </div>
       <div class="section-body"><div id="overview-rankings-body"></div></div>
@@ -2121,8 +2250,8 @@ tbody tr:hover td { background: var(--surface-2); }
     <div class="section" id="native-bridge-overview-section">
       <div class="section-header">
         <div>
-          <div class="section-title" data-i18n="section.nativeBridge.title">Native Bridge</div>
-          <div class="section-desc" data-i18n="section.nativeBridge.desc">Routing decisions and gray-gate visibility</div>
+          <div class="section-title" data-i18n="section.nativeBridge.title">原生桥接</div>
+          <div class="section-desc" data-i18n="section.nativeBridge.desc">路由决策与灰度门可见性</div>
         </div>
       </div>
       <div class="section-body">
@@ -2412,7 +2541,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </div>
           <div class="field" style="flex:2">
             <label class="field-label" data-i18n="field.key.label">Key / Token</label>
-            <input id="acc-key" class="input" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token（从 windsurf.com/show-auth-token 获取）">
+            <input id="acc-key" class="input" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token">
           </div>
           <div class="field" style="max-width:200px">
             <label class="field-label" data-i18n="field.label.label">标签</label>
@@ -2470,7 +2599,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </table>
         </div>
         <div class="table-pagination" id="accounts-pagination">
-          <button class="btn btn-ghost btn-xs" id="accounts-prev" onclick="App.setAccountsPage(App.accountsPage - 1)" data-i18n="action.prev">Prev</button>
+          <button class="btn btn-ghost btn-xs" id="accounts-prev" onclick="App.setAccountsPage(App.accountsPage - 1)" data-i18n="action.prev">上一页</button>
           <span class="page-label" id="accounts-page-label">-</span>
           <select class="select" id="accounts-page-size" onchange="App.setAccountsPageSize(this.value)">
             <option value="25">25</option>
@@ -2478,7 +2607,7 @@ tbody tr:hover td { background: var(--surface-2); }
             <option value="100">100</option>
             <option value="200">200</option>
           </select>
-          <button class="btn btn-ghost btn-xs" id="accounts-next" onclick="App.setAccountsPage(App.accountsPage + 1)" data-i18n="action.next">Next</button>
+          <button class="btn btn-ghost btn-xs" id="accounts-next" onclick="App.setAccountsPage(App.accountsPage + 1)" data-i18n="action.next">下一页</button>
         </div>
       </div>
     </div>
@@ -2588,7 +2717,7 @@ tbody tr:hover td { background: var(--surface-2); }
 
     <div class="section" style="margin-top:24px">
       <div class="section-header"><div>
-        <div class="section-title" data-i18n="section.settings.breaker.title">熔断与限流</div><span data-i18n-tip="circuitBreaker" data-tip-placement="right"></span>
+        <div class="section-title"><span data-i18n="section.settings.breaker.title">熔断与限流</span><span data-i18n-tip="circuitBreaker"></span></div>
         <div class="section-desc" data-i18n="section.settings.breaker.desc">账号错误熔断与自愈退避阈值，可热调，空则回退环境变量/默认</div>
       </div></div>
       <div class="section-body" id="set-breaker-body">
@@ -2711,8 +2840,8 @@ tbody tr:hover td { background: var(--surface-2); }
           </div>
         </div>
         <div class="field-row-actions">
-          <button class="btn btn-primary" onclick="App.saveGlobalProxy()" data-i18n="action.save">Save</button>
-          <button class="btn btn-outline" onclick="App.clearGlobalProxy()" data-i18n="action.clear">Clear</button>
+          <button class="btn btn-primary" onclick="App.saveGlobalProxy()" data-i18n="action.save">保存</button>
+          <button class="btn btn-outline" onclick="App.clearGlobalProxy()" data-i18n="action.clear">清除</button>
           <span id="proxy-current" class="text-sm text-muted" style="margin-left:auto;align-self:center"></span>
         </div>
       </div>
@@ -2733,7 +2862,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </table>
         </div>
         <div class="table-pagination" id="proxy-accounts-pagination">
-          <button class="btn btn-ghost btn-xs" id="proxy-accounts-prev" onclick="App.setProxyPage(App.proxyPage - 1)" data-i18n="action.prev">Prev</button>
+          <button class="btn btn-ghost btn-xs" id="proxy-accounts-prev" onclick="App.setProxyPage(App.proxyPage - 1)" data-i18n="action.prev">上一页</button>
           <span class="page-label" id="proxy-accounts-page-label">-</span>
           <select class="select" id="proxy-accounts-page-size" onchange="App.setProxyPageSize(this.value)">
             <option value="25">25</option>
@@ -2741,7 +2870,7 @@ tbody tr:hover td { background: var(--surface-2); }
             <option value="100">100</option>
             <option value="200">200</option>
           </select>
-          <button class="btn btn-ghost btn-xs" id="proxy-accounts-next" onclick="App.setProxyPage(App.proxyPage + 1)" data-i18n="action.next">Next</button>
+          <button class="btn btn-ghost btn-xs" id="proxy-accounts-next" onclick="App.setProxyPage(App.proxyPage + 1)" data-i18n="action.next">下一页</button>
         </div>
       </div>
     </div>
@@ -2863,6 +2992,7 @@ tbody tr:hover td { background: var(--surface-2); }
           <canvas id="model-pie-canvas"></canvas>
           <div class="chart-tooltip" id="model-pie-tooltip"></div>
           <div class="pie-legend" id="model-pie-legend"></div>
+          <div id="model-pie-empty" style="display:none;position:absolute;inset:0;"></div>
         </div>
       </div>
     </div>
@@ -2924,7 +3054,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </table>
         </div>
         <div class="table-pagination" id="ban-pagination">
-          <button class="btn btn-ghost btn-xs" id="ban-prev" onclick="App.setBansPage(App.bansPage - 1)" data-i18n="action.prev">Prev</button>
+          <button class="btn btn-ghost btn-xs" id="ban-prev" onclick="App.setBansPage(App.bansPage - 1)" data-i18n="action.prev">上一页</button>
           <span class="page-label" id="ban-page-label">-</span>
           <select class="select" id="ban-page-size" onchange="App.setBansPageSize(this.value)">
             <option value="25">25</option>
@@ -2932,7 +3062,7 @@ tbody tr:hover td { background: var(--surface-2); }
             <option value="100">100</option>
             <option value="200">200</option>
           </select>
-          <button class="btn btn-ghost btn-xs" id="ban-next" onclick="App.setBansPage(App.bansPage + 1)" data-i18n="action.next">Next</button>
+          <button class="btn btn-ghost btn-xs" id="ban-next" onclick="App.setBansPage(App.bansPage + 1)" data-i18n="action.next">下一页</button>
         </div>
       </div>
     </div>
@@ -3345,8 +3475,8 @@ const App = {
     const guardBlocked = guardKnown && guard.okToSpawn === false;
     const guardClass = guardBlocked ? 'warn' : 'success';
     const guardText = guardKnown
-      ? `Guard ${guardBlocked ? 'blocked' : 'ok'} ${this.fmtBytes(guard.availableBytes)}/${this.fmtBytes(guard.minAvailableBytes)}`
-      : 'Guard unknown';
+      ? `${I18n.t(guardBlocked ? 'overview.guard.blocked' : 'overview.guard.ok')} ${this.fmtBytes(guard.availableBytes)}/${this.fmtBytes(guard.minAvailableBytes)}`
+      : I18n.t('overview.guard.unknown');
     const blockReason = pool.blockReason || (guardBlocked ? 'memory_guard' : null);
     const last = stats.lastFailure || stats.lastWait || stats.lastEviction || null;
     const lastKind = last?.errorType || last?.kind || null;
@@ -3392,10 +3522,11 @@ const App = {
       cfg.providers?.length ? `providers=${cfg.providers.join(',')}` : '',
       cfg.routes?.length ? `routes=${cfg.routes.join(',')}` : '',
       cfg.callers?.length ? `callers=${cfg.callers.length}` : '',
-    ].filter(Boolean).join(' | ') || 'none';
-    const tools = Array.isArray(cfg.tools) && cfg.tools.length ? cfg.tools.join(',') : '(default Bash only)';
+    ].filter(Boolean).join(' | ');
+    const NB = (k, v) => I18n.t('overview.nativeBridge.' + k, v);
+    const tools = Array.isArray(cfg.tools) && cfg.tools.length ? cfg.tools.join(',') : NB('defaultTools');
     const last = stats.lastDecision || null;
-    const lastReason = last?.reason || 'none';
+    const lastReason = last?.reason || NB('none');
     const rows = recent.map(d => {
       const badgeClass = d.enabled ? 'success' : 'warn';
       const mapped = (d.mappedTools || []).join(',') || '-';
@@ -3405,24 +3536,24 @@ const App = {
         <div class="native-bridge-decision" title="${this.esc(d.reason || '')}">
           <div><span class="badge ${badgeClass} no-dot">${this.esc(d.reason || 'unknown')}</span></div>
           <div>${this.esc(d.modelKey || '-')} · ${this.esc(d.route || '-')} · ${this.esc(when)}</div>
-          <div class="native-bridge-tools">mapped ${this.esc(mapped)} | unmapped ${this.esc(unmapped)}</div>
+          <div class="native-bridge-tools">${NB('mapped')} ${this.esc(mapped)} | ${NB('unmapped')} ${this.esc(unmapped)}</div>
         </div>`;
     }).join('');
     root.innerHTML = `
       <div class="native-bridge-panel">
         <div class="native-bridge-header">
-          <div class="native-bridge-title">Native tool bridge</div>
+          <div class="native-bridge-title">${NB('title')}</div>
           <span class="badge ${modeClass} no-dot">${this.esc(mode)}</span>
         </div>
         <div class="native-bridge-grid">
-          <div class="native-bridge-kv"><span class="k">decisions</span><span class="v">${stats.decisions || 0} total · ${stats.enabledDecisions || 0} on · ${stats.disabledDecisions || 0} off</span></div>
-          <div class="native-bridge-kv"><span class="k">last reason</span><span class="v" title="${this.esc(lastReason)}">${this.esc(lastReason)}</span></div>
-          <div class="native-bridge-kv"><span class="k">tools</span><span class="v" title="${this.esc(tools)}">${this.esc(tools)}</span></div>
-          <div class="native-bridge-kv"><span class="k">gates</span><span class="v" title="${this.esc(gateBits)}">${this.esc(gateBits)}</span></div>
-          <div class="native-bridge-kv"><span class="k">top reasons</span><span class="v" title="${this.esc(topReasons || 'none')}">${this.esc(topReasons || 'none')}</span></div>
+          <div class="native-bridge-kv"><span class="k">${NB('decisions')}</span><span class="v">${NB('decisionsVal', { total: stats.decisions || 0, on: stats.enabledDecisions || 0, off: stats.disabledDecisions || 0 })}</span></div>
+          <div class="native-bridge-kv"><span class="k">${NB('lastReason')}</span><span class="v" title="${this.esc(lastReason)}">${this.esc(lastReason)}</span></div>
+          <div class="native-bridge-kv"><span class="k">${NB('tools')}</span><span class="v" title="${this.esc(tools)}">${this.esc(tools)}</span></div>
+          <div class="native-bridge-kv"><span class="k">${NB('gates')}</span><span class="v" title="${this.esc(gateBits || NB('none'))}">${this.esc(gateBits || NB('none'))}</span></div>
+          <div class="native-bridge-kv"><span class="k">${NB('topReasons')}</span><span class="v" title="${this.esc(topReasons || NB('none'))}">${this.esc(topReasons || NB('none'))}</span></div>
         </div>
         <div class="native-bridge-decisions">
-          ${rows || '<div class="text-sm text-muted">No native bridge routing decisions recorded yet.</div>'}
+          ${rows || `<div class="text-sm text-muted">${NB('empty')}</div>`}
         </div>
       </div>`;
   },
@@ -3484,6 +3615,11 @@ const App = {
     if (this.pollers[key]) clearInterval(this.pollers[key]);
     this.pollers[key] = setInterval(() => {
       if (document.hidden) return;
+      // Only poll while the OWNING panel is active — a poller key matches its
+      // panel id (overview/stats/bans → p-overview/…). Skip full innerHTML
+      // rewrites + canvas repaints for panels the user isn't looking at.
+      const active = document.querySelector('.panel.active')?.id;
+      if (active && active !== 'p-' + key) return;
       fn();
     }, intervalMs);
   },
@@ -4201,6 +4337,33 @@ docker compose up -d --force-recreate</pre>
     return `<div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.tokenCacheRead.title')}</div></div><div class="card-value">${pct}%</div><div class="card-sub">${I18n.t('card.tokenCacheRead.subtitle', { pct })}</div></div>`;
   },
 
+  // Reflect persisted toggle state on the segmented buttons. Idempotent — safe
+  // to call on every loadOverview / language switch. (No help tips on the
+  // dashboard itself — those live on the Settings page only.)
+  _initOverviewControls() {
+    // Reflect persisted pool view on the segmented buttons.
+    const pv = this._poolView || (this._poolView = localStorage.getItem('dashboard_pool_view') || 'bars');
+    document.querySelectorAll('.pool-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === pv));
+    const tr = this._trendRange || (this._trendRange = Number(localStorage.getItem('dashboard_trend_range')) || 24);
+    document.querySelectorAll('.trend-range-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.range) === tr));
+  },
+
+  setPoolView(view) {
+    this._poolView = view;
+    try { localStorage.setItem('dashboard_pool_view', view); } catch {}
+    document.querySelectorAll('.pool-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    this._poolSig = null; // view changed → force re-render past the sig guard
+    this._renderPoolHealth(this._lastConnectMetrics);
+  },
+
+  setTrendRange(hours) {
+    this._trendRange = hours;
+    try { localStorage.setItem('dashboard_trend_range', String(hours)); } catch {}
+    document.querySelectorAll('.trend-range-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.range) === hours));
+    this._overviewTrendSig = null; // force replay with the new window
+    this._renderOverviewTrend(this._lastStats);
+  },
+
   // Pool-health summary: worst-first verdict + counts, from /connect-metrics
   // poolHealth[]. Read-only, title= tooltips only (no heavy hover). Empty state
   // when no telemetry.
@@ -4220,27 +4383,178 @@ docker compose up -d --force-recreate</pre>
         + `<div class="pe-title">${title}</div><div class="pe-sub">${sub}</div></div>`;
       return;
     }
-    let healthy = 0, throttled = 0, errored = 0, dead = 0;
+    // Change-signature guard (mirrors _chartSig): if the pool data + view + lang
+    // are unchanged since the last paint, skip the full innerHTML rewrite +
+    // _bindPoolHover + all the per-core CSS animation restarts. A genuine hit
+    // (health.total growth) changes the sig, so flashes still play.
+    const sig = (this._poolView || 'bars') + '|' + I18n.locale + '|'
+      + ph.map(a => `${a.id}:${a.status}:${a.saturated ? 1 : 0}:${a.inflight || 0}:${a.rpmUsed || 0}:${(a.health && a.health.total) || 0}:${(a.health && a.health.error) || 0}:${(a.health && a.health.throttle) || 0}:${(a.health && a.health.dead) || 0}`).join(',');
+    if (this._poolSig === sig) return;
+    this._poolSig = sig;
+
+    // Live-hit detection: a core flashes when its total health-event count grows
+    // between polls (a fresh request flowed through it). _poolHitState maps
+    // id→pulse; bumping the pulse re-keys the .gg-hit span → single flash replay.
+    if (!this._poolHitState) this._poolHitState = new Map();
+    if (!this._poolHitTotals) this._poolHitTotals = new Map();
     for (const a of ph) {
-      const h = a.health || {};
-      if ((h.dead || 0) > 0) dead++;
-      else if ((h.error || 0) > 0) errored++;
-      else if ((h.throttle || 0) > 0 || (h.capacity || 0) > 0) throttled++;
-      else healthy++;
+      const total = (a.health && a.health.total) || 0;
+      const prev = this._poolHitTotals.get(a.id);
+      if (prev != null && total > prev) {
+        this._poolHitState.set(a.id, (this._poolHitState.get(a.id) || 0) + 1);
+      }
+      this._poolHitTotals.set(a.id, total);
     }
+
+    // Classify each account into a health tier + RGB tint (shared by both views).
+    // healthy=green, throttled=amber, error/dead=red, disabled=grey (muted).
+    const RGB = { healthy: '74,157,106', warn: '212,162,87', bad: '224,82,74', disabled: '138,136,126' };
+    let healthy = 0, throttled = 0, errored = 0, dead = 0;
+    const rows = ph.map((a) => {
+      const h = a.health || {};
+      let tier;
+      if (a.status === 'disabled') { tier = 'disabled'; }
+      else if ((h.dead || 0) > 0) { tier = 'bad'; dead++; }
+      else if ((h.error || 0) > 0) { tier = 'bad'; errored++; }
+      else if ((h.throttle || 0) > 0 || (h.capacity || 0) > 0) { tier = 'warn'; throttled++; }
+      else { tier = 'healthy'; healthy++; }
+      return { a, tier, rgb: RGB[tier], hot: !!a.saturated && tier !== 'disabled', hit: this._poolHitState && this._poolHitState.get(a.id) };
+    });
+
+    const view = this._poolView || 'bars';
+    const body = view === 'bars' ? this._poolBarsHtml(rows) : this._poolGridHtml(rows);
+
     const bad = dead + errored;
     let verdict, cls;
     if (bad === 0 && throttled === 0) { verdict = I18n.t('overview.poolHealth.verdictAllHealthy'); cls = 'success'; }
     else if (bad >= ph.length) { verdict = I18n.t('overview.poolHealth.verdictCritical', { count: bad }); cls = 'error'; }
     else { verdict = I18n.t('overview.poolHealth.verdictDegraded', { count: bad + throttled }); cls = 'warning'; }
-    const chip = (label, n, color) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-variant-numeric:tabular-nums;font-weight:600;">${n}</span><span class="text-sm text-muted">${label}</span></span>`;
-    el.innerHTML = `<div class="badge ${cls === 'success' ? 'running' : cls === 'error' ? 'stopped' : ''}" style="margin-bottom:10px;">${this.esc(verdict)}</div>`
-      + `<div style="display:flex;flex-wrap:wrap;row-gap:6px;">`
-      + chip(I18n.t('overview.poolHealth.healthy'), healthy, 'var(--success)')
-      + chip(I18n.t('overview.poolHealth.throttled'), throttled, 'var(--warn)')
-      + chip(I18n.t('overview.poolHealth.error'), errored, 'var(--error)')
-      + chip(I18n.t('overview.poolHealth.dead'), dead, 'var(--text-dim, #94a3b8)')
+
+    const lg = (rgb, label, glow) => `<span class="lg"><span class="lg-sw" style="background:rgba(${rgb},.9)${glow ? `;box-shadow:0 0 6px rgba(${rgb},.6)` : ''}"></span>${label}</span>`;
+    el.innerHTML = `<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">`
+      + `<span class="badge ${cls === 'success' ? 'running' : cls === 'error' ? 'stopped' : 'warn'}">${this.esc(verdict)}</span>`
+      + `<span class="text-sm text-muted">${I18n.t('overview.poolHealth.healthy')} ${healthy} / ${ph.length}</span></div>`
+      + body
+      + `<div class="gg-legend">`
+      + lg(RGB.healthy, I18n.t('overview.poolHealth.healthy'), true)
+      + lg(RGB.warn, I18n.t('overview.poolHealth.throttled'), true)
+      + lg(RGB.bad, I18n.t('overview.poolHealth.error'), true)
+      + lg(RGB.disabled, I18n.t('overview.poolHealth.dead'), false)
       + `</div>`;
+    this._bindPoolHover(el, rows);
+  },
+
+  // GlowGrid view: the breathing "compute core" wall.
+  _poolGridHtml(rows) {
+    const cores = rows.map(({ a, tier, rgb, hot, hit }) => {
+      const busy = (a.inflight || 0) > 0;
+      const dur = busy ? '3.5s' : tier === 'warn' ? '5s' : '7s';
+      const lit = tier !== 'disabled';
+      const hitTint = tier === 'bad' ? 'rgba(224,82,74,.6)' : tier === 'warn' ? 'rgba(212,162,87,.6)' : 'rgba(120,220,255,.6)';
+      const seed = String(a.id || '').split('').reduce((x, ch) => (x * 31 + ch.charCodeAt(0)) % 1000, 7);
+      const delay = `-${((seed / 1000) * 4).toFixed(2)}s`;
+      return `<div class="gg-core${hot ? ' hot' : ''}" data-acct="${this.escJsAttr(String(a.id))}" style="`
+        + `background:linear-gradient(150deg,rgba(${rgb},.42),rgba(${rgb},.16));`
+        + `border:1px solid rgba(${rgb},${lit ? .5 : .32});`
+        + `box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 2px rgba(0,0,0,.35);">`
+        + (lit ? `<span class="gg-core-breathe" style="background:radial-gradient(circle at 50% 42%,rgba(${rgb},.9),rgba(${rgb},.32) 70%,transparent);box-shadow:0 0 6px 0 rgba(${rgb},.5);--gg-dur:${dur};--gg-delay:${delay}"></span>` : '')
+        + `<span class="gg-core-spec"></span>`
+        + (hot ? `<span class="gg-flame"></span>` : '')
+        + (hit ? `<span class="gg-hit" data-pulse="${hit}" style="--gg-hit-tint:${hitTint}"></span>` : '')
+        + (lit ? `<span class="gg-core-halo" style="box-shadow:0 0 12px 1px rgba(${rgb},.6),0 4px 10px rgba(0,0,0,.45)"></span>` : '')
+        + `</div>`;
+    }).join('');
+    return `<div class="gg-grid">${cores}</div>`;
+  },
+
+  // StatusBars view: one dense horizontal row per account (ops-panel style).
+  _poolBarsHtml(rows) {
+    const bars = rows.map(({ a, tier, rgb, hot }) => {
+      const lit = tier !== 'disabled';
+      const rpm = a.rpmUsed || 0, lim = a.rpmLimit || 0, inflight = a.inflight || 0;
+      const name = this.esc(a.email || String(a.id));
+      const tierPill = a.tier ? `<span class="sbar-tier">${this.esc(a.tier)}</span>` : '';
+      const rpmTag = lim > 0 ? `<span class="sbar-metric sbar-rpm">${rpm}<span class="u">/${lim}</span></span>` : `<span class="sbar-metric" aria-hidden></span>`;
+      const inflightTag = inflight > 0 ? `<span class="sbar-metric sbar-inflight">${I18n.t('overview.poolHealth.inflight')} ${inflight}</span>` : `<span class="sbar-metric" aria-hidden></span>`;
+      const okN = (a.health && a.health.ok) || 0, errN = (a.health && a.health.error) || 0;
+      return `<div class="sbar${hot ? ' hot' : ''}" data-acct="${this.escJsAttr(String(a.id))}" style="border-color:rgba(${rgb},${lit ? .35 : .22});background:linear-gradient(90deg,rgba(${rgb},${lit ? .14 : .07}),rgba(${rgb},.02) 60px,transparent 42%)">`
+        + `<span class="sbar-band" style="background:rgba(${rgb},${lit ? .9 : .5})"></span>`
+        + `<span class="sbar-dot" style="background:rgba(${rgb},.95);box-shadow:${lit ? `0 0 6px rgba(${rgb},.7)` : 'none'}"></span>`
+        + `<span class="sbar-id">#${this.esc(String(a.id))}</span>`
+        + `<span class="sbar-name">${name}</span>`
+        + tierPill
+        + (hot ? `<span class="sbar-fire">🔥</span>` : '')
+        + rpmTag + inflightTag
+        + `<span class="sbar-metric sbar-ok">${okN}</span>`
+        + `<span class="sbar-metric ${errN > 0 ? 'sbar-err' : 'sbar-muted'}">${errN > 0 ? '✕' + errN : '·'}</span>`
+        + `</div>`;
+    }).join('');
+    return `<div class="sbar-list">${bars}</div>`;
+  },
+
+  _poolTierLabel(tier) {
+    if (tier === 'warn') return I18n.t('overview.poolHealth.throttled');
+    if (tier === 'bad') return I18n.t('overview.poolHealth.error');
+    if (tier === 'disabled') return I18n.t('overview.poolHealth.dead');
+    return I18n.t('overview.poolHealth.healthy');
+  },
+
+  // Mouse-following account hover card (KiroStudio credViz.useHoverCard port):
+  // both pool views bind here. A single floating card element that sticks to the
+  // cursor and shows free per-account fields (no balance / upstream call).
+  _bindPoolHover(container, rows) {
+    const byId = new Map(rows.map(r => [String(r.a.id), r]));
+    // one shared card element, appended to body (dodges .section overflow clip)
+    let card = this._poolHoverCard;
+    if (!card) {
+      card = this._poolHoverCard = document.createElement('div');
+      card.className = 'pool-hover-card';
+      document.body.appendChild(card);
+    }
+    const hide = () => { card.style.display = 'none'; };
+    const place = (ev) => {
+      const w = card.offsetWidth || 240, h = card.offsetHeight || 150;
+      let x = ev.clientX + 14, y = ev.clientY + 14;
+      if (x + w > window.innerWidth - 8) x = ev.clientX - w - 14;
+      if (y + h > window.innerHeight - 8) y = ev.clientY - h - 14;
+      card.style.left = Math.max(8, x) + 'px';
+      card.style.top = Math.max(8, y) + 'px';
+    };
+    container.querySelectorAll('[data-acct]').forEach((node) => {
+      node.addEventListener('mouseenter', (ev) => {
+        const r = byId.get(node.dataset.acct);
+        if (!r) return;
+        card.innerHTML = this._poolHoverBody(r);
+        card.style.display = 'block';
+        place(ev);
+      });
+      node.addEventListener('mousemove', place);
+      node.addEventListener('mouseleave', hide);
+    });
+  },
+
+  _poolHoverBody({ a, tier }) {
+    const T = (k, v) => I18n.t('overview.poolHealth.' + k, v);
+    const rpm = a.rpmUsed || 0, lim = a.rpmLimit || 0, inflight = a.inflight || 0;
+    const h = a.health || {};
+    const fmtAgo = (ts) => {
+      if (!ts) return T('lastNever');
+      const s = Math.floor((Date.now() - ts) / 1000);
+      if (s < 60) return `${s}s`; if (s < 3600) return `${Math.floor(s/60)}m`;
+      if (s < 86400) return `${Math.floor(s/3600)}h`; return `${Math.floor(s/86400)}d`;
+    };
+    const tierRgb = { healthy: '74,157,106', warn: '212,162,87', bad: '224,82,74', disabled: '138,136,126' }[tier];
+    const row = (k, v, color) => `<div class="phc-row"><span class="phc-k">${k}</span><span class="phc-v"${color ? ` style="color:${color}"` : ''}>${v}</span></div>`;
+    return `<div class="phc-head"><span class="phc-dot" style="background:rgb(${tierRgb})"></span>#${this.esc(String(a.id))}`
+      + (a.saturated ? ` <span class="phc-fire">🔥 ${T('onFire')}</span>` : '') + `</div>`
+      + (a.email ? `<div class="phc-email">${this.esc(a.email)}</div>` : '')
+      + row(T('hoverTier'), this.esc(a.tier || 'unknown'))
+      + row(T('hoverState'), this._poolTierLabel(tier), `rgb(${tierRgb})`)
+      + (lim > 0 ? row('RPM', `${rpm} / ${lim}`) : '')
+      + (inflight > 0 ? row(T('inflight'), inflight, 'var(--accent)') : '')
+      + row(T('hoverOk'), (h.ok || 0), '#4a9d6a')
+      + ((h.error || 0) > 0 ? row(T('hoverErr'), h.error, '#e0524a') : '')
+      + row(T('hoverLast'), fmtAgo(a.lastUsed));
   },
 
   // Connection self-healing counters from /connect-metrics. Semantic-colored
@@ -4348,13 +4662,37 @@ docker compose up -d --force-recreate</pre>
   // Request-trend area chart (KiroStudio AreaTrendChart quality): smooth area +
   // resolved theme colors, Y compact-number gridlines, X time labels, a faint
   // success-rate overlay (right axis 0–100%), and a hover crosshair + tooltip.
+  // Build the trend buckets for the selected range. 24h → last 24 hourly buckets
+  // verbatim. 7d/30d → fold hourly buckets into per-day buckets (sum req/err),
+  // keeping the last N days. `hour` stays a ms timestamp so the X labels work.
+  _trendBuckets(hourly, rangeHours) {
+    if (!Array.isArray(hourly) || hourly.length === 0) return [];
+    const norm = hourly.map(b => ({ hour: typeof b.hour === 'number' ? b.hour : Date.parse(b.hour), requests: b.requests || 0, errors: b.errors || 0 }))
+      .filter(b => Number.isFinite(b.hour));
+    if (rangeHours <= 24) return norm.slice(-24);
+    const days = Math.round(rangeHours / 24);
+    const byDay = new Map();
+    for (const b of norm) {
+      const d = new Date(b.hour); d.setHours(0, 0, 0, 0);
+      const key = d.getTime();
+      const acc = byDay.get(key) || { hour: key, requests: 0, errors: 0 };
+      acc.requests += b.requests; acc.errors += b.errors;
+      byDay.set(key, acc);
+    }
+    return [...byDay.values()].sort((a, b) => a.hour - b.hour).slice(-days);
+  },
+
   _renderOverviewTrend(s) {
     const canvas = document.getElementById('overview-trend-canvas');
     const emptyEl = document.getElementById('overview-trend-empty');
     const legendEl = document.getElementById('overview-trend-legend');
     const tip = document.getElementById('overview-trend-tooltip');
     if (!canvas) return;
-    const raw = s && Array.isArray(s.hourlyBuckets) ? s.hourlyBuckets.slice(-24) : [];
+    // Range-aware buckets: 24h → last 24 hourly buckets as-is; 7d/30d → aggregate
+    // the hourly buckets (backend keeps 720 = 30d) into per-day buckets.
+    const rangeHours = this._trendRange || 24;
+    const allHourly = s && Array.isArray(s.hourlyBuckets) ? s.hourlyBuckets : [];
+    const raw = this._trendBuckets(allHourly, rangeHours);
     if (raw.length === 0) {
       canvas.style.display = 'none';
       if (legendEl) legendEl.innerHTML = '';
@@ -4369,10 +4707,10 @@ docker compose up -d --force-recreate</pre>
     }
     canvas.style.display = 'block';
     if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
-    const acc = this._cssColor('--chart-req', '#d97757');
-    const err = this._cssColor('--chart-err', '#c65d4e');
-    const suc = this._cssColor('--chart-blue', '#6a9bcc');
-    const dim = this._cssColor('--text-dim', '#9a988f');
+    const acc = this._cssColor('--chart-req', '#4c9aff');   // requests: bright sky-blue line+area
+    const err = this._cssColor('--chart-err', '#e0524a');   // errors: red
+    const suc = this._cssColor('--chart-succ', '#4a9d6a');  // success-rate overlay: green
+    const dim = this._cssColor('--text-dim', '#71717a');
     const grid = this._cssColor('--grid', 'rgba(20,20,19,.10)');
     if (legendEl) {
       legendEl.innerHTML =
@@ -4393,7 +4731,8 @@ docker compose up -d --force-recreate</pre>
     // renderMainChart's _chartSig guard). reduced-motion is handled inside
     // _animateTrend; the no-replay branch paints the final frame (p=1) so a
     // theme/lang switch still repaints with fresh colors.
-    const c = { acc, err, suc, dim, grid };
+    const paper = this._cssColor('--surface', '#0a0a0a');
+    const c = { acc, err, suc, dim, grid, paper };
     const sig = buckets.length + '|' + (buckets[buckets.length - 1]?.hour || 0) + '|'
       + buckets.reduce((a, b) => a + b.requests, 0) + '|' + buckets.reduce((a, b) => a + b.errors, 0);
     const replay = this._overviewTrendSig !== sig;
@@ -4461,23 +4800,47 @@ docker compose up -d --force-recreate</pre>
         ctx.fillText((k / 4 * 100) + '%', W - pad.r + 5, y);
       }
     }
-    // X time labels (first / mid / last)
+    // X time labels (first / mid / last). Hourly range → HH:00; multi-day → MM/DD.
     ctx.textAlign = 'center';
+    const daily = (this._trendRange || 24) > 24;
     [0, Math.floor((n - 1) / 2), n - 1].forEach((i) => {
       if (i < 0 || i >= n) return;
       const d = new Date(buckets[i].hour);
-      ctx.fillText(String(d.getHours()).padStart(2, '0') + ':00', xAt(i), H - 8);
+      const lbl = daily
+        ? `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+        : String(d.getHours()).padStart(2, '0') + ':00';
+      ctx.fillText(lbl, xAt(i), H - 8);
     });
     const reqPts = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.requests) }));
     // requests area + line
     ctx.beginPath(); ctx.moveTo(reqPts[0].x, pad.t + cH); ctx.lineTo(reqPts[0].x, reqPts[0].y);
     this._smoothPath(ctx, reqPts, false, 1/6);
     ctx.lineTo(reqPts[n - 1].x, pad.t + cH); ctx.closePath();
+    // Light, airy area wash (KiroStudio-style): a faint tint at the top that
+    // fades to nothing — the LINE carries the signal, not a heavy slab of fill.
     const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + cH);
-    grad.addColorStop(0, this._hexA(c.acc, 0.24)); grad.addColorStop(1, this._hexA(c.acc, 0.02));
+    grad.addColorStop(0, this._hexA(c.acc, 0.14)); grad.addColorStop(0.55, this._hexA(c.acc, 0.05)); grad.addColorStop(1, this._hexA(c.acc, 0));
     ctx.fillStyle = grad; ctx.fill();
+    // Glowing request line (KiroStudio feGaussianBlur look, done with canvas
+    // shadowBlur): a soft colored halo under the crisp 2.25px stroke.
+    ctx.save();
     ctx.beginPath(); this._smoothPath(ctx, reqPts, true, 1/6);
-    ctx.strokeStyle = c.acc; ctx.lineWidth = 2.25; ctx.lineJoin = 'round'; ctx.stroke();
+    ctx.shadowColor = this._hexA(c.acc, 0.85); ctx.shadowBlur = 10;
+    ctx.strokeStyle = c.acc; ctx.lineWidth = 2.25; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    ctx.restore();
+    // Peak / valley markers (faint hollow rings) when not hovering — hints "this
+    // is a line with real ups and downs", matching AreaTrendChart's markers.
+    if (cursor == null && n > 1) {
+      let peakI = 0, valI = 0;
+      buckets.forEach((b, i) => { if (b.requests > buckets[peakI].requests) peakI = i; if (b.requests < buckets[valI].requests) valI = i; });
+      if (buckets[peakI].requests !== buckets[valI].requests) {
+        for (const i of [peakI, valI]) {
+          ctx.beginPath(); ctx.arc(reqPts[i].x, reqPts[i].y, 3, 0, Math.PI * 2);
+          ctx.fillStyle = c.paper || '#0a0a0a'; ctx.globalAlpha = 1; ctx.fill();
+          ctx.lineWidth = 1.5; ctx.strokeStyle = this._hexA(c.acc, 0.7); ctx.stroke();
+        }
+      }
+    }
     // errors line (only if any)
     if (buckets.some(b => b.errors > 0)) {
       const ep = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.errors) }));
@@ -4655,10 +5018,16 @@ docker compose up -d --force-recreate</pre>
     // self-healing metrics, request trend, and rankings. Each renders its own
     // empty state when its data source is missing. Idempotent full-innerHTML
     // writes so a language switch (which re-runs loadOverview) never stacks.
+    // Cache the latest telemetry so the pool-view + trend-range toggles can
+    // re-render instantly without a refetch.
+    this._lastConnectMetrics = cm;
+    this._lastStats = s;
     this._renderPoolHealth(cm);
     this._renderConnectMetrics(cm);
     this._renderOverviewTrend(s);
     this._renderOverviewRankings(s);
+    // Inject the section help tips (idempotent) + reflect persisted toggle state.
+    this._initOverviewControls();
     const instances = ls.instances || [];
     if (instances.length > 0) {
       document.getElementById('ls-status').innerHTML = `
@@ -5811,6 +6180,71 @@ docker compose up -d --force-recreate</pre>
     this.loadAccounts();
   },
 
+  // v3.0.3 — per-account on-demand spend policy card. When the included weekly
+  // quota is dry, does this account keep serving off its prepaid $ balance? A
+  // three-state select (inherit / always spend / stop when dry) plus a reserve
+  // floor, and a live badge showing the resolved state (spending / cooled / ok).
+  renderSpendPolicyCard(a) {
+    const T = (k, v) => I18n.t('account.spend.' + k, v);
+    const ss = a.spendState || {};
+    // select value: 'inherit' | 'on' | 'off'
+    const sel = ss.spendOverride === true ? 'on' : ss.spendOverride === false ? 'off' : 'inherit';
+    const reserveVal = ss.reserveOverride != null ? ss.reserveOverride : '';
+    const effReserve = (ss.reserve ?? 0);
+    const stateMap = {
+      spending: { cls: 'warn', txt: T('state.spending') },
+      cooled:   { cls: 'error', txt: T('state.cooled') },
+      'stop-when-dry': { cls: 'muted', txt: T('state.stopWhenDry') },
+      ok:       { cls: 'success', txt: T('state.ok') },
+    };
+    const st = stateMap[ss.state] || stateMap.ok;
+    const effLine = ss.spendOnDemand
+      ? T('effOn', { reserve: effReserve.toFixed(2) })
+      : T('effOff');
+    const jid = this.escJsAttr(a.id);
+    return `
+        <div class="detail-card">
+          <div class="detail-card-head">
+            <span class="dot" style="background:var(--accent)"></span>${T('title')}
+            <span class="badge ${st.cls}" style="margin-left:auto">${st.txt}</span>
+          </div>
+          <div class="detail-kv" style="align-items:center">
+            <span class="k">${T('policy')}</span>
+            <span class="v">
+              <select class="select" style="max-width:200px" onchange="App.setSpendPolicy('${jid}', this.value)">
+                <option value="inherit"${sel === 'inherit' ? ' selected' : ''}>${T('opt.inherit')}</option>
+                <option value="on"${sel === 'on' ? ' selected' : ''}>${T('opt.on')}</option>
+                <option value="off"${sel === 'off' ? ' selected' : ''}>${T('opt.off')}</option>
+              </select>
+            </span>
+            <span class="k">${T('reserve')}</span>
+            <span class="v" style="display:flex;align-items:center;gap:6px">
+              <span style="color:var(--text-dim)">$</span>
+              <input type="number" class="input" min="0" step="1" style="max-width:120px"
+                placeholder="${T('reservePlaceholder')}" value="${reserveVal}"
+                onchange="App.setSpendReserve('${jid}', this.value)">
+            </span>
+          </div>
+          <div style="margin-top:8px;font-size:11px;color:var(--text-dim)">${effLine}</div>
+        </div>`;
+  },
+
+  async setSpendPolicy(id, val) {
+    const spendOnDemand = val === 'on' ? true : val === 'off' ? false : null;
+    await this.api('PATCH', `/accounts/${id}`, { spendOnDemand });
+    this._accountDetails?.delete(id);
+    this.loadAccounts();
+    this.toast(I18n.t('account.spend.saved'));
+  },
+
+  async setSpendReserve(id, val) {
+    const onDemandReserve = String(val).trim() === '' ? null : Number(val);
+    await this.api('PATCH', `/accounts/${id}`, { onDemandReserve });
+    this._accountDetails?.delete(id);
+    this.loadAccounts();
+    this.toast(I18n.t('account.spend.saved'));
+  },
+
   renderAccountDetail(a) {
     const cr = a.credits || {};
     const us = a.userStatus || {};
@@ -5916,6 +6350,8 @@ docker compose up -d --force-recreate</pre>
             <span class="k">${T('quota.fetchedAt')}</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
           </div>
         </div>
+
+        ${this.renderSpendPolicyCard(a)}
 
         <div class="detail-card" style="grid-column:1/-1">
           <div class="detail-card-head">
@@ -6709,12 +7145,20 @@ docker compose up -d --force-recreate</pre>
   // read as "alarming" against the dark plot background; the new tones
   // are still readable but feel calmer (warm amber for requests, soft
   // teal-mint for success, dusty coral for errors).
-  _chartColors: {
-    requests: '#e0b482',   // warm amber
-    success:  '#7cc8a6',   // soft teal-mint
-    errors:   '#e08a8a',   // dusty coral
+  // Read the SAME cool CSS chart tokens the overview trend uses, so the stats
+  // chart follows the theme and never regresses to the old warm "屎黄" amber.
+  // Getters resolve live from CSS vars (single source of truth, JS↔CSS aligned).
+  get _chartColors() {
+    return {
+      requests: this._cssColor('--chart-req', '#4c9aff'),
+      success:  this._cssColor('--chart-succ', '#4a9d6a'),
+      errors:   this._cssColor('--chart-err', '#e0524a'),
+    };
   },
-  _pieColors: ['#e0b482', '#7cc8a6', '#e08a8a', '#f5d491', '#9bb8d4', '#c9a6cf', '#84c5c9', '#dda5b3'],
+  // Pie palette: cool, evenly-spread hues (blue→teal→green→violet…), no warm amber.
+  get _pieColors() {
+    return ['#4c9aff', '#4a9d6a', '#e0524a', '#8b7cf6', '#3fb6c8', '#d98cc4', '#e0a44a', '#6b8fb5'];
+  },
 
   setStatsRange(value) {
     this.statsRange = value;
@@ -7077,7 +7521,7 @@ docker compose up -d --force-recreate</pre>
 
     if (buckets.length < 1) {
       ctx.clearRect(0, 0, W, H);
-      ctx.fillStyle = this._cssColor("--text-dim", "#9a988f");
+      ctx.fillStyle = this._cssColor("--text-dim", "#71717a");
       ctx.font = '500 13px var(--font), sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -7201,7 +7645,7 @@ docker compose up -d --force-recreate</pre>
     ctx.restore();
 
     // Y-axis labels
-    ctx.fillStyle = this._cssColor("--text-dim", "#9a988f");
+    ctx.fillStyle = this._cssColor("--text-dim", "#71717a");
     ctx.font = '500 10px "JetBrains Mono", "Consolas", monospace';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
@@ -7258,7 +7702,7 @@ docker compose up -d --force-recreate</pre>
           if (values[i] === 0) return;
           ctx.beginPath();
           ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
-          ctx.fillStyle = this._cssColor('--surface', '#1e1e22');
+          ctx.fillStyle = this._cssColor('--surface', '#141414');
           ctx.fill();
           ctx.strokeStyle = color;
           ctx.lineWidth = 1.8;
@@ -7376,18 +7820,18 @@ docker compose up -d --force-recreate</pre>
       if (total > 0) {
         const yT = yAt(total);
         ctx.save();
-        ctx.fillStyle = this._cssColor("--ink", "#141413");
+        ctx.fillStyle = this._cssColor("--ink", "#ededed");
         ctx.beginPath();
         ctx.arc(cx, yT, 4, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = 'rgba(224,180,130,.85)';
+        ctx.strokeStyle = this._hexA(this._cssColor('--chart-req', '#4c9aff'), 0.85);
         ctx.lineWidth = 1.5;
         ctx.stroke();
         ctx.restore();
       } else {
         // Empty bucket — small marker on baseline so user still sees they're hovering.
         ctx.save();
-        ctx.fillStyle = 'rgba(224,180,130,.6)';
+        ctx.fillStyle = this._hexA(this._cssColor('--chart-req', '#4c9aff'), 0.6);
         ctx.beginPath();
         ctx.arc(cx, base, 3, 0, Math.PI * 2);
         ctx.fill();
@@ -7396,7 +7840,7 @@ docker compose up -d --force-recreate</pre>
     }
 
     // X-axis labels — smart step based on time span
-    ctx.fillStyle = this._cssColor("--text-dim", "#9a988f");
+    ctx.fillStyle = this._cssColor("--text-dim", "#71717a");
     ctx.font = '500 10px "JetBrains Mono", "Consolas", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
@@ -7622,10 +8066,17 @@ docker compose up -d --force-recreate</pre>
 
   // Interpolate indigo → amber → rose based on error ratio. Returns hex so
   // callers can safely append alpha suffixes like '+cc'.
+  // Bar tint by error ratio: healthy=cool blue (--chart-req) → amber (--warn) as
+  // errors creep in → red (--chart-err) when errors dominate. All from theme
+  // tokens so bars are cool by default (no warm amber "屎黄" base) and follow
+  // the theme. hexToRgb tolerates #rgb/#rrggbb; token fallbacks are cool.
   _errorTintedColor(ratio) {
     const clamp01 = (x) => Math.max(0, Math.min(1, x));
     const r = clamp01(ratio);
-    if (r === 0) return this._chartColors.requests; // indigo
+    const blue = this._cssColor('--chart-req', '#4c9aff');
+    if (r === 0) return blue;
+    const warn = this._cssColor('--warn', '#d9a257');
+    const red = this._cssColor('--chart-err', '#e0524a');
     const mix = (c1, c2, t) => {
       const p1 = this._hexToRgb(c1), p2 = this._hexToRgb(c2);
       const rr = Math.round(p1.r + (p2.r - p1.r) * t);
@@ -7634,8 +8085,8 @@ docker compose up -d --force-recreate</pre>
       const to2 = (n) => n.toString(16).padStart(2, '0');
       return '#' + to2(rr) + to2(gg) + to2(bb);
     };
-    if (r <= 0.3) return mix('#e0b482', '#fbbf24', r / 0.3);
-    return mix('#fbbf24', '#fb7185', (r - 0.3) / 0.7);
+    if (r <= 0.3) return mix(blue, warn, r / 0.3);
+    return mix(warn, red, (r - 0.3) / 0.7);
   },
 
   _hexToRgb(h) {
@@ -7690,17 +8141,25 @@ docker compose up -d --force-recreate</pre>
 
     const { ctx, W, H } = this._setupCanvas(canvas);
     ctx.clearRect(0, 0, W, H);
+    const emptyEl = document.getElementById('model-pie-empty');
 
     if (total === 0) {
-      ctx.fillStyle = this._cssColor("--text-dim", "#9a988f");
-      ctx.font = '13px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(I18n.t('table.empty.noData'), W / 2, H / 2);
+      // Centered card-wide empty state (the canvas is only 200px in the left grid
+      // column, so drawing on it looked left-offset — use a full-width overlay).
+      canvas.style.visibility = 'hidden';
+      if (emptyEl) {
+        emptyEl.style.display = 'flex';
+        emptyEl.innerHTML = `<div class="panel-empty">`
+          + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>`
+          + `<div class="pe-title">${I18n.t('table.empty.noData')}</div></div>`;
+      }
       if (legend) legend.innerHTML = '';
       this._pieHitMap = null;
       return;
     }
+    // has data → restore the canvas, clear the empty overlay
+    canvas.style.visibility = '';
+    if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
 
     const cx = W / 2, cy = H / 2;
     const rOuter = Math.min(W, H) / 2 - 6;
@@ -7746,12 +8205,12 @@ docker compose up -d --force-recreate</pre>
       if (labelAlpha > 0) {
         ctx.save();
         ctx.globalAlpha = labelAlpha;
-        ctx.fillStyle = this._cssColor('--ink', '#f0efe9');
+        ctx.fillStyle = this._cssColor('--ink', '#ededed');
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.font = "600 22px 'JetBrains Mono', 'Cascadia Code', Consolas, monospace";
         ctx.fillText(total, cx, cy - 6);
-        ctx.fillStyle = this._hexA(this._cssColor('--text-muted', '#9a988f'), 0.85);
+        ctx.fillStyle = this._hexA(this._cssColor('--text-muted', '#71717a'), 0.85);
         ctx.font = '10px sans-serif';
         ctx.fillText(legendRequests, cx, cy + 12);
         ctx.restore();
@@ -8007,7 +8466,7 @@ docker compose up -d --force-recreate</pre>
         num('brk-err-threshold','errorStreakThreshold', v('errorStreakThreshold',3),1,50,1,'settings.breaker.errorStreakThreshold','settings.breaker.errorStreakThreshold.hint')
       + num('brk-err-window','errorWindowMs', min(v('errorWindowMs',1800000)),1,1440,1,'settings.breaker.errorWindowMin','settings.breaker.errorWindowMin.hint')
       + num('brk-int-threshold','internalErrorThreshold', v('internalErrorThreshold',2),1,50,1,'settings.breaker.internalErrorThreshold','settings.breaker.internalErrorThreshold.hint')
-      + num('brk-int-quar','internalQuarantineMs', min(v('internalQuarantineMs',300000)),1,1440,1,'settings.breaker.internalQuarantineMin','settings.breaker.internalQuarantineMin.hint')
+      + num('brk-int-quar','internalQuarantineMs', min(v('internalQuarantineMs',120000)),1,1440,1,'settings.breaker.internalQuarantineMin','settings.breaker.internalQuarantineMin.hint')
       + num('brk-recovery','errorRecoveryMs', min(v('errorRecoveryMs',900000)),1,1440,1,'settings.breaker.errorRecoveryMin','settings.breaker.errorRecoveryMin.hint')
       + num('brk-base','breakerBaseMs', min(v('breakerBaseMs',900000)),1,1440,1,'settings.breaker.baseMin','settings.breaker.baseMin.hint')
       + num('brk-factor','breakerFactor', v('breakerFactor',1.5),1.1,10,0.1,'settings.breaker.factor','settings.breaker.factor.hint')
@@ -8232,7 +8691,7 @@ docker compose up -d --force-recreate</pre>
     try {
       const d = await this.api('GET', '/settings/credentials');
       document.getElementById('credentials-apikey-source').textContent = '[' + (d.apiKeySource || 'unset') + ']';
-      document.getElementById('credentials-apikey-masked').textContent = d.apiKey_masked || '(unset)';
+      document.getElementById('credentials-apikey-masked').textContent = d.apiKey_masked || ('(' + (I18n.t('credentials.unset') || 'unset') + ')');
       document.getElementById('credentials-dashboardpw-source').textContent = '[' + (d.dashboardPasswordSource || 'unset') + ']';
       document.getElementById('credentials-dashboardpw-status').textContent =
         d.dashboardPasswordSet ? (I18n.t('credentials.set') || 'set') : (I18n.t('credentials.unset') || 'unset');
