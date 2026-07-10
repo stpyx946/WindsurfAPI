@@ -2061,6 +2061,16 @@ tbody tr:hover td { background: var(--surface-2); }
   .contributor-card .meta-top { grid-template-columns: 1fr; }
   .contributor-card .links { justify-content: flex-start; }
 }
+/* Screen-reader-only: visually hidden but present in the a11y tree (chart data
+   tables, etc.). Standard clip-rect technique — no display:none (that hides it
+   from screen readers too). */
+.sr-only {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0);
+  white-space: nowrap; border: 0;
+}
 </style>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 <!-- Firebase signInWithPopup was removed: on a self-hosted public origin it always
@@ -2188,9 +2198,9 @@ tbody tr:hover td { background: var(--surface-2); }
           <div class="section-title" data-i18n="section.poolHealth.title">账号池健康</div>
           <div class="section-desc" data-i18n="section.poolHealth.desc">按最坏优先汇总各账号健康信号</div>
         </div>
-        <div class="seg-group" role="tablist" id="pool-view-switch">
-          <button class="seg-btn pool-view-btn" data-view="grid" onclick="App.setPoolView('grid')" data-i18n="poolView.grid">发光网格</button>
-          <button class="seg-btn pool-view-btn active" data-view="bars" onclick="App.setPoolView('bars')" data-i18n="poolView.bars">状态条</button>
+        <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.poolViewGroup" aria-label="账号池视图" id="pool-view-switch">
+          <button class="seg-btn pool-view-btn" role="radio" aria-checked="false" data-view="grid" onclick="App.setPoolView('grid')" data-i18n="poolView.grid">发光网格</button>
+          <button class="seg-btn pool-view-btn active" role="radio" aria-checked="true" data-view="bars" onclick="App.setPoolView('bars')" data-i18n="poolView.bars">状态条</button>
         </div>
       </div>
       <div class="section-body"><div id="pool-health-summary"></div></div>
@@ -2204,18 +2214,19 @@ tbody tr:hover td { background: var(--surface-2); }
           </div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
             <div class="trend-legend" id="overview-trend-legend"></div>
-            <div class="seg-group" role="tablist" id="overview-trend-range">
-              <button class="seg-btn trend-range-btn active" data-range="24" onclick="App.setTrendRange(24)" data-i18n="range.24h">24小时</button>
-              <button class="seg-btn trend-range-btn" data-range="168" onclick="App.setTrendRange(168)" data-i18n="range.7d">7天</button>
-              <button class="seg-btn trend-range-btn" data-range="720" onclick="App.setTrendRange(720)" data-i18n="range.30d">30天</button>
+            <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.trendRangeGroup" aria-label="趋势时间范围" id="overview-trend-range">
+              <button class="seg-btn trend-range-btn active" role="radio" aria-checked="true" data-range="24" onclick="App.setTrendRange(24)" data-i18n="range.24h">24小时</button>
+              <button class="seg-btn trend-range-btn" role="radio" aria-checked="false" data-range="168" onclick="App.setTrendRange(168)" data-i18n="range.7d">7天</button>
+              <button class="seg-btn trend-range-btn" role="radio" aria-checked="false" data-range="720" onclick="App.setTrendRange(720)" data-i18n="range.30d">30天</button>
             </div>
           </div>
         </div>
         <div class="section-body">
           <div class="overview-trend-wrap" style="position:relative;width:100%;height:340px;">
-            <canvas id="overview-trend-canvas"></canvas>
+            <canvas id="overview-trend-canvas" role="img" data-i18n-aria-label="aria.trendChart" aria-label="请求与错误趋势图"></canvas>
             <div class="chart-tooltip" id="overview-trend-tooltip"></div>
             <div id="overview-trend-empty" style="position:absolute;inset:0;"></div>
+            <table id="overview-trend-sr" class="sr-only" aria-live="polite"></table>
           </div>
         </div>
       </div>
@@ -2952,24 +2963,24 @@ tbody tr:hover td { background: var(--surface-2); }
           <div class="chart-subtitle" data-i18n="section.requestChart.subtitle">切换图表类型和时间范围 · 悬停查看具体数值</div>
         </div>
         <div class="chart-controls">
-          <div class="seg-group" role="tablist">
-            <button class="seg-btn stats-type-btn" data-type="area" onclick="App.setChartType('area')" data-i18n="section.requestChart.typeArea">面积图</button>
-            <button class="seg-btn stats-type-btn" data-type="line" onclick="App.setChartType('line')" data-i18n="section.requestChart.typeLine">折线图</button>
-            <button class="seg-btn stats-type-btn active" data-type="bar" onclick="App.setChartType('bar')" data-i18n="section.requestChart.typeBar">柱状图</button>
-            <button class="seg-btn stats-type-btn" data-type="stacked" onclick="App.setChartType('stacked')" data-i18n="section.requestChart.typeStacked">堆叠图</button>
+          <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.chartTypeGroup" aria-label="图表类型">
+            <button class="seg-btn stats-type-btn" role="radio" aria-checked="false" data-type="area" onclick="App.setChartType('area')" data-i18n="section.requestChart.typeArea">面积图</button>
+            <button class="seg-btn stats-type-btn" role="radio" aria-checked="false" data-type="line" onclick="App.setChartType('line')" data-i18n="section.requestChart.typeLine">折线图</button>
+            <button class="seg-btn stats-type-btn active" role="radio" aria-checked="true" data-type="bar" onclick="App.setChartType('bar')" data-i18n="section.requestChart.typeBar">柱状图</button>
+            <button class="seg-btn stats-type-btn" role="radio" aria-checked="false" data-type="stacked" onclick="App.setChartType('stacked')" data-i18n="section.requestChart.typeStacked">堆叠图</button>
           </div>
-          <div class="seg-group" role="tablist">
-            <button class="seg-btn stats-range-btn" data-range="6" onclick="App.setStatsRange(6)" data-i18n="range.6h">6小时</button>
-            <button class="seg-btn stats-range-btn active" data-range="24" onclick="App.setStatsRange(24)" data-i18n="range.24h">24小时</button>
-            <button class="seg-btn stats-range-btn" data-range="168" onclick="App.setStatsRange(168)" data-i18n="range.7d">7天</button>
-            <button class="seg-btn stats-range-btn" data-range="720" onclick="App.setStatsRange(720)" data-i18n="range.30d">30天</button>
-            <button class="seg-btn stats-range-btn" data-range="all" onclick="App.setStatsRange('all')" data-i18n="range.all">全部</button>
-            <button class="seg-btn stats-range-btn" data-range="custom" onclick="App.openCustomRange()" data-i18n="range.custom">自定义</button>
+          <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.statsRangeGroup" aria-label="统计时间范围">
+            <button class="seg-btn stats-range-btn" role="radio" aria-checked="false" data-range="6" onclick="App.setStatsRange(6)" data-i18n="range.6h">6小时</button>
+            <button class="seg-btn stats-range-btn active" role="radio" aria-checked="true" data-range="24" onclick="App.setStatsRange(24)" data-i18n="range.24h">24小时</button>
+            <button class="seg-btn stats-range-btn" role="radio" aria-checked="false" data-range="168" onclick="App.setStatsRange(168)" data-i18n="range.7d">7天</button>
+            <button class="seg-btn stats-range-btn" role="radio" aria-checked="false" data-range="720" onclick="App.setStatsRange(720)" data-i18n="range.30d">30天</button>
+            <button class="seg-btn stats-range-btn" role="radio" aria-checked="false" data-range="all" onclick="App.setStatsRange('all')" data-i18n="range.all">全部</button>
+            <button class="seg-btn stats-range-btn" role="radio" aria-checked="false" data-range="custom" onclick="App.openCustomRange()" data-i18n="range.custom">自定义</button>
           </div>
         </div>
       </div>
       <div class="chart-canvas-wrap">
-        <canvas id="stats-canvas"></canvas>
+        <canvas id="stats-canvas" role="img" data-i18n-aria-label="aria.statsChart" aria-label="请求量时间序列图"></canvas>
         <div class="chart-tooltip" id="stats-tooltip"></div>
         <div class="chart-range-indicator" id="stats-range-indicator"></div>
       </div>
@@ -3002,7 +3013,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </div>
         </div>
         <div class="chart-pie-body" style="position:relative">
-          <canvas id="model-pie-canvas"></canvas>
+          <canvas id="model-pie-canvas" role="img" data-i18n-aria-label="aria.modelPieChart" aria-label="模型请求量分布图"></canvas>
           <div class="chart-tooltip" id="model-pie-tooltip"></div>
           <div class="pie-legend" id="model-pie-legend"></div>
           <div id="model-pie-empty" style="display:none;position:absolute;inset:0;"></div>
@@ -3386,6 +3397,19 @@ const I18n = {
         el.title = text;
       } else {
         el.title = el.dataset.i18nTitleOrig;
+      }
+    });
+
+    // aria-label attributes (a11y: e.g. radiogroup labels on the segmented
+    // controls). Same store-original / restore-on-zh dance as title above.
+    root.querySelectorAll('[data-i18n-aria-label]').forEach(el => {
+      const key = el.dataset.i18nAriaLabel;
+      const text = this.t(key);
+      if (!el.dataset.i18nAriaLabelOrig) el.dataset.i18nAriaLabelOrig = el.getAttribute('aria-label') || '';
+      if (this.locale !== 'zh-CN' && this.locale !== 'zh') {
+        el.setAttribute('aria-label', text);
+      } else {
+        el.setAttribute('aria-label', el.dataset.i18nAriaLabelOrig);
       }
     });
 
@@ -4109,9 +4133,9 @@ docker compose up -d --force-recreate</pre>
       // Title is trusted caller input but may contain <code>/<b>; use esc by
       // default to match prior behaviour.
       wrap.innerHTML = `
-        <div class="modal"${widthStyle}>
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-c"${widthStyle}>
           <div class="modal-header">
-            <div class="modal-title">${opts.titleHtml ? title : this.esc(title)}</div>
+            <div class="modal-title" id="modal-title-c">${opts.titleHtml ? title : this.esc(title)}</div>
             ${opts.html ? '' : (desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : '')}
           </div>
           ${opts.html ? descHtml : ''}
@@ -4121,13 +4145,20 @@ docker compose up -d --force-recreate</pre>
           </div>
         </div>`;
       document.getElementById('modal-container').appendChild(wrap);
+      const prevFocus = document.activeElement; // restore on close (a11y)
       const onKey = (e) => {
         // Defer Esc to an open custom-select dropdown (it closes itself first).
         if (document.querySelector('.cs-pop')) return;
         if (e.key === 'Escape') { e.preventDefault(); close(false); }
+        else if (e.key === 'Tab') { this._trapFocus(e, wrap); }
         else if (e.key === 'Enter' && e.target.tagName !== 'BUTTON') { e.preventDefault(); close(true); }
       };
-      const close = (v) => { document.removeEventListener('keydown', onKey, true); wrap.remove(); resolve(v); };
+      const close = (v) => {
+        document.removeEventListener('keydown', onKey, true);
+        wrap.remove();
+        if (prevFocus && prevFocus.focus) { try { prevFocus.focus(); } catch {} }
+        resolve(v);
+      };
       wrap.querySelector('[data-act=cancel]').onclick = () => close(false);
       wrap.querySelector('[data-act=ok]').onclick = () => close(true);
       wrap.onclick = (e) => { if (e.target === wrap) close(false); };
@@ -4135,6 +4166,18 @@ docker compose up -d --force-recreate</pre>
       // Focus the confirm button so Enter/Esc work immediately without a click.
       setTimeout(() => wrap.querySelector('[data-act=ok]')?.focus(), 50);
     });
+  },
+
+  // Keep Tab focus cycling inside an open modal (a11y focus trap). Wraps from the
+  // last focusable to the first (and vice-versa with Shift+Tab), so keyboard
+  // users can't tab out to the page behind the dialog.
+  _trapFocus(e, wrap) {
+    const f = wrap.querySelectorAll('a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+    if (!f.length) return;
+    const first = f[0];
+    const last = f[f.length - 1];
+    if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   },
 
   prompt(title, desc, fields) {
@@ -4155,9 +4198,9 @@ docker compose up -d --force-recreate</pre>
         </div>
       `).join('');
       wrap.innerHTML = `
-        <div class="modal">
+        <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title-p">
           <div class="modal-header">
-            <div class="modal-title">${this.esc(title)}</div>
+            <div class="modal-title" id="modal-title-p">${this.esc(title)}</div>
             ${desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : ''}
           </div>
           <div class="modal-body">${fieldHtml}</div>
@@ -4167,6 +4210,7 @@ docker compose up -d --force-recreate</pre>
           </div>
         </div>`;
       document.getElementById('modal-container').appendChild(wrap);
+      const prevFocus = document.activeElement; // restore on close (a11y)
       // Theme the modal's dynamic selects/number inputs. data-name stays on the
       // native element, so the [data-name].value harvest below is unaffected.
       this.enhanceControls(wrap);
@@ -4179,11 +4223,17 @@ docker compose up -d --force-recreate</pre>
         // Defer Esc to an open custom-select dropdown (it closes itself first).
         if (document.querySelector('.cs-pop')) return;
         if (e.key === 'Escape') { e.preventDefault(); close(null); }
+        else if (e.key === 'Tab') { this._trapFocus(e, wrap); }
         // Enter submits from a text input (but not from a textarea or the custom
         // select trigger, which use Enter themselves).
         else if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); submit(); }
       };
-      const close = (v) => { document.removeEventListener('keydown', onKey, true); wrap.remove(); resolve(v); };
+      const close = (v) => {
+        document.removeEventListener('keydown', onKey, true);
+        wrap.remove();
+        if (prevFocus && prevFocus.focus) { try { prevFocus.focus(); } catch {} }
+        resolve(v);
+      };
       wrap.querySelector('[data-act=cancel]').onclick = () => close(null);
       wrap.querySelector('[data-act=ok]').onclick = submit;
       wrap.onclick = (e) => { if (e.target === wrap) close(null); };
@@ -4359,18 +4409,29 @@ docker compose up -d --force-recreate</pre>
   // Reflect persisted toggle state on the segmented buttons. Idempotent — safe
   // to call on every loadOverview / language switch. (No help tips on the
   // dashboard itself — those live on the Settings page only.)
+  // Reflect single-select state on a role=radiogroup's buttons: toggle both the
+  // .active class (visual) and aria-checked (a11y) so a screen reader announces
+  // which option is selected. `isOn(btn)` decides the selected one.
+  _syncRadioGroup(selector, isOn) {
+    document.querySelectorAll(selector).forEach(b => {
+      const on = isOn(b);
+      b.classList.toggle('active', on);
+      b.setAttribute('aria-checked', on ? 'true' : 'false');
+    });
+  },
+
   _initOverviewControls() {
     // Reflect persisted pool view on the segmented buttons.
     const pv = this._poolView || (this._poolView = localStorage.getItem('dashboard_pool_view') || 'bars');
-    document.querySelectorAll('.pool-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === pv));
+    this._syncRadioGroup('.pool-view-btn', b => b.dataset.view === pv);
     const tr = this._trendRange || (this._trendRange = Number(localStorage.getItem('dashboard_trend_range')) || 24);
-    document.querySelectorAll('.trend-range-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.range) === tr));
+    this._syncRadioGroup('.trend-range-btn', b => Number(b.dataset.range) === tr);
   },
 
   setPoolView(view) {
     this._poolView = view;
     try { localStorage.setItem('dashboard_pool_view', view); } catch {}
-    document.querySelectorAll('.pool-view-btn').forEach(b => b.classList.toggle('active', b.dataset.view === view));
+    this._syncRadioGroup('.pool-view-btn', b => b.dataset.view === view);
     this._poolSig = null; // view changed → force re-render past the sig guard
     this._renderPoolHealth(this._lastConnectMetrics);
   },
@@ -4378,7 +4439,7 @@ docker compose up -d --force-recreate</pre>
   setTrendRange(hours) {
     this._trendRange = hours;
     try { localStorage.setItem('dashboard_trend_range', String(hours)); } catch {}
-    document.querySelectorAll('.trend-range-btn').forEach(b => b.classList.toggle('active', Number(b.dataset.range) === hours));
+    this._syncRadioGroup('.trend-range-btn', b => Number(b.dataset.range) === hours);
     this._overviewTrendSig = null; // force replay with the new window
     this._renderOverviewTrend(this._lastStats);
   },
@@ -4951,6 +5012,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
     canvas.style.display = 'block';
     if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
+    this._updateTrendA11y(raw);
     const acc = this._cssColor('--chart-req', '#4c9aff');   // requests: bright sky-blue line+area
     const err = this._cssColor('--chart-err', '#e0524a');   // errors: red
     const suc = this._cssColor('--chart-succ', '#4a9d6a');  // success-rate overlay: green
@@ -4988,6 +5050,29 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       if (s2 && s2.ctx) this._trendPaint(s2.ctx, s2.W, s2.H, buckets, c, null, 1);
     }
     this._trendBindHover(canvas, tip, buckets, c);
+  },
+
+  // a11y: give the trend canvas a spoken summary (aria-label) plus an sr-only
+  // data table so a screen-reader user gets the numbers a sighted user reads off
+  // the chart. Called on every (re)render so the summary tracks the live data.
+  _updateTrendA11y(raw) {
+    const canvas = document.getElementById('overview-trend-canvas');
+    if (!canvas || !Array.isArray(raw) || raw.length === 0) return;
+    const totalReq = raw.reduce((a, b) => a + (b.requests || 0), 0);
+    const totalErr = raw.reduce((a, b) => a + (b.errors || 0), 0);
+    const summary = I18n.t('overview.trend.a11ySummary', {
+      points: String(raw.length), requests: String(totalReq), errors: String(totalErr),
+    });
+    canvas.setAttribute('aria-label', `${I18n.t('aria.trendChart')} — ${summary}`);
+    const table = document.getElementById('overview-trend-sr');
+    if (!table) return;
+    const hdr = `<tr><th>${I18n.t('overview.trend.a11yColTime')}</th>`
+      + `<th>${I18n.t('overview.trend.requests')}</th><th>${I18n.t('overview.trend.errors')}</th></tr>`;
+    const rows = raw.map(b => {
+      const t = new Date(b.hour).toISOString().slice(0, 16).replace('T', ' ');
+      return `<tr><td>${t}</td><td>${b.requests || 0}</td><td>${b.errors || 0}</td></tr>`;
+    }).join('');
+    table.innerHTML = `<caption>${I18n.t('aria.trendChart')}</caption>${hdr}${rows}`;
   },
 
   // Entrance grow: lerp the series from baseline to target over ~480ms (ease-out
@@ -7428,9 +7513,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   setStatsRange(value) {
     this.statsRange = value;
     this.statsCustomRange = null;
-    document.querySelectorAll('.stats-range-btn').forEach(b => {
-      b.classList.toggle('active', String(b.dataset.range) === String(value));
-    });
+    this._syncRadioGroup('.stats-range-btn', b => String(b.dataset.range) === String(value));
     this.closeCustomRange();
     if (this._lastStatsData) this.renderMainChart(this._lastStatsData);
   },
@@ -7450,9 +7533,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const eEl = document.getElementById('range-end');
     if (sEl && !sEl.value) sEl.value = fmt(start);
     if (eEl && !eEl.value) eEl.value = fmt(end);
-    document.querySelectorAll('.stats-range-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.range === 'custom');
-    });
+    this._syncRadioGroup('.stats-range-btn', b => b.dataset.range === 'custom');
   },
 
   closeCustomRange() {
@@ -7475,17 +7556,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this.statsRange = 'custom';
     this.statsCustomRange = { start, end };
     this.closeCustomRange();
-    document.querySelectorAll('.stats-range-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.range === 'custom');
-    });
+    this._syncRadioGroup('.stats-range-btn', b => b.dataset.range === 'custom');
     if (this._lastStatsData) this.renderMainChart(this._lastStatsData);
   },
 
   setChartType(type) {
     this.statsChartType = type;
-    document.querySelectorAll('.stats-type-btn').forEach(b => {
-      b.classList.toggle('active', b.dataset.type === type);
-    });
+    this._syncRadioGroup('.stats-type-btn', b => b.dataset.type === type);
     if (this._lastStatsData) this.renderMainChart(this._lastStatsData);
   },
 

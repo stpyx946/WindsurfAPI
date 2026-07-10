@@ -66,7 +66,16 @@
   },
   "aria": {
     "increment": "Increment",
-    "decrement": "Decrement"
+    "decrement": "Decrement",
+    "poolViewGroup": "Pool health view",
+    "trendRangeGroup": "Trend time range",
+    "chartTypeGroup": "Chart type",
+    "statsRangeGroup": "Statistics time range",
+    "trendChart": "Request and error trend chart",
+    "trendChartData": "Trend data: {{summary}}",
+    "statsChart": "Request volume time-series chart",
+    "modelPieChart": "Model request share chart",
+    "dialog": "Dialog"
   },
   "action": {
     "checkUpdate": "Check Update",
@@ -1361,7 +1370,9 @@
       "errors": "Errors",
       "successRate": "Success rate",
       "empty": "No trend data",
-      "emptyHint": "Requests will appear here once traffic starts flowing."
+      "emptyHint": "Requests will appear here once traffic starts flowing.",
+      "a11ySummary": "{{points}} data points, {{requests}} total requests, {{errors}} total errors.",
+      "a11yColTime": "Time"
     }
   },
   "settings": {
