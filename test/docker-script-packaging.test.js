@@ -7,6 +7,10 @@ const dockerfile = readFileSync('Dockerfile', 'utf8');
 const dockerignore = readFileSync('.dockerignore', 'utf8');
 
 describe('Docker image script packaging', () => {
+  it('enables Devin Connect for direct image runs by default', () => {
+    assert.match(dockerfile, /^\s+DEVIN_CONNECT=1 \\$/m);
+  });
+
   it('copies npm smoke/probe scripts that are expected to run inside the container', () => {
     for (const name of ['smoke:native-bridge', 'smoke:lsp-matrix', 'probe:web-search']) {
       const command = pkg.scripts?.[name] || '';

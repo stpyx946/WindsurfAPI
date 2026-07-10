@@ -9,6 +9,7 @@ ARG BUILD_BRANCH=""
 ENV NODE_ENV=production \
     PORT=3003 \
     DATA_DIR=/data \
+    DEVIN_CONNECT=1 \
     LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64 \
     LS_PORT=42100 \
     WINDSURFAPI_BUILD_VERSION=$BUILD_VERSION \

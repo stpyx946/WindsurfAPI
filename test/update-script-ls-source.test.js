@@ -12,6 +12,23 @@ const UPDATE_SH = readFileSync(join(__dirname, '..', 'update.sh'), 'utf8');
 const INSTALL_LS = readFileSync(join(__dirname, '..', 'install-ls.sh'), 'utf8');
 
 describe('update.sh language-server source selection', () => {
+  test('fails closed on local state and gates destructive reset behind an explicit flag', () => {
+    const pullStage = UPDATE_SH.slice(
+      UPDATE_SH.indexOf('git fetch --quiet origin'),
+      UPDATE_SH.indexOf('AFTER=$(git rev-parse HEAD)'),
+    );
+    assert.match(pullStage, /git status --porcelain/);
+    assert.match(pullStage, /git rev-list --count/);
+    assert.match(pullStage, /WINDSURFAPI_UPDATE_FORCE_RESET/);
+    assert.match(pullStage, /exit 1/);
+
+    const stashAt = pullStage.indexOf('git stash push --include-untracked');
+    const resetAt = pullStage.indexOf('git reset --hard "$REMOTE"');
+    assert.ok(stashAt >= 0, 'forced reset must preserve local changes in a stash');
+    assert.ok(resetAt > stashAt, 'stash must happen before hard reset');
+    assert.doesNotMatch(pullStage, /if ! git pull[\s\S]*git reset --hard/);
+  });
+
   test('delegates LS updates to install-ls.sh with the configured target path', () => {
     assert.match(UPDATE_SH, /LS_INSTALL_PATH="\$LS_PATH"\s+bash install-ls\.sh/);
     assert.doesNotMatch(UPDATE_SH, /RELEASE_URL=/);

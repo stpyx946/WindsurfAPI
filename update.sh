@@ -11,10 +11,24 @@ echo "=== [1/5] Pull latest ==="
 git fetch --quiet origin
 BEFORE=$(git rev-parse HEAD)
 REMOTE=$(git rev-parse origin/master)
+DIRTY=$(git status --porcelain)
+AHEAD=$(git rev-list --count "${REMOTE}..HEAD")
+FORCE_RESET="${WINDSURFAPI_UPDATE_FORCE_RESET:-0}"
 
-if ! git pull --ff-only --quiet 2>/dev/null; then
-  echo "    ! remote history rewritten — hard-resetting to origin/master"
+if [ "$FORCE_RESET" = "1" ]; then
+  if [ -n "$DIRTY" ]; then
+    echo "    ! preserving local changes in a stash before forced reset"
+    git stash push --include-untracked -m "WindsurfAPI pre-update"
+  fi
+  echo "    ! forced reset to origin/master"
   git reset --hard "$REMOTE"
+else
+  if [ -n "$DIRTY" ] || [ "$AHEAD" -gt 0 ]; then
+    echo "    ! local changes or commits detected; refusing destructive update"
+    echo "      review them first, or set WINDSURFAPI_UPDATE_FORCE_RESET=1"
+    exit 1
+  fi
+  git pull --ff-only --quiet
 fi
 
 AFTER=$(git rev-parse HEAD)
