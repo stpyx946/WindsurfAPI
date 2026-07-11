@@ -39,7 +39,7 @@ import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
 import { assertPublicUrlHost } from '../image.js';
-import { validateHostFormat, resolveProxyConnectHost } from '../net-safety.js';
+import { validateHostFormat, resolveProxyConnectHost, trustedClientIp } from '../net-safety.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 import { parseAccountText, classifyToken } from './account-text-parser.js';
 import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
@@ -209,38 +209,14 @@ function getAccountsPayload(req) {
   };
 }
 
-// v2.0.56: client IP extraction. Mirrors caller-key.js TRUST_PROXY_XFF
-// — we only honour X-Forwarded-For when the operator opts in. Default is
-// `socket.remoteAddress` so a rogue dashboard caller can't dodge the
-// brute-force lockout by spoofing XFF and ending up on a fresh bucket.
-//
-// XFF-1 (audit P1): the LEFTMOST X-Forwarded-For token is fully attacker-
-// controllable — a client just prepends any IP. Taking parts[0] let an
-// attacker rotate the value every request to land in a fresh lockout bucket
-// and never reach the 5-strike ban. Trusted proxies APPEND the peer they
-// received the connection from to the RIGHT, so the real client IP is counted
-// from the right by TRUST_PROXY_HOPS (default 1). This MUST stay identical to
-// src/caller-key.js clientIp()/trustedProxyHops() (the source of truth) so the
-// dashboard lockout and the caller-key fingerprint can't drift apart — update
-// both together.
-function dashboardTrustedProxyHops() {
-  const raw = Number(process.env.TRUST_PROXY_HOPS);
-  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
-}
-
+// Client IP for the dashboard lockout bucket + audit logs. Delegates to
+// net-safety.js:trustedClientIp — the single source of truth shared with
+// src/caller-key.js so the dashboard lockout and the caller-key fingerprint
+// can't drift apart (audit S4; previously two byte-identical private copies
+// kept in sync only by a comment). See trustedClientIp for the audit-H2
+// (default-ignore XFF) and XFF-1 (count from the right) rationale.
 function dashboardClientIp(req) {
-  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
-  if (process.env.TRUST_PROXY_X_FORWARDED_FOR !== '1') return remote;
-  const parts = String(req?.headers?.['x-forwarded-for'] || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-  if (!parts.length) return remote;
-  // The last `hops` entries were appended by our trusted proxy chain; the real
-  // client IP is the entry just before them. If the header is shorter than the
-  // configured hop count it can't be trusted — fall back to the socket peer.
-  const idx = parts.length - dashboardTrustedProxyHops();
-  return (idx >= 0 ? parts[idx] : '') || remote;
+  return trustedClientIp(req);
 }
 
 function checkAuth(req) {

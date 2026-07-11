@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { log } from './config.js';
+import { trustedClientIp } from './net-safety.js';
 
 function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
@@ -56,48 +57,21 @@ export function extractBodyCallerSubKey(body) {
 // hashes and stay isolated; same client across turns lands on the same
 // hash and lets the cascade pool reuse the upstream session.
 //
-// v2.0.55 (audit H2): X-Forwarded-For is attacker-controllable and was
-// being trusted by default. An attacker with the shared API key could
-// spoof XFF + UA to land in another user's caller bucket and inherit
-// their cascade-pool state. We now read socket.remoteAddress by default
-// and only honour XFF when the operator opts in via
-// TRUST_PROXY_X_FORWARDED_FOR=1. Operators behind a trusted reverse
-// proxy (nginx LB, Cloudflare, etc.) should set the env var; everyone
-// else gets a non-spoofable fingerprint by default.
-const TRUST_PROXY_XFF = process.env.TRUST_PROXY_X_FORWARDED_FOR === '1';
-
-// XFF-1 (audit P1): the LEFTMOST X-Forwarded-For value is fully attacker-
-// controllable — a client just prepends any IP and it lands at the front of
-// the list. Trusted reverse proxies (nginx `$proxy_add_x_forwarded_for`,
-// Cloudflare, etc.) APPEND the peer they received the connection from to the
-// RIGHT, so the trustworthy client IP is counted from the right by the number
-// of trusted proxy hops in front of us (TRUST_PROXY_HOPS, default 1 = a single
-// proxy). Taking the leftmost let an attacker with the shared key rotate the
-// value on every request to dodge the brute-force lockout (each spoof lands in
-// a fresh bucket, never reaching the 5-strike threshold) or aim a chosen IP to
-// land in — and poison — another caller's cascade/cache bucket.
-function trustedProxyHops() {
-  const raw = Number(process.env.TRUST_PROXY_HOPS);
-  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
-}
-
-function clientIp(req) {
-  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
-  if (!TRUST_PROXY_XFF) return remote;
-  const parts = String(req?.headers?.['x-forwarded-for'] || '')
-    .split(',')
-    .map(s => s.trim())
-    .filter(Boolean);
-  if (!parts.length) return remote;
-  // The last `hops` entries were appended by our trusted proxy chain; the real
-  // client IP is the entry just before them. If the header is shorter than the
-  // configured hop count it can't be trusted — fall back to the socket peer.
-  const idx = parts.length - trustedProxyHops();
-  return (idx >= 0 ? parts[idx] : '') || remote;
-}
+// Client-IP trust policy (XFF hop counting) lives in net-safety.js:trustedClientIp
+// — the single source of truth shared with src/dashboard/api.js so the caller-key
+// fingerprint and the dashboard lockout bucket can't drift apart. See that
+// function for the audit-H2 (default-ignore XFF) and audit-P1/XFF-1 (count from
+// the right, never take the spoofable leftmost) rationale.
+//
+// ⚠️ Behaviour change (audit S4): this module previously captured
+// TRUST_PROXY_X_FORWARDED_FOR into a module-load `const`, so flipping the env at
+// runtime had no effect here while the dashboard copy read it live — a latent
+// drift. trustedClientIp reads it live, matching the dashboard and this module's
+// own already-live hop reader. The xff-spoof test still fresh-imports per case,
+// so its coverage is unchanged.
 
 function ipUaFingerprint(req) {
-  const ip = clientIp(req);
+  const ip = trustedClientIp(req);
   const ua = req?.headers?.['user-agent'] || '';
   if (!ip && !ua) return '';
   return sha256Hex(`${ip}\0${ua}`).slice(0, 16);
@@ -120,7 +94,7 @@ export function callerKeyFromRequest(req, apiKey = '', body = null) {
     const base = `session:${sha256Hex(sessionId).slice(0, 32)}`;
     return bodySubKey ? `${base}:user:${bodySubKey}` : base;
   }
-  const ip = clientIp(req);
+  const ip = trustedClientIp(req);
   const ua = req?.headers?.['user-agent'] || '';
   const base = `client:${sha256Hex(`${ip}\0${ua}`).slice(0, 32)}`;
   return bodySubKey ? `${base}:user:${bodySubKey}` : base;

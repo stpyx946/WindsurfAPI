@@ -86,6 +86,48 @@ export function isPrivateIp(address) {
   return false;
 }
 
+// ─── Trusted client IP (XFF hop counting) ──────────────────
+//
+// Single source of truth for "which IP do we trust as the real client",
+// shared by src/caller-key.js (per-caller pool/cache scope + brute-force
+// bucket) and src/dashboard/api.js (dashboard lockout bucket + audit logs).
+// These two used to carry byte-identical private copies kept in sync only by
+// a "MUST stay identical" comment — a drift here re-opens XFF-1 (an attacker
+// with the shared key rotating a spoofed leftmost XFF to dodge the lockout) or
+// splits the caller/dashboard views of the same client. (audit S4)
+//
+// Policy: X-Forwarded-For is attacker-controllable and IGNORED unless the
+// operator opts in with TRUST_PROXY_X_FORWARDED_FOR=1. When trusted, the real
+// client is counted from the RIGHT by the number of trusted proxy hops in
+// front of us (TRUST_PROXY_HOPS, default 1) — trusted proxies APPEND the peer
+// they received the connection from, so the leftmost value stays spoofable and
+// must never be taken. A header shorter than the hop count can't be trusted →
+// fall back to the socket peer.
+//
+// Both env vars are read LIVE on every call (not captured at module load) so a
+// process that flips them — or a test that sets them per-case — sees the
+// change, and so the two former call sites can't disagree by one reading a
+// module-load const while the other reads live.
+export function trustedProxyHops(env = process.env) {
+  const raw = Number(env.TRUST_PROXY_HOPS);
+  return Number.isInteger(raw) && raw >= 1 ? raw : 1;
+}
+
+export function trustedClientIp(req, env = process.env) {
+  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  if (env.TRUST_PROXY_X_FORWARDED_FOR !== '1') return remote;
+  const parts = String(req?.headers?.['x-forwarded-for'] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (!parts.length) return remote;
+  // The last `hops` entries were appended by our trusted proxy chain; the real
+  // client IP is the entry just before them. If the header is shorter than the
+  // configured hop count it can't be trusted — fall back to the socket peer.
+  const idx = parts.length - trustedProxyHops(env);
+  return (idx >= 0 ? parts[idx] : '') || remote;
+}
+
 export async function resolvePublicAddresses(hostname, lookupFn = dnsLookup) {
   const host = String(hostname || '').replace(/^\[|\]$/g, '');
   if (!host || host.toLowerCase() === 'localhost') throw new Error('ERR_PROXY_PRIVATE_HOST');
