@@ -29,6 +29,11 @@ const MAX_MODELS = (() => {
 // strictly-increasing seq gives an unambiguous least-recently-updated pick.
 let _touchSeq = 0;
 
+// audit S8: cache of the current-hour hourlyBuckets entry so recordRequest
+// avoids an O(n) .find per request. Reset (null) means "re-resolve on next
+// record" — safe after restart or hour rollover.
+let _curBucket = null;
+
 /** Count of tracked model keys excluding the shared overflow bucket. */
 function realModelKeyCount() {
   let n = 0;
@@ -190,15 +195,24 @@ export function recordRequest(model, success, durationMs, accountId) {
     else ac.errors++;
   }
 
-  // Hourly bucket
+  // Hourly bucket. audit S8: the current-hour bucket is (almost) always the
+  // last element, so a per-request O(n) linear .find over up to 720 buckets was
+  // wasted work. Cache the current hour's bucket ref and only re-resolve when
+  // the hour rolls over (or after a restart, where _curBucket starts null and
+  // we fall back to the tail/find once).
   const hourKey = getHourKey();
-  let bucket = _state.hourlyBuckets.find(b => b.hour === hourKey);
+  let bucket = _curBucket && _curBucket.hour === hourKey ? _curBucket : null;
+  if (!bucket) {
+    const tail = _state.hourlyBuckets[_state.hourlyBuckets.length - 1];
+    bucket = tail && tail.hour === hourKey ? tail : _state.hourlyBuckets.find(b => b.hour === hourKey);
+  }
   if (!bucket) {
     bucket = { hour: hourKey, requests: 0, errors: 0 };
     _state.hourlyBuckets.push(bucket);
     // Keep last 30 days of hourly data (720 buckets)
     if (_state.hourlyBuckets.length > 720) _state.hourlyBuckets.shift();
   }
+  _curBucket = bucket;
   bucket.requests++;
   if (!success) bucket.errors++;
 
@@ -283,6 +297,7 @@ export function importStats(snap, { mode = 'merge' } = {}) {
     for (const k of Object.keys(_state)) delete _state[k];
     Object.assign(_state, JSON.parse(JSON.stringify(src)));
     delete _state._exportedAt; delete _state._schema;
+    _curBucket = null; // S8: state wholesale-replaced, cached bucket ref is stale
     scheduleSave();
     return { ok: true, mode: 'replace' };
   }
@@ -318,6 +333,7 @@ export function resetStats() {
   _state.modelCounts = {};
   _state.accountCounts = {};
   _state.hourlyBuckets = [];
+  _curBucket = null; // invalidate cached bucket ref (S8) — buckets array replaced
   _state.tokenTotals = {
     fresh_input: 0, cache_read: 0, cache_write: 0,
     output: 0, total: 0, requests_with_usage: 0,
