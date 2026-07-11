@@ -140,16 +140,71 @@ export function sanitizeText(s) {
 export class PathSanitizeStream {
   constructor() {
     this.buffer = '';
+    // audit S5 — incremental cut detection. feed() used to re-scan the ENTIRE
+    // held-back buffer on every chunk, so a long sensitive path or a big
+    // <workspace_layout> block streamed over K chunks cost O(N²) (each chunk
+    // re-walks the whole accumulated hold). These two cursors let a chunk resume
+    // the resolution scan of the head construct from where the previous chunk
+    // left off (walking only the fresh tail), turning the two unbounded-growth
+    // hold cases into O(N) amortized. Both are reset to 0 whenever the buffer
+    // head changes (a slice with cut>0), and only trusted while the head is
+    // unchanged (cut===0). Correctness is pinned by an exhaustive random-chunking
+    // equivalence test against one-shot sanitizeText() (sanitize-stream-incremental).
+    this._resumeBodyEnd = 0;  // literal-body walk cursor when head is an unterminated literal
+    this._resumeClose = 0;    // close-tag search cursor when head is an unclosed strip block
   }
 
   feed(delta) {
     if (!delta) return '';
+    const prevLen = this.buffer.length;
     this.buffer += delta;
-    const cut = this._safeCutPoint();
+    const cut = this._safeCutPoint(prevLen);
     if (cut === 0) return '';
     const safeRegion = this.buffer.slice(0, cut);
     this.buffer = this.buffer.slice(cut);
+    // Head changed → resume cursors no longer describe buffer[0]; reset them.
+    this._resumeBodyEnd = 0;
+    this._resumeClose = 0;
     return sanitizeText(safeRegion);
+  }
+
+  // Fast path (audit S5): if buffer[0] begins a construct we were already
+  // holding on last feed (an unterminated sensitive literal, or an unclosed
+  // strip-block), the earliest hold is that head → cut is 0 as long as it stays
+  // unresolved. Resume its resolution scan from the previous cursor + a straddle
+  // overlap (so a terminator/close-tag spanning the chunk boundary is still
+  // caught) instead of re-walking the whole held-back region. Returns 0 to hold,
+  // or -1 to signal "head resolved / no fast-path hold — run the full scan".
+  _resumeHeadHold(prevLen) {
+    const buf = this.buffer;
+    const len = buf.length;
+
+    // 1a. Head is a sensitive literal with a live (unterminated) body. Char
+    //     class is per-char and monotonic — a char already classified as body
+    //     stays body when data is appended — so resuming the walk from the
+    //     previous end is exact.
+    for (const lit of SENSITIVE_LITERALS) {
+      if (!lit || !buf.startsWith(lit)) continue;
+      let end = Math.max(lit.length, this._resumeBodyEnd);
+      while (end < len && PATH_BODY_RE.test(buf[end])) end++;
+      if (end === len) { this._resumeBodyEnd = end; return 0; } // still unterminated → hold at 0
+      return -1; // body terminated → let the full scan advance the cut
+    }
+
+    // 1b. Head is an unclosed strip-block open tag. Resume the close-tag search;
+    //     back off by (close.length - 1) so a close tag straddling the previous
+    //     chunk boundary is still found.
+    for (const tag of STRIP_BLOCK_TAGS) {
+      const open = `<${tag}`;
+      if (!buf.startsWith(open)) continue;
+      const close = `</${tag}>`;
+      const from = Math.max(open.length, Math.min(this._resumeClose, prevLen) - (close.length - 1), 0);
+      const closeIdx = buf.indexOf(close, from);
+      if (closeIdx === -1) { this._resumeClose = len; return 0; } // still unclosed → hold at 0
+      return -1; // block closed → let the full scan advance the cut
+    }
+
+    return -1; // no fast-path hold applies
   }
 
   // Largest index into this.buffer such that buffer[0:cut] contains no
@@ -161,9 +216,17 @@ export class PathSanitizeStream {
   //   (2) the buffer tail is itself a proper prefix of a sensitive literal
   //       (e.g., ends with "/tmp/win") — the next delta might complete it.
   //       Hold from that tail start.
-  _safeCutPoint() {
+  _safeCutPoint(prevLen = 0) {
     const buf = this.buffer;
     const len = buf.length;
+
+    // audit S5 fast path: if buffer[0] is a construct still unresolved from the
+    // previous feed, the cut is 0 and we only walk the fresh tail. This is the
+    // O(N²)→O(N) win for long paths / big <workspace_*> blocks arriving over
+    // many chunks. Only consulted when prevLen>0 (mid-stream) — a fresh buffer
+    // has no prior hold to resume.
+    if (prevLen > 0 && this._resumeHeadHold(prevLen) === 0) return 0;
+
     let cut = len;
 
     // (1) unterminated full literal
