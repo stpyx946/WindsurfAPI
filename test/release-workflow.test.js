@@ -14,7 +14,7 @@ function jobBlock(name) {
 }
 
 describe('release workflow', () => {
-  it('runs tests before Docker and waits for Docker before GitHub Release', () => {
+  it('runs tests before Docker and waits for Docker + Windows exe before GitHub Release', () => {
     const test = jobBlock('test');
     const docker = jobBlock('docker');
     const release = jobBlock('release');
@@ -22,7 +22,24 @@ describe('release workflow', () => {
     assert.match(test, /\btimeout-minutes:\s*10\b/);
     assert.match(docker, /\bneeds:\s*test\b/);
     assert.match(docker, /\btimeout-minutes:\s*30\b/);
-    assert.match(release, /\bneeds:\s*docker\b/);
+    // Release waits for BOTH the docker image and the Windows single-exe build
+    // so the .exe is available to attach as a release asset.
+    assert.match(release, /\bneeds:\s*\[docker,\s*windows-exe\]/);
+  });
+
+  it('builds a Windows single-exe and attaches it to the release', () => {
+    const winExe = jobBlock('windows-exe');
+    assert.match(winExe, /\bneeds:\s*test\b/);
+    assert.match(winExe, /runs-on:\s*windows-latest/);
+    assert.match(winExe, /pkg \. --targets node20-win-x64/);
+    // Must smoke-check the exe actually boots + serves the dashboard, so a
+    // broken asset bundle fails the release rather than shipping a dead exe.
+    assert.match(winExe, /\/health/);
+    assert.match(winExe, /\/dashboard/);
+    assert.match(winExe, /upload-artifact/);
+    const release = jobBlock('release');
+    assert.match(release, /download-artifact/);
+    assert.match(release, /files:\s*dist-windows\/windsurfapi\.exe/);
   });
 
   it('uses the bounded release test gate in CI', () => {

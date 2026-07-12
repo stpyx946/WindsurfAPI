@@ -4,6 +4,9 @@
   "description": "Windsurf/Devin to OpenAI + Anthropic + Gemini compatible API proxy. Turns Devin's 100+ AI models (Claude, GPT, Gemini, DeepSeek, Grok, Qwen, Kimi, GLM, SWE) into multi-protocol API endpoints. Zero npm runtime dependencies (image codecs vendored under src/vendor).",
   "type": "module",
   "main": "src/index.js",
+  "bin": {
+    "windsurfapi": "src/index.js"
+  },
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
@@ -20,7 +23,20 @@
     "smoke:lsp-matrix": "node scripts/lsp-capacity-matrix.mjs",
     "probe:web-search": "node scripts/web-search-direct-probe.mjs",
     "sync:contributors": "node scripts/sync-docs-contributors.mjs",
-    "secret-scan": "node scripts/secret-scan.mjs"
+    "secret-scan": "node scripts/secret-scan.mjs",
+    "build:exe": "pkg . --targets node20-win-x64 --output dist-windows/windsurfapi.exe"
+  },
+  "pkg": {
+    "scripts": ["src/**/*.js"],
+    "assets": [
+      "src/dashboard/index.html",
+      "src/dashboard/index-sketch.html",
+      "src/dashboard/i18n/*.json",
+      "src/dashboard/data/*.json",
+      "src/vendor/**/*"
+    ],
+    "targets": ["node20-win-x64"],
+    "outputPath": "dist-windows"
   },
   "engines": {
     "node": ">=20.0.0"
