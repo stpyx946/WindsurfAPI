@@ -299,7 +299,12 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     ':path': path,
     'content-type': 'application/grpc',
     'te': 'trailers',
-    'grpc-accept-encoding': 'identity,gzip,deflate',
+    // T3 (Grok audit): the frame reader only handles uncompressed frames
+    // (compressed===0) — a gzip/deflate frame is silently skipped, truncating
+    // the stream. Advertise ONLY what we can actually decode so the LS never
+    // sends a compressed frame we'd drop. (The LS is local loopback and rarely
+    // compresses, but advertising a codec we can't read is a latent bug.)
+    'grpc-accept-encoding': 'identity',
     'user-agent': 'grpc-node/1.108.2',
     'x-codeium-csrf-token': csrfToken,
   };

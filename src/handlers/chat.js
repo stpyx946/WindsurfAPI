@@ -2113,6 +2113,32 @@ async function _handleChatCompletionsInner(body, context = {}) {
     };
   }
 
+  // T1 (Grok audit): the upstream (Devin/Windsurf) completion API only accepts
+  // temperature/top_p/top_k/max_tokens. seed / presence_penalty /
+  // frequency_penalty / logit_bias used to be accepted by the OpenAI schema and
+  // then SILENTLY dropped — the client believed they took effect (and they even
+  // split the response cache), but upstream never saw them. Reject a non-default
+  // value with a clear 400 instead of faking success. Neutral defaults (penalties
+  // == 0, seed/logit_bias absent or empty) pass through untouched for compat.
+  const unsupportedSampling = [];
+  if (body.seed != null) unsupportedSampling.push('seed');
+  if (Number.isFinite(body.presence_penalty) && body.presence_penalty !== 0) unsupportedSampling.push('presence_penalty');
+  if (Number.isFinite(body.frequency_penalty) && body.frequency_penalty !== 0) unsupportedSampling.push('frequency_penalty');
+  if (body.logit_bias != null && typeof body.logit_bias === 'object' && Object.keys(body.logit_bias).length > 0) unsupportedSampling.push('logit_bias');
+  if (unsupportedSampling.length) {
+    const p = unsupportedSampling[0];
+    return {
+      status: 400,
+      body: {
+        error: {
+          message: `Unsupported sampling parameter(s): ${unsupportedSampling.join(', ')}. The upstream backend ignores these, so this proxy rejects them rather than silently dropping them (which would look like they took effect). Remove them, or set penalties to 0.`,
+          type: 'invalid_request_error',
+          param: p,
+        },
+      },
+    };
+  }
+
   // Heavy clients (OpenClaw 24KB, opencode + omo, Cline with full tool
   // catalog) ship system prompts that approach Cascade's ~30KB panel-
   // state ceiling. When that happens upstream intermittently returns
