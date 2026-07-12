@@ -177,6 +177,25 @@ async function main() {
 
   const server = startServer();
 
+  // Packaged single-exe desktop UX: on the FIRST deploy (no Windsurf_data folder
+  // existed yet), pop the dashboard in the default browser so the initial
+  // double-click lands on a usable setup page. Subsequent launches don't reopen
+  // it. Best effort — a headless/CI run (WINDSURFAPI_NO_OPEN=1) or a missing
+  // opener just skips it. Delayed slightly so the "Server on ..." line prints.
+  if (config.isFirstRun && process.env.WINDSURFAPI_NO_OPEN !== '1') {
+    const url = `http://127.0.0.1:${config.port}/dashboard`;
+    setTimeout(() => {
+      try {
+        // Windows: `cmd /c start "" <url>` opens the default browser without a
+        // shell window lingering. execFile avoids spawning a persistent shell.
+        import('child_process').then(({ execFile }) => {
+          execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, () => {});
+        }).catch(() => {});
+        log.info(`First run — opening dashboard in your browser: ${url}`);
+      } catch { /* opener unavailable — user can open the URL manually */ }
+    }, 800);
+  }
+
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;

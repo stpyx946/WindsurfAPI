@@ -151,6 +151,7 @@ jobs:
         run: |
           $env:DEVIN_CONNECT = '1'; $env:HOST = '127.0.0.1'; $env:PORT = '3999'
           $env:API_KEY = 'ci-smoke'; $env:DATA_DIR = "$env:RUNNER_TEMP\wa-smoke"
+          $env:WINDSURFAPI_NO_OPEN = '1'  # don't try to launch a browser on the headless runner
           $out = "$env:RUNNER_TEMP\exe-out.log"; $err = "$env:RUNNER_TEMP\exe-err.log"
           $p = Start-Process -FilePath dist-windows\windsurfapi.exe -PassThru -WindowStyle Hidden -RedirectStandardOutput $out -RedirectStandardError $err
           $ok = $false

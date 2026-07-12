@@ -5,9 +5,19 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
+// When packaged as a single .exe (pkg), __dirname/ROOT point INSIDE the
+// read-only snapshot (C:\snapshot\...), so .env can't be read from there and
+// DATA_DIR would try to mkdir in the snapshot (fails). The real writable
+// location is the folder the .exe sits in. Use that as the base for .env and
+// the default data dir so a double-clicked exe keeps its state in a `data/`
+// folder next to itself — cleanly isolated from the bundled Linux snapshot.
+const IS_PACKAGED = !!process.pkg;
+const EXE_DIR = IS_PACKAGED ? dirname(process.execPath) : ROOT;
+
 // Load .env file manually (zero dependencies)
 function loadEnv() {
-  const envPath = resolve(ROOT, '.env');
+  // Packaged: read the .env sitting next to the .exe, not the snapshot copy.
+  const envPath = resolve(EXE_DIR, '.env');
   if (!existsSync(envPath)) return;
   const content = readFileSync(envPath, 'utf-8');
   for (const line of content.split('\n')) {
@@ -34,6 +44,16 @@ if (process.env.WINDSURFAPI_SKIP_DOTENV !== '1') {
   loadEnv();
 }
 
+// Packaged-exe sane defaults (only when the user hasn't set them). The Windows
+// exe has no bundled Language Server (Linux-only) and is meant for local
+// single-user use, so: DEVIN_CONNECT=1 (pure-HTTP path, skip the LS entirely),
+// HOST=127.0.0.1 (loopback — don't expose an unauthenticated gateway to the
+// LAN on first run). Both stay overridable via .env / env.
+if (IS_PACKAGED) {
+  if (!process.env.DEVIN_CONNECT && !process.env.DEVIN_ONLY) process.env.DEVIN_CONNECT = '1';
+  if (!process.env.HOST && !process.env.BIND_HOST) process.env.HOST = '127.0.0.1';
+}
+
 // `sharedDataDir` is the cluster-shared root: a single accounts.json lives
 // here so add-account writes from any replica are visible to every replica
 // after restart. `dataDir` is replica-local under REPLICA_ISOLATE=1 and is
@@ -41,7 +61,15 @@ if (process.env.WINDSURFAPI_SKIP_DOTENV !== '1') {
 // See issue #67 — when the two were collapsed into one path, every
 // docker-compose upgrade orphaned the user's accounts.json under a stale
 // `replica-${HOSTNAME}` subdir.
-const sharedDataDir = process.env.DATA_DIR ? resolve(ROOT, process.env.DATA_DIR) : ROOT;
+// Base that relative DATA_DIR / default data dir resolve against. Packaged:
+// the .exe's folder (writable) — NEVER the snapshot ROOT. Default (DATA_DIR
+// unset) for a packaged exe is `<exe-dir>/Windsurf_data` so a double-click
+// drops all state (accounts/stats/logs) into one tidy folder beside the
+// program, isolated from the bundled Linux snapshot.
+const DATA_BASE = IS_PACKAGED ? EXE_DIR : ROOT;
+const sharedDataDir = process.env.DATA_DIR
+  ? resolve(DATA_BASE, process.env.DATA_DIR)
+  : (IS_PACKAGED ? join(EXE_DIR, 'Windsurf_data') : ROOT);
 const dataDir = (() => {
   let base = sharedDataDir;
   if (process.env.REPLICA_ISOLATE === '1' && process.env.HOSTNAME) {
@@ -49,6 +77,11 @@ const dataDir = (() => {
   }
   return base;
 })();
+
+// First-run detection (packaged only): capture whether the data folder exists
+// BEFORE we mkdir it, so index.js can decide to auto-open the dashboard only on
+// the very first launch (no Windsurf_data folder yet = fresh deploy).
+const isFirstRun = IS_PACKAGED && !existsSync(sharedDataDir);
 
 try {
   mkdirSync(sharedDataDir, { recursive: true });
@@ -106,6 +139,13 @@ export const config = {
 
   // Proxy testing
   allowPrivateProxyHosts: process.env.ALLOW_PRIVATE_PROXY_HOSTS === '1',
+
+  // True when running as a packaged single-exe (pkg). Used to enable the
+  // double-click desktop UX: data folder beside the exe, auto-open dashboard.
+  isPackaged: IS_PACKAGED,
+  // True on the very first packaged launch (Windsurf_data didn't exist yet).
+  // index.js opens the dashboard in the browser only on this first deploy.
+  isFirstRun,
 };
 
 const levels = { debug: 0, info: 1, warn: 2, error: 3 };
