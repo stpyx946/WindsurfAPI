@@ -2,7 +2,18 @@
 
 零依赖(纯 `schtasks` + `wscript` + PowerShell)把网关在 Windows 上以隐藏后台、开机自启、崩溃自愈的方式跑起来。不碰 `src/`,只是外挂启动/监督层。
 
-## 快速开始
+## 两种跑法
+
+**A. 单 exe(开箱即用,无需装 Node)** —— 类似 KiroStudio 的 `kirostudio.exe`。
+从 [GitHub Releases](https://github.com/dwgx/WindsurfAPI/releases) 下载 `windsurfapi.exe`(每个 `v*` tag 由 CI 的 windows runner 用 pkg 打包,已 smoke 验证能起 + 出面板),放进任意空文件夹,双击即跑:
+  - 首次运行读同目录 `.env`(没有则用内置默认:`PORT=3003` / `HOST=127.0.0.1` / `DEVIN_CONNECT=1`,但**没有 API_KEY/密码**,建议先照下面 B 的 `start.bat` 生成一份 `.env` 或手写)。
+  - 面板 `http://127.0.0.1:3003/dashboard`,dashboard 静态资源已打进 exe(pkg 快照 FS),无需额外文件。
+  - 关窗口 = 停止。换新版 = 下载新 exe 覆盖重跑,`.env`/数据不动。
+
+**B. 源码 + 脚本(需装 Node 20+,零 npm 依赖)** —— 开发/自更新首选,`git pull` 即拉最新。
+双击 `start.bat`(见下),它生成 `.env` + 打印密钥 + 前台监督循环。
+
+## 快速开始(源码方式)
 
 1. **首次引导**:双击 `start.bat`。它会:
    - 校验 Node ≥ 20

@@ -3,6 +3,9 @@
 # 前台运行(可见日志 + Ctrl-C 优雅停),最利首次调试。开机自启后台见 install-task.bat。
 
 $ErrorActionPreference = 'Stop'
+# 控制台按 UTF-8 输出,否则中文文案在默认 GBK/936 码页的 cmd 窗口里显示为乱码
+# (脚本本身是 UTF-8 带 BOM,PowerShell 能正确读中文字面量,问题只在输出编码)。
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 Set-Location $Root
@@ -90,9 +93,16 @@ if ($generated.Count -gt 0) {
 
   # ⚠️ 必须无 BOM 写(UTF8Encoding($false))。虽然 config.js 的 .trim() 恰好能
   # 剥掉首键 BOM,仍以无 BOM 为规范,避免任何边缘键被 BOM 污染。
-  $text = ($outLines -join "`r`n") + "`r`n"
-  [System.IO.File]::WriteAllText($EnvPath, $text, (New-Object System.Text.UTF8Encoding($false)))
-  Write-Host ".env 已更新(填入 $($generated.Count) 个缺失键)。" -ForegroundColor Green
+  # try/catch:写盘失败(.env 被占用 / 目录只读)必须友好报错 + 暂停,绝不让
+  # 双击窗口静默闪退(对齐 KiroStudio start.ps1 的 Stop-WithError 保护)。
+  try {
+    $text = ($outLines -join "`r`n") + "`r`n"
+    [System.IO.File]::WriteAllText($EnvPath, $text, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Host ".env 已更新(填入 $($generated.Count) 个缺失键)。" -ForegroundColor Green
+  } catch {
+    Stop-WithError "写入 .env 失败:$($_.Exception.Message)" `
+      '常见原因:.env 被其它程序占用(已在运行的网关/编辑器),或目录只读。请关闭占用程序后重试。'
+  }
 } else {
   Write-Host '.env 已存在且完整,未改动。' -ForegroundColor Green
 }
@@ -111,19 +121,43 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
   Write-Host '提示:未检测到 git,面板 Update / update.bat 自更新将不可用。' -ForegroundColor Yellow
 }
 
-# ── 5. 打印面板地址 + 密钥(仅本次生成的)──────────────────
+# ── 5. 打印面板地址 + 密钥 ─────────────────────────────────
+$hostVal = if ($generated.ContainsKey('HOST')) { $generated['HOST'] } elseif ($existing.ContainsKey('HOST')) { $existing['HOST'] } else { '127.0.0.1' }
+$displayHost = if ($hostVal -eq '0.0.0.0') { '127.0.0.1' } else { $hostVal }
+
 Write-Host ''
+if ($genPassword -or $genApiKey) {
+  # 大字框:首次生成的密钥务必醒目,提示用户截图保存(对齐 KiroStudio 模板)。
+  Write-Host '################################################################' -ForegroundColor Green
+  Write-Host '#                                                              #' -ForegroundColor Green
+  Write-Host '#            已为你自动生成密钥(请截图妥善保存)              #' -ForegroundColor Green
+  Write-Host '#                                                              #' -ForegroundColor Green
+  Write-Host '################################################################' -ForegroundColor Green
+  Write-Host ''
+  if ($genPassword) {
+    Write-Host '  面板登录密码 (DASHBOARD_PASSWORD):' -ForegroundColor Yellow
+    Write-Host "     $genPassword" -ForegroundColor White
+    Write-Host ''
+  }
+  if ($genApiKey) {
+    Write-Host '  网关调用密钥 (API_KEY,给 Claude Code / SDK 用):' -ForegroundColor Yellow
+    Write-Host "     $genApiKey" -ForegroundColor White
+    Write-Host ''
+  }
+  Write-Host '  这些密钥已写入项目根 .env,下次启动无需重设。' -ForegroundColor DarkGray
+  Write-Host ''
+}
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host ' WindsurfAPI 已引导完成' -ForegroundColor Cyan
-Write-Host "  面板:  http://127.0.0.1:$port/dashboard" -ForegroundColor White
-if ($genPassword) { Write-Host "  面板密码 (DASHBOARD_PASSWORD):  $genPassword" -ForegroundColor Green }
-if ($genApiKey)   { Write-Host "  API Key  (API_KEY):             $genApiKey" -ForegroundColor Green }
+Write-Host "  >> 面板地址(浏览器打开,用 DASHBOARD_PASSWORD 登录):" -ForegroundColor Cyan
+Write-Host "     http://${displayHost}:$port/dashboard" -ForegroundColor White
 if (-not $genPassword -and -not $genApiKey) {
   Write-Host '  (密钥沿用现有 .env,如需查看请打开项目根 .env)' -ForegroundColor DarkGray
 }
-Write-Host ''
-Write-Host ' 下一步:浏览器打开面板 → 用 DASHBOARD_PASSWORD 登录 → 到 accounts 页' -ForegroundColor White
-Write-Host '         添加一个 Windsurf/Devin session token。' -ForegroundColor White
+if ($hostVal -eq '0.0.0.0') {
+  Write-Host '  [提示] HOST=0.0.0.0:网关对局域网开放,请确保 API_KEY 为强随机值。' -ForegroundColor Yellow
+}
+Write-Host '  >> 登录后到 accounts 页添加一个 Windsurf/Devin session token 即可使用。' -ForegroundColor DarkGray
 Write-Host '============================================================' -ForegroundColor Cyan
 Write-Host ''
 

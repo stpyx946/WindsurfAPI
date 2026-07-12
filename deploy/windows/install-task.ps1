@@ -1,6 +1,7 @@
 ﻿# 注册开机自启计划任务(登录时触发,隐藏分离进程)。
 # 零外部依赖:schtasks + wscript。/rl limited 普通权限即可(端口 3003 免管理员)。
 $ErrorActionPreference = 'Stop'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 $TaskName = 'WindsurfAPI'
 $Vbs = (Resolve-Path (Join-Path $PSScriptRoot 'run.vbs')).Path
 $Tr = "wscript `"$Vbs`""

@@ -4,13 +4,16 @@
 #
 # ⚠️ 退出码语义与 KiroStudio 相反(见 README):
 #   75 = 自更新/面板 Update 请求重启(EX_TEMPFAIL, api.js:2055)
-#   0  = 优雅停机(index.js exit(0),已抽干 SSE + saveAccountsSync)
+#   0  = 优雅停机(index.js exit(0),已抽干 SSE;K7 起关机只 drain 不回写池,
+#        盘上池态由 30s dirty-flush 保持最新)
 #   其它非零 = 崩溃/启动错/端口占用重试耗尽(index.js/server.js exit(1))
 #
 # 关键红线:阻塞等子进程完全退出再重启,杜绝两个 node 抢写 accounts.json。
 # 绝不用 taskkill /F 来「重启」(那是外部写者红线;监督者靠等子退出即零写重叠)。
 
 $ErrorActionPreference = 'Stop'
+# 控制台按 UTF-8 输出,否则中文文案在默认 GBK/936 码页的窗口里显示为乱码。
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 # 项目根 = 本脚本上两级(deploy/windows/ → 根)。config.js 按模块路径解析
 # .env/数据文件(ROOT=resolve(__dirname,'..')),cwd 必须是根以保 git/自更新正确。
@@ -40,18 +43,43 @@ $crashStreak = 0
 Write-Sup "supervisor start (root=$Root)"
 
 while ($true) {
-  # 原始 stdout/stderr 必须重定向到日志:app 的 JSONL 日志不含启动 banner
-  # (index.js:78)与 pre-logger 致命 console.error(index.js:214)。
-  $outLog = Join-Path $LogDir "supervisor-$Date.log"
-  $proc = Start-Process -FilePath 'node' -ArgumentList 'src/index.js' `
-    -WorkingDirectory $Root -PassThru -NoNewWindow `
-    -RedirectStandardOutput $outLog -RedirectStandardError (Join-Path $LogDir "supervisor-err-$Date.log")
+  # 原始 stdout/stderr 必须落盘:app 的 JSONL 日志不含启动 banner(index.js:78)
+  # 与 pre-logger 致命 console.error(index.js:214)。给子进程单独的 node 日志,
+  # 与监督者自己的 Write-Sup 记录分离(否则同一文件被 stdout 重定向截断,监督
+  # 记录会被 app 输出覆盖 —— 老版 Start-Process 方案的隐患)。
+  $nodeOut = Join-Path $LogDir "node-$Date.log"
+
+  # 关键:用 [Diagnostics.Process] 而非 Start-Process -PassThru。后者在
+  # -RedirectStandardOutput 到文件时,$proc.ExitCode 会返回 $null(Windows
+  # PowerShell 已知缺陷),导致 75/0 全部落入 else 崩溃分支 —— 热更新与优雅
+  # 重启彻底失效。.NET Process 的 ExitCode 可靠,且能拿到 PID 写 pidfile
+  # (stop.ps1/status.ps1 依赖)。异步抽干 stdout/stderr 到 node 日志,避免
+  # 管道缓冲写满导致子进程阻塞(经典死锁),同时满足"等子退出再重启"红线。
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName = 'node'
+  $psi.Arguments = 'src/index.js'
+  $psi.WorkingDirectory = $Root
+  $psi.UseShellExecute = $false
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError = $true
+  $proc = New-Object System.Diagnostics.Process
+  $proc.StartInfo = $psi
+  $sink = { if ($EventArgs.Data -ne $null) { Add-Content -Path $Event.MessageData -Value $EventArgs.Data -Encoding UTF8 } }
+  $so = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -Action $sink -MessageData $nodeOut
+  $se = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived  -Action $sink -MessageData $nodeOut
+  [void]$proc.Start()
+  $proc.BeginOutputReadLine()
+  $proc.BeginErrorReadLine()
 
   Set-Content -Path $PidFile -Value $proc.Id -Encoding ASCII
   Write-Sup "node started pid=$($proc.Id)"
 
   $proc.WaitForExit()
   $code = $proc.ExitCode
+  # 注销事件订阅,防止跨循环泄漏。
+  Unregister-Event -SourceIdentifier $so.Name -ErrorAction SilentlyContinue
+  Unregister-Event -SourceIdentifier $se.Name -ErrorAction SilentlyContinue
+  $proc.Dispose()
   Write-Sup "node exited code=$code"
 
   if ($code -eq 75) {

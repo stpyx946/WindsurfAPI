@@ -1,5 +1,6 @@
 ﻿# WindsurfAPI 状态:RUNNING/STOPPED + PID + 端口 + 面板地址 + 日志尾。
 $ErrorActionPreference = 'Continue'
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch { }
 
 $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $LogDir = Join-Path $Root 'logs'
@@ -45,6 +46,6 @@ $supLog = Join-Path $LogDir "supervisor-$date.log"
 if (Test-Path $supLog) {
   Write-Host ''
   Write-Host "--- $supLog 末 15 行 ---" -ForegroundColor DarkGray
-  Get-Content $supLog -Tail 15
+  Get-Content $supLog -Tail 15 -Encoding UTF8
 }
 Write-Host ''
