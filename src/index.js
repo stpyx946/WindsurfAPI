@@ -177,6 +177,21 @@ async function main() {
 
   const server = startServer();
 
+  // Packaged first-run: print the auto-generated credentials prominently (like
+  // start.ps1 does for the source install) so the user can log in / call the
+  // API. They're already persisted to the .env beside the exe.
+  if (config.generatedCreds) {
+    const c = config.generatedCreds;
+    log.warn('################################################################');
+    log.warn('#           已为你自动生成密钥(请截图妥善保存)              #');
+    log.warn('################################################################');
+    if (c.DASHBOARD_PASSWORD) log.warn(`  面板登录密码 (DASHBOARD_PASSWORD): ${c.DASHBOARD_PASSWORD}`);
+    if (c.API_KEY) log.warn(`  网关调用密钥 (API_KEY):            ${c.API_KEY}`);
+    if (c.envPath) log.warn(`  已写入 ${c.envPath} — 下次启动沿用,无需重设。`);
+    else log.warn(`  (写入 .env 失败${c.persistError ? ': ' + c.persistError : ''} — 本次有效,重启会重新生成)`);
+    log.warn('################################################################');
+  }
+
   // Packaged single-exe desktop UX: on the FIRST deploy (no Windsurf_data folder
   // existed yet), pop the dashboard in the default browser so the initial
   // double-click lands on a usable setup page. Subsequent launches don't reopen
