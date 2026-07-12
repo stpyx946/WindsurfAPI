@@ -10,11 +10,12 @@
  * setting, model-access list, proxy config, etc.
  *
  * Pattern: write the new contents to a unique sibling `${target}.*.tmp` first,
- * then `rename(2)` it onto the target. rename is atomic on POSIX and
- * replaces an existing target on Windows (per Node's documented
- * fs.renameSync behavior). A crash between writeFileSync(tmp) and
- * renameSync leaves the target intact; a crash after renameSync
- * leaves the new contents in place. Either way, no truncated JSON.
+ * fsync(2) the tmp so the bytes actually reach disk, then `rename(2)` it onto
+ * the target. rename is atomic on POSIX and replaces an existing target on
+ * Windows (per Node's documented fs.renameSync behavior). A crash between the
+ * durable tmp write and renameSync leaves the target intact; a crash after
+ * renameSync leaves the (already-fsynced) new contents in place. Either way,
+ * no truncated JSON and no rename-published-but-never-flushed tmp inode.
  *
  * Tmp file gets unlinked on write failure so repeated failures don't
  * leak garbage in DATA_DIR.
@@ -26,7 +27,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { writeFileSync, renameSync, unlinkSync } from 'node:fs';
+import { renameSync, unlinkSync, openSync, writeSync, fsyncSync, closeSync } from 'node:fs';
 
 const RETRYABLE_RENAME_CODES = new Set(['EPERM', 'EBUSY']);
 
@@ -49,6 +50,26 @@ export function renameSyncWithRetry(sourcePath, targetPath, { attempts = 6, base
   }
 }
 
+/**
+ * Write bytes to `path` and fsync(2) before returning. A plain
+ * writeFileSync + rename is atomic w.r.t. *other readers* (rename swaps the
+ * inode), but the newly-written data may still sit in the OS page cache: a
+ * power loss or kernel panic in the window after rename can leave the target
+ * pointing at a tmp inode whose contents never reached the platter, i.e. a
+ * zero-length or partial file. fsync forces the data out before we rename, so
+ * the rename only ever publishes fully-durable contents. This is the
+ * "temp → fsync → rename" durability guarantee (K7).
+ */
+export function writeFileSyncDurable(path, data, { mode = 0o600 } = {}) {
+  const fd = openSync(path, 'w', mode);
+  try {
+    writeSync(fd, data);
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 export function writeJsonAtomic(targetPath, value, { spaces = 2, mode = 0o600 } = {}) {
   // mode defaults to 0600 (owner-only): these config files can carry the runtime
   // API key / dashboard password hash / upstream tokens, and must not be
@@ -57,7 +78,7 @@ export function writeJsonAtomic(targetPath, value, { spaces = 2, mode = 0o600 } 
   // non-sensitive files, but 0600 is the safe default.
   const tmp = `${targetPath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(value, null, spaces), { mode });
+    writeFileSyncDurable(tmp, JSON.stringify(value, null, spaces), { mode });
     renameSyncWithRetry(tmp, targetPath);
   } catch (err) {
     try { unlinkSync(tmp); } catch {}

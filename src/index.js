@@ -1,6 +1,6 @@
 // Logger must be imported first to patch log functions before other modules use them
 import './dashboard/logger.js';
-import { initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
+import { initAuth, isAuthenticated } from './auth.js';
 import { configureLanguageServer, startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer, stopLanguageServerAndWait, cleanupOrphanLanguageServers, shouldPrewarmDefaultLs } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
@@ -192,18 +192,19 @@ async function main() {
     // children to PID 1, leaving them holding pool ports (42100, 42101…)
     // that the freshly-restarted replica then races (the H-4 orphan race).
     const finalize = async (reason) => {
-      // Best-effort flush of the pool on shutdown; a failure here (e.g. /data
-      // momentarily unwritable during SIGTERM) must not block the exit, but it
-      // was previously swallowed silently — log it so a lost final save is
-      // diagnosable rather than invisible. (audit NIT)
-      try { saveAccountsSync(); } catch (e) { log.warn(`Shutdown: saveAccountsSync failed (${reason}): ${e?.message || e}`); }
+      // K7: shutdown DRAINS, it does not write the pool back. The periodic
+      // dirty-flush keeps accounts.json current (≤30s stale) and status flips
+      // save immediately, so a shutdown rewrite buys nothing — and it used to
+      // clobber an operator's external accounts.json write, forcing the
+      // "stop → wait for the flush hook → write → start" deploy dance. Removing
+      // it lets an external write land safely once the process is stopped.
       try { await stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 }); }
       catch { try { stopLanguageServer(); } catch {} }
       log.info(`Shutdown complete (${reason})`);
       process.exit(0);
     };
     server.close(() => {
-      log.info('HTTP server closed, flushing state + stopping language server');
+      log.info('HTTP server closed, stopping language server');
       void finalize('drained');
     });
     setTimeout(() => {

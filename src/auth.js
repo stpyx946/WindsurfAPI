@@ -13,10 +13,10 @@
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
 import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable, getQuotaTunable } from './runtime-config.js';
-import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
+import { readFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { safeAccountRef } from './log-safety.js';
-import { renameSyncWithRetry } from './fs-atomic.js';
+import { renameSyncWithRetry, writeFileSyncDurable } from './fs-atomic.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
 import { FREE_REACHABLE_SELECTORS } from './devin-connect-models.js';
@@ -255,12 +255,17 @@ function pruneHealthWindow(account, now) {
   return account._health;
 }
 
-// Record one outcome for an account. Persisted lazily (callers already save on
-// status flips; the window itself is best-effort and rides the next save).
+// Record one outcome for an account. Persisted lazily: the window itself is
+// best-effort and rides the next save. This is the single common entry point
+// for every hot-path mutation that doesn't force its own save (reportSuccess /
+// markRateLimited / markQuotaExhausted / reportInternalError / reportDeadToken),
+// so marking dirty here is enough for the periodic flush to eventually persist
+// _health, quotaResetAt and streak state — replacing the old shutdown flush (K7).
 function recordHealthEvent(account, kind, now = Date.now()) {
   if (!account || !HEALTH_KINDS.has(kind)) return;
   pruneHealthWindow(account, now);
   account._health.push({ t: now, k: kind });
+  markDirty();
 }
 
 /** Summarize an account's last-hour health for metrics/selection (no secrets). */
@@ -352,6 +357,38 @@ export function __isLastUsableAccount(account, now = Date.now()) {
 // together; without a mutex the last writer wins on stale memory state.
 let _saveInFlight = false;
 let _savePending = false;
+
+// K7: lazy state (rolling _health window, quotaResetAt, _breakerStreak) mutates
+// on the hot path WITHOUT a save — those callers deliberately don't pay a
+// synchronous disk write per request. The shutdown flush used to be the net
+// that captured this state, which forced the "stop → wait → write accounts.json
+// externally → start" deployment dance (an external write mid-run was clobbered
+// by the shutdown rewrite). Instead we mark the pool dirty on those mutations
+// and flush on a periodic timer, so the on-disk file trails memory by at most
+// one interval and shutdown no longer has to write. A hard kill loses at most
+// one interval of best-effort self-healing state (cooldowns re-establish on the
+// next upstream signal) — an acceptable trade for removing the shutdown write.
+let _dirty = false;
+let _dirtyFlushTimer = null;
+const DIRTY_FLUSH_INTERVAL_MS = 30_000;
+
+/** Mark the pool as having unpersisted lazy state; the periodic timer flushes it. */
+function markDirty() { _dirty = true; }
+
+function flushDirty() {
+  if (!_dirty) return;
+  _dirty = false;
+  saveAccounts();
+}
+
+function startDirtyFlush() {
+  if (_dirtyFlushTimer) return;
+  _dirtyFlushTimer = setInterval(() => flushDirty(), DIRTY_FLUSH_INTERVAL_MS).unref?.();
+}
+
+// Test seam: run one dirty-flush pass deterministically without the timer.
+export function __flushDirtyAccounts() { flushDirty(); }
+export function __isAccountsDirty() { return _dirty; }
 function _serializeAccounts() {
   return accounts.map(a => ({
     id: a.id, email: a.email, apiKey: a.apiKey,
@@ -392,15 +429,18 @@ function _serializeAccounts() {
 function saveAccounts() {
   if (_saveInFlight) { _savePending = true; return; }
   _saveInFlight = true;
+  // A full persist captures everything the lazy dirty flag was tracking.
+  _dirty = false;
   const tempFile = `${ACCOUNTS_FILE}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    // Atomic write: write to a unique sibling tmp then rename so a crash
-    // mid-write cannot leave accounts.json truncated/corrupt. The unique
+    // Atomic + durable write: write to a unique sibling tmp, fsync it, then
+    // rename so a crash mid-write cannot leave accounts.json truncated/corrupt
+    // and a power loss can't publish an unflushed tmp inode (K7). The unique
     // tmp also prevents concurrent test/process saves from racing on the
     // same `${ACCOUNTS_FILE}.tmp` name.
     // 0600: accounts.json holds live upstream tokens (apiKey/refreshToken/
     // idToken) in cleartext — must not be world-readable on a shared host.
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
+    writeFileSyncDurable(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, ACCOUNTS_FILE);
   } catch (e) {
     log.error('Failed to save accounts:', e.message);
@@ -412,21 +452,23 @@ function saveAccounts() {
 }
 
 /**
- * Synchronous last-resort flush for the shutdown path. Bypasses the
- * _saveInFlight mutex (any queued async save would be killed by
- * process.exit before it finished anyway). Tolerates being called after
- * an in-flight save — the rename on top of a partial temp file is still
- * atomic.
+ * Synchronous flush that bypasses the _saveInFlight mutex (any queued async
+ * save would be killed by process.exit before it finished anyway). Tolerates
+ * being called after an in-flight save — the rename on top of a partial temp
+ * file is still atomic. Retained as a test seam and an explicit-flush escape
+ * hatch; the shutdown path no longer calls it (K7: shutdown drains, it does not
+ * write — the periodic dirty-flush keeps the on-disk file current instead).
  */
 export function saveAccountsSync() {
+  _dirty = false;
   const tempFile = `${ACCOUNTS_FILE}.${process.pid}.shutdown.tmp`;
   try {
     // 0600: accounts.json holds live upstream tokens (apiKey/refreshToken/
     // idToken) in cleartext — must not be world-readable on a shared host.
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
+    writeFileSyncDurable(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, ACCOUNTS_FILE);
   } catch (e) {
-    log.error('Shutdown: failed to flush accounts:', e.message);
+    log.error('Failed to flush accounts:', e.message);
     try { unlinkSync(tempFile); } catch {}
   }
 }
@@ -467,7 +509,7 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
   if (!merged.size) return { migrated: 0, scanned, skipped: false };
   const tempFile = accountsFile + '.migrate.tmp';
   try {
-    writeFileSync(tempFile, JSON.stringify([...merged.values()], null, 2), { mode: 0o600 });
+    writeFileSyncDurable(tempFile, JSON.stringify([...merged.values()], null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, accountsFile);
     logger.warn?.(`Migrated ${merged.size} account(s) from ${scanned} replica-* subdir(s) into ${accountsFile} (issue #67)`);
     return { migrated: merged.size, scanned, skipped: false };
@@ -3214,6 +3256,12 @@ export async function initAuth() {
 
   // Safety net: auto-reset stale inflight counters (fixes #165)
   startInflightCleanup();
+
+  // K7: periodically persist lazy self-healing state (health window / cooldown
+  // deadlines) that hot paths mutate without a synchronous save. Replaces the
+  // shutdown flush so an external accounts.json write is no longer clobbered on
+  // stop, and a hard kill loses at most one interval of best-effort state.
+  startDirtyFlush();
 
   const promises = [];
 

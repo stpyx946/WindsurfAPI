@@ -13,6 +13,7 @@ import {
   addAccountByKey, removeAccount,
   reportSuccess, reportError, markRateLimited, reportDeadToken,
   getAccountHealth, getPoolHealthWindow, __resetReloginState,
+  __flushDirtyAccounts, __isAccountsDirty,
 } from '../src/auth.js';
 
 let acct;
@@ -119,5 +120,35 @@ describe('account health window — persistence across restart (C5 differentiato
     assert.ok(Array.isArray(rec._health), '_health array persisted');
     const kinds = rec._health.map(e => e.k).sort();
     assert.deepEqual(kinds, ['d', 'e', 'o'], 'all three outcome events persisted across the boundary');
+  });
+});
+
+describe('K7 dirty-flush — lazy health/cooldown state persists without shutdown write', () => {
+  it('a hot-path health event marks the pool dirty; the periodic flush persists it', async () => {
+    // reportSuccess records a health event but does NOT save synchronously —
+    // this is exactly the lazy state the old shutdown flush used to capture.
+    reportSuccess(KEY);
+    assert.equal(__isAccountsDirty(), true, 'hot-path health event should mark dirty');
+
+    // The periodic timer's work, run deterministically.
+    __flushDirtyAccounts();
+    assert.equal(__isAccountsDirty(), false, 'flush clears the dirty flag');
+
+    // And the state actually reached disk (no shutdown write involved).
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { config } = await import('../src/config.js');
+    const file = join(config.sharedDataDir || config.dataDir, 'accounts.json');
+    const onDisk = JSON.parse(readFileSync(file, 'utf8'));
+    const rec = onDisk.find(a => a.apiKey === KEY);
+    assert.ok(rec, 'account persisted to disk via dirty-flush');
+    assert.ok(rec._health.some(e => e.k === 'o'), 'the ok event landed on disk');
+  });
+
+  it('flush is a no-op when nothing is dirty (no redundant writes)', () => {
+    __flushDirtyAccounts();            // drain any pending dirt from prior tests
+    assert.equal(__isAccountsDirty(), false);
+    __flushDirtyAccounts();            // second flush: nothing to do
+    assert.equal(__isAccountsDirty(), false, 'clean pool stays clean');
   });
 });

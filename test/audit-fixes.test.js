@@ -18,12 +18,12 @@
 
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync, readdirSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { writeJsonAtomic } from '../src/fs-atomic.js';
+import { writeJsonAtomic, writeFileSyncDurable } from '../src/fs-atomic.js';
 import { cacheKey } from '../src/cache.js';
 import { checkout, checkin, poolClear } from '../src/conversation-pool.js';
 
@@ -71,6 +71,48 @@ describe('writeJsonAtomic (audit fix #1: durable config writes)', () => {
       writeFileSync(target, '{"old": "garbage", "extra": "padding to be longer"}');
       writeJsonAtomic(target, { v: 2 });
       assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), { v: 2 });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('writeFileSyncDurable (K7: fsync before rename)', () => {
+  test('writes the exact bytes and applies 0600 by default', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wa-durable-'));
+    try {
+      const target = join(dir, 'blob.json');
+      const payload = JSON.stringify({ a: 1, b: 'two' });
+      writeFileSyncDurable(target, payload);
+      assert.equal(readFileSync(target, 'utf8'), payload);
+      // 0600 owner-only (skipped on Windows where mode bits differ).
+      if (process.platform !== 'win32') {
+        assert.equal(statSync(target).mode & 0o777, 0o600);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('overwrites an existing file completely (no leftover tail)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wa-durable-'));
+    try {
+      const target = join(dir, 'blob.json');
+      writeFileSyncDurable(target, 'a-much-longer-original-payload-with-tail');
+      writeFileSyncDurable(target, 'short');
+      assert.equal(readFileSync(target, 'utf8'), 'short');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('writeJsonAtomic leaves no .tmp behind (fsync path still cleans up)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wa-durable-'));
+    try {
+      const target = join(dir, 'config.json');
+      writeJsonAtomic(target, { durable: true });
+      assert.deepEqual(JSON.parse(readFileSync(target, 'utf8')), { durable: true });
+      assert.deepEqual(readdirSync(dir).filter(f => f.endsWith('.tmp')), []);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -198,4 +240,26 @@ describe('atomic write call sites use writeJsonAtomic', () => {
         `${rel} still has a bare writeFileSync to its config constant`);
     });
   }
+
+  // K7: auth.js hand-rolls tmp+rename (it has its own coalescing/dirty
+  // machinery) so it uses writeFileSyncDurable directly rather than
+  // writeJsonAtomic. A regression to bare writeFileSync would drop the fsync
+  // and reintroduce the rename-published-but-unflushed-tmp window.
+  test('src/auth.js persists accounts.json via the durable (fsync) writer', () => {
+    const src = readFileSync(join(ROOT, 'src/auth.js'), 'utf8');
+    assert.match(src, /writeFileSyncDurable/,
+      'auth.js should write accounts.json with writeFileSyncDurable');
+    assert.ok(!/\bwriteFileSync\(/.test(src),
+      'auth.js still has a non-durable writeFileSync call');
+  });
+
+  // K7: the shutdown path must DRAIN, not write the pool back — a shutdown
+  // rewrite races an operator's external accounts.json write (the root of the
+  // "stop → wait → write → start" deploy dance). Codify it so a future edit
+  // that re-adds saveAccountsSync() to the exit path fails here.
+  test('src/index.js shutdown does not write the account pool', () => {
+    const src = readFileSync(join(ROOT, 'src/index.js'), 'utf8');
+    assert.ok(!/saveAccountsSync/.test(src),
+      'index.js shutdown must not call saveAccountsSync (K7: drain, do not write)');
+  });
 });
