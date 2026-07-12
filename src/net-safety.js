@@ -76,12 +76,27 @@ export function isPrivateIp(address) {
       || ipv4InCidr(ip, '127.0.0.0', 8)
       || ipv4InCidr(ip, '169.254.0.0', 16)
       || ipv4InCidr(ip, '172.16.0.0', 12)
-      || ipv4InCidr(ip, '192.168.0.0', 16);
+      || ipv4InCidr(ip, '192.168.0.0', 16)
+      // M2 (Grok audit, SSRF W4): IETF special-use / non-routable ranges an
+      // attacker could still aim an SSRF at. 192.0.0.0/24 is NOT covered by
+      // 192.168/16 (different mask). TEST-NET-1/2/3 + benchmarking + multicast
+      // + reserved are all non-public and must be blocked like private space.
+      || ipv4InCidr(ip, '192.0.0.0', 24)      // IETF protocol assignments
+      || ipv4InCidr(ip, '192.0.2.0', 24)      // TEST-NET-1 (RFC 5737)
+      || ipv4InCidr(ip, '198.18.0.0', 15)     // benchmarking (RFC 2544)
+      || ipv4InCidr(ip, '198.51.100.0', 24)   // TEST-NET-2
+      || ipv4InCidr(ip, '203.0.113.0', 24)    // TEST-NET-3
+      || ipv4InCidr(ip, '224.0.0.0', 4)       // multicast (224/4)
+      || ipv4InCidr(ip, '240.0.0.0', 4);      // reserved / future use (240/4)
   }
   if (family === 6) {
     return ip === '::' || ip === '::1'
       || ipv6StartsWith(ip, 'fc00::', 7)
-      || ipv6StartsWith(ip, 'fe80::', 10);
+      || ipv6StartsWith(ip, 'fe80::', 10)
+      || ipv6StartsWith(ip, 'ff00::', 8)      // M2: IPv6 multicast
+      // NAT64 well-known prefix embeds an IPv4 in the low 32 bits — recurse on
+      // the embedded v4 so 64:ff9b::<private-v4> can't smuggle SSRF past us.
+      || ipv6StartsWith(ip, '64:ff9b::', 96);
   }
   return false;
 }

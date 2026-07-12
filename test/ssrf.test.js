@@ -18,6 +18,36 @@ describe('SSRF private address detection', () => {
     assert.equal(isPrivateIp('2001:4860:4860::8888'), false);
   });
 
+  it('M2: blocks IETF special-use / test-net / benchmark / multicast / reserved IPv4', () => {
+    // Each new range gets at least one positive.
+    for (const ip of [
+      '192.0.0.1',      // 192.0.0.0/24 (NOT covered by 192.168/16)
+      '192.0.2.5',      // TEST-NET-1
+      '198.18.0.1',     // benchmarking 198.18/15 ...
+      '198.19.255.254', // ... upper half of /15
+      '198.51.100.9',   // TEST-NET-2
+      '203.0.113.7',    // TEST-NET-3
+      '224.0.0.1',      // multicast 224/4 ...
+      '239.1.2.3',      // ... top of multicast
+      '240.0.0.1',      // reserved 240/4 ...
+      '255.255.255.255',// ... broadcast/reserved
+    ]) {
+      assert.equal(isPrivateIp(ip), true, ip);
+    }
+    // Adjacent-but-public ranges must still be allowed (no over-block).
+    for (const ip of ['192.169.0.1', '197.1.1.1', '223.1.1.1', '8.8.8.8', '1.1.1.1']) {
+      assert.equal(isPrivateIp(ip), false, ip);
+    }
+  });
+
+  it('M2: blocks IPv6 multicast (ff00::/8) and NAT64 (64:ff9b::/96)', () => {
+    for (const ip of ['ff00::1', 'ff02::1', 'ffff::1', '64:ff9b::c0a8:101', '64:ff9b::808:808']) {
+      assert.equal(isPrivateIp(ip), true, ip);
+    }
+    // A normal global-unicast v6 stays public.
+    assert.equal(isPrivateIp('2606:4700:4700::1111'), false);
+  });
+
   it('rejects hostnames after DNS resolution to private IPs', async () => {
     const lookup = (host, opts, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]);
     await assert.rejects(() => resolvePublicAddresses('evil.example', lookup), /ERR_PROXY_PRIVATE_IP/);
