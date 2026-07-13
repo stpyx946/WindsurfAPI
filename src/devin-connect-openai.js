@@ -22,6 +22,7 @@ import { streamChat as realStreamChat, isRetryable } from './devin-connect.js';
 import { ToolCallStreamParser, parseToolCallsFromText, isWeakEmulationModel } from './handlers/tool-emulation.js';
 import { log } from './config.js';
 import { systemFingerprint } from './system-fingerprint.js';
+import { applyStop, StopSequenceGate } from './stop-sequences.js';
 
 // streamChat is injectable so the adapter can be unit-tested without touching
 // the network — mirrors the __set…ForTest convention in windsurf-api.js.
@@ -157,7 +158,7 @@ function nowSeconds() {
  *                                      tool_calls (text-emulation, swe-1.6 etc).
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false } = {}) {
+export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false, stop = null } = {}) {
   const model = displayModel || params.model;
 
   // Non-stream path buffers the whole answer, so a transient failure (network
@@ -201,6 +202,17 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
   // tool defs were injected into the prompt (normalizeMessagesForCascade) and
   // the model answers with <tool_call>…</tool_call> markup we pull back out,
   // mirroring the Cascade non-stream path (handlers/chat.js buildToolCalls).
+  // proto-openai-03: enforce the client's `stop` locally (the Devin wire has no
+  // native stop field). Truncate at the earliest stop-sequence hit and report
+  // finish_reason:'stop'. Only meaningful for plain-text answers — a hit means
+  // the model was mid-prose, so we also skip tool-call extraction below (a
+  // truncated <tool_call> block would be malformed anyway).
+  let stopHit = false;
+  if (!nativeToolCalls.length) {
+    const stopped = applyStop(content, stop);
+    if (stopped.hit) { content = stopped.text; finishReason = 'stop'; stopHit = true; }
+  }
+
   let toolCalls = [];
   if (nativeToolCalls.length) {
     // arguments is the raw JSON string off the wire (decodeToolCalls); map it to
@@ -210,7 +222,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
       id: tc.id, name: tc.name, argumentsJson: tc.arguments,
     }));
     finishReason = 'tool_calls';
-  } else if (emulateTools) {
+  } else if (emulateTools && !stopHit) {
     const parsed = parseToolCallsFromText(content, {
       modelKey: params.model, provider: null, route: 'devin_connect',
     });
@@ -266,7 +278,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
  * @returns {Promise<{content:string, reasoning:string, finish_reason:string, usage:object|null}>}
  *          the assembled result, so callers can cache it after streaming.
  */
-export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false } = {}) {
+export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null } = {}) {
   const model = displayModel || params.model;
   const base = { id, object: OBJECT_CHUNK, created, model, system_fingerprint: systemFingerprint(model) };
 
@@ -297,6 +309,23 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   // Native tool calls (DEVIN_CONNECT_TOOL_CALL_TAGS calibrated) ride the terminal
   // finish event, not the content stream — captured here, emitted after the loop.
   let nativeToolCalls = [];
+  // proto-openai-03: stream-side stop enforcement. The gate holds back a short
+  // tail so a stop sequence straddling two content chunks is still caught; on a
+  // hit we emit the safe prefix, flip finish_reason:'stop', and stop the stream.
+  const stopGate = new StopSequenceGate(stop);
+  let stopHit = false;
+  // Emit content through the stop gate. Returns true when the stream should end.
+  const sendContent = (text) => {
+    if (!text) return false;
+    if (!stopGate.active) {
+      send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
+      return false;
+    }
+    const { emit, hit } = stopGate.push(text);
+    if (emit) send({ ...base, choices: [{ index: 0, delta: { content: emit }, finish_reason: null }] });
+    if (hit) { finishReason = 'stop'; stopHit = true; }
+    return hit;
+  };
 
   // Tool emulation: run content deltas through the same streaming parser the
   // Cascade path uses. It strips <tool_call> markup from the text deltas and
@@ -333,10 +362,10 @@ export async function streamChatCompletion(params, send, { id = newId(), created
       content += ev.text;
       if (toolParser) {
         const { text, toolCalls } = toolParser.feed(ev.text);
-        if (text) send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
         emitToolCalls(toolCalls);
+        if (sendContent(text)) break;
       } else {
-        send({ ...base, choices: [{ index: 0, delta: { content: ev.text }, finish_reason: null }] });
+        if (sendContent(ev.text)) break;
       }
     } else if (ev.type === 'finish') {
       if (ev.reason) finishReason = ev.reason;
@@ -346,11 +375,19 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   }
 
   // Drain any tool_call still buffered at end-of-stream, plus the trailing text.
-  if (toolParser) {
+  // Skip when a stop sequence already ended the stream (stopHit) — the tail after
+  // the stop must not leak out.
+  if (toolParser && !stopHit) {
     const { text, toolCalls } = toolParser.flush();
-    if (text) send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
     emitToolCalls(toolCalls);
+    sendContent(text);
     if (collectedToolCalls.length) finishReason = 'tool_calls';
+  }
+  // proto-openai-03: release the gate's held tail (the last few chars it was
+  // withholding in case they started a stop sequence). No-op after a hit.
+  if (!stopHit && stopGate.active) {
+    const tail = stopGate.flush();
+    if (tail) send({ ...base, choices: [{ index: 0, delta: { content: tail }, finish_reason: null }] });
   }
 
   // Native tool calls win over text emulation (the two are mutually exclusive:

@@ -641,3 +641,59 @@ describe('retry-on-empty (fable capacity-jitter self-heal)', () => {
     assert.equal(body.choices[0].message.content, 'real answer');
   });
 });
+
+describe('proto-openai-03: stop enforcement', () => {
+  function collectSend() {
+    const frames = [];
+    return { send: (d) => frames.push(d), frames };
+  }
+  const streamText = (frames) => frames
+    .filter(f => f.choices[0]?.delta?.content && f.choices[0].finish_reason == null && !('role' in f.choices[0].delta))
+    .map(f => f.choices[0].delta.content).join('');
+
+  it('non-stream: truncates content at the stop sequence and reports finish_reason stop', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'keep this' },
+      { type: 'content', text: ' STOP drop this' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'm', messages: [] }, { stop: 'STOP' });
+    assert.equal(body.choices[0].message.content, 'keep this ');
+    assert.equal(body.choices[0].finish_reason, 'stop');
+  });
+
+  it('non-stream: no stop configured leaves content whole', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'a STOP b' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'm', messages: [] });
+    assert.equal(body.choices[0].message.content, 'a STOP b');
+  });
+
+  it('stream: emits only the prefix before the stop, even split across chunks', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'answer ST' },
+      { type: 'content', text: 'OP leaked' },
+      { type: 'content', text: ' more leaked' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { send, frames } = collectSend();
+    const result = await streamChatCompletion({ model: 'm', messages: [] }, send, { stop: 'STOP' });
+    assert.equal(streamText(frames), 'answer ');
+    assert.equal(result.finish_reason, 'stop');
+    // nothing after the stop leaked
+    assert.ok(!streamText(frames).includes('leaked'));
+  });
+
+  it('stream: without stop, all content flows (regression)', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'a STOP ' },
+      { type: 'content', text: 'b' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { send, frames } = collectSend();
+    await streamChatCompletion({ model: 'm', messages: [] }, send, {});
+    assert.equal(streamText(frames), 'a STOP b');
+  });
+});
