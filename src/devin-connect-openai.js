@@ -23,6 +23,23 @@ import { ToolCallStreamParser, parseToolCallsFromText, isWeakEmulationModel } fr
 import { log } from './config.js';
 import { systemFingerprint } from './system-fingerprint.js';
 import { applyStop, StopSequenceGate } from './stop-sequences.js';
+import { normalizeToolCallArgs, recordArgRepair } from './handlers/cline-compat.js';
+
+// Apply the Cline compat tool-arg shim when active: normalize an arguments
+// string @ai-sdk/openai-compatible would reject (empty / whitespace / non-JSON)
+// to "{}" so a parameterless tool call isn't silently dropped (vercel/ai#6687).
+// A no-op passthrough when inactive → byte-identical for every non-Cline client.
+function compatArgs(raw, active) {
+  // Inactive → preserve the exact legacy expression (`raw || '{}'`) so the
+  // default path is byte-identical.
+  if (!active) return raw || '{}';
+  // Active → normalize the RAW value (not the pre-coalesced one) so an empty
+  // string, whitespace, or malformed JSON is counted as a real repair.
+  const fixed = normalizeToolCallArgs(raw);
+  const legacy = raw || '{}';
+  if (fixed !== legacy) recordArgRepair();
+  return fixed;
+}
 
 // streamChat is injectable so the adapter can be unit-tested without touching
 // the network — mirrors the __set…ForTest convention in windsurf-api.js.
@@ -158,7 +175,7 @@ function nowSeconds() {
  *                                      tool_calls (text-emulation, swe-1.6 etc).
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false, stop = null } = {}) {
+export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false, stop = null, clineCompat = false } = {}) {
   const model = displayModel || params.model;
 
   // Non-stream path buffers the whole answer, so a transient failure (network
@@ -239,7 +256,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
     message.tool_calls = toolCalls.map((tc, i) => ({
       id: tc.id || `call_${i}_${Date.now().toString(36)}`,
       type: 'function',
-      function: { name: tc.name || 'unknown', arguments: tc.argumentsJson || tc.arguments || '{}' },
+      function: { name: tc.name || 'unknown', arguments: compatArgs(tc.argumentsJson || tc.arguments, clineCompat) },
     }));
     // content is null when the turn is a tool call (the inline text is usually
     // a hallucinated preview the caller shouldn't show).
@@ -278,7 +295,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
  * @returns {Promise<{content:string, reasoning:string, finish_reason:string, usage:object|null}>}
  *          the assembled result, so callers can cache it after streaming.
  */
-export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null } = {}) {
+export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null, clineCompat = false } = {}) {
   const model = displayModel || params.model;
   const base = { id, object: OBJECT_CHUNK, created, model, system_fingerprint: systemFingerprint(model) };
 
@@ -346,7 +363,7 @@ export async function streamChatCompletion(params, send, { id = newId(), created
           index: idx,
           id: tc.id || `call_${idx}_${Date.now().toString(36)}`,
           type: 'function',
-          function: { name: tc.name || 'unknown', arguments: tc.argumentsJson || '{}' },
+          function: { name: tc.name || 'unknown', arguments: compatArgs(tc.argumentsJson, clineCompat) },
         }],
       }, finish_reason: null }] });
     }

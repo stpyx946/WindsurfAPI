@@ -18,6 +18,19 @@ import { cacheKey, cacheGet, cacheSet } from '../cache.js';
 import { isExperimentalEnabled, getBreakerTunable } from '../runtime-config.js';
 import { neutralizeClientIdentity } from './identity-neutralize.js';
 import { normalizeStop, applyStop, StopSequenceGate } from '../stop-sequences.js';
+import { normalizeToolCallArgs, recordArgRepair } from './cline-compat.js';
+
+// Cline compat tool-arg shim (see src/handlers/cline-compat.js). Active only
+// when the request is routed/detected as Cline; otherwise a byte-identical
+// passthrough of the legacy `raw || '{}'` expression. Normalizes an arguments
+// string @ai-sdk/openai-compatible would reject (empty/whitespace/non-JSON) so
+// a parameterless tool call isn't silently dropped (vercel/ai#6687).
+function clineCompatArgs(raw, active) {
+  if (!active) return raw || '{}';
+  const fixed = normalizeToolCallArgs(raw);
+  if (fixed !== (raw || '{}')) recordArgRepair();
+  return fixed;
+}
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getEffectiveProxy } from '../dashboard/proxy-config.js';
 import {
@@ -2029,6 +2042,18 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const callerKey = context.callerKey || body.__callerKey || '';
   const nativeBridgeCallerKey = context.nativeBridgeCallerKey || callerKey;
   const cachePolicy = body.__cachePolicy || null;
+  // Cline compat layer active for this request? Resolved at the server edge
+  // (src/handlers/cline-compat.js) and threaded via context. The deeply-nested
+  // emit points read it three ways: connectMeta.clineCompat (DEVIN_CONNECT
+  // path), a positional arg (nonStreamResponse), and deps.context.clineCompat
+  // (streamResponse). Falsy for every non-Cline request → emit stays byte-identical.
+  //
+  // Resolve ONLY from context (the server-edge resolution). Never read it from
+  // body: body is client-supplied JSON, so honouring a body field would let any
+  // caller POST {"__clineCompat":true} to the standard /v1 path and
+  // force-activate the shim past both activation gates (master toggle + the
+  // /v1/cline namespace / UA detection).
+  const clineCompatActive = !!context.clineCompat?.active;
   const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = context.waitForAccount || waitForAccount;
   const ensureLsFn = context.ensureLs || ensureLs;
@@ -2432,7 +2457,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     if (context.signal) connectParams.signal = context.signal;
     // O1: honor stream_options.include_usage on the connect path too — the
     // trailing usage frame is emitted only when the caller opted in.
-    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null };
+    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null, clineCompat: clineCompatActive };
     // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
     // accumulates every session token burned this request so getApiKey never
     // re-picks a known-dead account when we hop to the next pool member.
@@ -3475,6 +3500,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // re-burning the rate-limit + fallback cycle.
       reqId,
       cacheShareable ? (context.__originalCkey || null) : null,
+      clineCompatActive,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -3633,7 +3659,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null, clineCompatActive = false) {
   const startTime = Date.now();
   const nativeBridgeOn = !!nativeOpts?.enabled;
   try {
@@ -4098,7 +4124,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         type: 'function',
         function: {
           name: tc.name || 'unknown',
-          arguments: tc.argumentsJson || tc.arguments || '{}',
+          arguments: clineCompatArgs(tc.argumentsJson || tc.arguments, clineCompatActive),
         },
       }));
       // OpenAI convention: content is null when finish_reason is tool_calls.
@@ -4269,6 +4295,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // can drive a non-Claude model to emit `<tool_call>{"name":"Bash"}…`
   // even when the caller only declared `get_weather`.
   const declaredTools = Array.isArray(deps.tools) ? deps.tools : [];
+  // Cline compat active for this stream? Resolved at the edge, threaded via
+  // deps.context. Falsy for every non-Cline request → emit stays byte-identical.
+  const clineCompatActive = !!deps.context?.clineCompat?.active;
   // v2.0.65 (#115) — native tool bridge handles. Stream path consumes the
   // same shape as nonStreamResponse: `{enabled, allowlist, additionalSteps,
   // callerLookup, callerTools}`. When enabled, stream emits cascade-native
@@ -4489,7 +4518,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               index: idx,
               id: tc.id,
               type: 'function',
-              function: { name: tc.name, arguments: sanitizeText(tc.argumentsJson || '{}') },
+              function: { name: tc.name, arguments: sanitizeText(clineCompatArgs(tc.argumentsJson, clineCompatActive)) },
             }],
           }, finish_reason: null }] });
       };
