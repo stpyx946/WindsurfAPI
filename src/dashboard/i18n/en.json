@@ -68,13 +68,9 @@
     "increment": "Increment",
     "decrement": "Decrement",
     "poolViewGroup": "Pool health view",
-    "trendRangeGroup": "Trend time range",
     "chartTypeGroup": "Chart type",
     "statsRangeGroup": "Statistics time range",
-    "trendChart": "Request and error trend chart",
-    "trendChartData": "Trend data: {{summary}}",
     "statsChart": "Request volume time-series chart",
-    "modelPieChart": "Model request share chart",
     "dialog": "Dialog"
   },
   "action": {
@@ -404,10 +400,6 @@
       "tooltipByModel": "By model this hour",
       "tooltipMoreModels": "+{{count}} more"
     },
-    "modelPie": {
-      "title": "Model Request Distribution",
-      "desc": "Share of requests for top 8 models"
-    },
     "emailOtpLogin": {
       "title": "Email Code Login",
       "desc": "No password needed — register a new account via an email verification code. Requires completing the Cloudflare human check."
@@ -419,10 +411,6 @@
     "connectMetrics": {
       "title": "Connection Self-Healing",
       "desc": "Live recovery counters — relogin, failover, throttling, dead tokens"
-    },
-    "overviewTrend": {
-      "title": "Request Trend (24h)",
-      "desc": "Requests and errors per hour, from local telemetry"
     },
     "rankings": {
       "title": "Rankings",
@@ -577,6 +565,13 @@
       "errorCount": "Error Count",
       "model": "Model",
       "note": "Note"
+    },
+    "detail": {
+      "avg": "Avg latency",
+      "p50": "p50 latency",
+      "p95": "p95 latency",
+      "share": "Request share",
+      "credit": "Credits spent"
     },
     "empty": {
       "loginHistory": "No login records",

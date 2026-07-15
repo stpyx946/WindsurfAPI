@@ -25,6 +25,7 @@ scripts/*
 !scripts/devin-connect-calibrate.mjs
 !scripts/cline-compat-verify.mjs
 !scripts/cline-smoke.sh
+!scripts/dashboard-cdp-check.mjs
 src/get-token.js
 src/test-cascade.js
 src/runtime-config.json

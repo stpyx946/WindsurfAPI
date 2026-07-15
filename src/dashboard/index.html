@@ -55,9 +55,8 @@
   --info: #6a9bcc;
   --info-soft: rgba(106,155,204,.16);
 
-  /* data-viz palette — request trend reads bright sky-blue (KiroStudio-style):
-     crisp line, very light area wash (see _trendPaint gradient), no muddy fill.
-     req = blue line+area, succ = green rate, err = red. */
+  /* data-viz palette (KiroStudio-style): req = blue line+area, succ = green
+     rate, err = red. Shared by the stats-page charts. */
   --chart-req:  #4c9aff;
   --chart-succ: #4a9d6a;
   --chart-err:  #e0524a;
@@ -1584,14 +1583,6 @@ tbody tr:hover td { background: var(--surface-2); }
   height: 100%;
   display: block;
 }
-/* Overview trend canvas must fill its 340px wrapper too — without an explicit
-   CSS size the canvas keeps its 300x150 intrinsic default and paints tiny in a
-   big box (the "big container, small chart" bug). */
-.overview-trend-wrap canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
 .chart-range-indicator {
   position: absolute;
   top: 8px;
@@ -1658,9 +1649,6 @@ tbody tr:hover td { background: var(--surface-2); }
   gap: 8px;
   justify-content: flex-end;
 }
-.trend-legend { display: flex; gap: 14px; align-items: center; font-size: 11px; color: var(--text-muted); }
-.trend-legend .lg { display: inline-flex; align-items: center; gap: 5px; }
-.trend-legend .lg-dot { width: 8px; height: 8px; border-radius: 2px; }
 .chart-tooltip {
   position: absolute;
   pointer-events: none;
@@ -1777,71 +1765,17 @@ tbody tr:hover td { background: var(--surface-2); }
   font-variant-numeric: tabular-nums;
 }
 
-/* Secondary chart grid (pie etc.) */
-.chart-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 20px;
-  margin-bottom: 20px;
-}
-@media (min-width: 960px) {
-  .chart-grid { grid-template-columns: 1fr; }
-}
+/* Expandable model-stats rows: clickable summary row + on-demand detail row. */
+.model-row { cursor: pointer; transition: background .12s ease; }
+.model-row:hover { background: var(--surface-2); }
+.model-row:focus-visible { outline: 2px solid var(--accent, #4c9aff); outline-offset: -2px; }
+.row-chevron { display: inline-block; width: 1em; color: var(--text-muted); font-size: 10px; transition: transform .12s ease; }
+.model-detail-row > td { padding: 0 !important; background: var(--surface-2); }
+.model-detail { display: flex; flex-wrap: wrap; gap: 20px; padding: 12px 16px; }
+.model-detail-item { display: flex; flex-direction: column; gap: 2px; }
+.mdi-label { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.mdi-val { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--text); }
 
-.chart-pie-body {
-  display: grid;
-  grid-template-columns: 200px 1fr;
-  gap: 28px;
-  align-items: center;
-}
-@media (max-width: 680px) {
-  .chart-pie-body { grid-template-columns: 1fr; }
-}
-.chart-pie-body canvas {
-  width: 200px;
-  height: 200px;
-  display: block;
-  margin: 0 auto;
-}
-.pie-legend {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  font-size: 12px;
-}
-.pie-legend-item {
-  display: grid;
-  grid-template-columns: 12px 1fr auto auto;
-  gap: 10px;
-  align-items: center;
-  padding: 6px 10px;
-  border-radius: 6px;
-  transition: background .15s ease;
-}
-.pie-legend-item:hover { background: var(--surface-2); }
-.pie-legend-dot {
-  width: 10px; height: 10px; border-radius: 3px;
-}
-.pie-legend-name {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.pie-legend-count {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-muted);
-  font-size: 11px;
-}
-.pie-legend-pct {
-  font-variant-numeric: tabular-nums;
-  color: var(--text-dim);
-  font-size: 11px;
-  min-width: 38px;
-  text-align: right;
-}
 .bars {
   display: flex;
   align-items: flex-end;
@@ -2301,30 +2235,6 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-body"><div id="pool-health-summary"></div></div>
     </div>
     <div class="grid-2" style="display:grid;grid-template-columns:1fr;gap:16px;">
-      <div class="section" id="overview-trend-section" style="order:-1;">
-        <div class="section-header">
-          <div>
-            <div class="section-title" data-i18n="section.overviewTrend.title">请求趋势</div>
-            <div class="section-desc" data-i18n="section.overviewTrend.desc">每小时请求与错误，来自本地遥测</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
-            <div class="trend-legend" id="overview-trend-legend"></div>
-            <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.trendRangeGroup" aria-label="趋势时间范围" id="overview-trend-range">
-              <button class="seg-btn trend-range-btn active" role="radio" aria-checked="true" data-range="24" onclick="App.setTrendRange(24)" data-i18n="range.24h">24小时</button>
-              <button class="seg-btn trend-range-btn" role="radio" aria-checked="false" data-range="168" onclick="App.setTrendRange(168)" data-i18n="range.7d">7天</button>
-              <button class="seg-btn trend-range-btn" role="radio" aria-checked="false" data-range="720" onclick="App.setTrendRange(720)" data-i18n="range.30d">30天</button>
-            </div>
-          </div>
-        </div>
-        <div class="section-body">
-          <div class="overview-trend-wrap" style="position:relative;width:100%;height:340px;">
-            <canvas id="overview-trend-canvas" role="img" data-i18n-aria-label="aria.trendChart" aria-label="请求与错误趋势图"></canvas>
-            <div class="chart-tooltip" id="overview-trend-tooltip"></div>
-            <div id="overview-trend-empty" style="position:absolute;inset:0;"></div>
-            <table id="overview-trend-sr" class="sr-only" aria-live="polite"></table>
-          </div>
-        </div>
-      </div>
       <div class="section" id="connect-metrics-overview">
         <div class="section-header">
           <div>
@@ -3125,33 +3035,17 @@ tbody tr:hover td { background: var(--surface-2); }
       </div>
       <div class="chart-legend" id="stats-legend"></div>
     </div>
-    <div class="chart-grid">
-      <div class="chart chart-pie">
-        <div class="chart-header">
-          <div class="chart-title-group">
-            <h3 data-i18n="section.modelPie.title">模型请求量分布</h3>
-            <div class="chart-subtitle" data-i18n="section.modelPie.desc">前 8 个模型的请求量占比</div>
-          </div>
-        </div>
-        <div class="chart-pie-body" style="position:relative">
-          <canvas id="model-pie-canvas" role="img" data-i18n-aria-label="aria.modelPieChart" aria-label="模型请求量分布图"></canvas>
-          <div class="chart-tooltip" id="model-pie-tooltip"></div>
-          <div class="pie-legend" id="model-pie-legend"></div>
-          <div id="model-pie-empty" style="display:none;position:absolute;inset:0;"></div>
-        </div>
-      </div>
-    </div>
     <div class="section">
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.modelStats.title">模型使用统计</div>
-          <div class="section-desc" data-i18n="section.modelStats.desc">按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数</div>
+          <div class="section-desc" data-i18n="section.modelStats.desc">按模型聚合：请求量与成功率。点击一行展开延迟分位数、请求占比与花销明细。</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="model-stats-table">
-            <thead><tr><th data-i18n="table.header.model">模型</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th><th data-i18n="table.header.avg">平均</th><th data-i18n="table.header.p50">p50</th><th data-i18n="table.header.p95">p95</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.model">模型</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -3768,7 +3662,6 @@ const App = {
     // grid/axis/label colors follow the new theme instead of lagging a cycle.
     if (this._lastStatsData) {
       if (typeof this.renderMainChart === 'function') this.renderMainChart(this._lastStatsData);
-      if (typeof this.renderModelPie === 'function') this.renderModelPie(this._lastStatsData);
     }
     if (typeof this.refreshActivePanelI18n === 'function') this.refreshActivePanelI18n();
   },
@@ -4832,8 +4725,6 @@ docker compose up -d --force-recreate</pre>
     // Reflect persisted pool view on the segmented buttons.
     const pv = this._poolView || (this._poolView = localStorage.getItem('dashboard_pool_view') || 'bars');
     this._syncRadioGroup('.pool-view-btn', b => b.dataset.view === pv);
-    const tr = this._trendRange || (this._trendRange = Number(localStorage.getItem('dashboard_trend_range')) || 24);
-    this._syncRadioGroup('.trend-range-btn', b => Number(b.dataset.range) === tr);
   },
 
   setPoolView(view) {
@@ -4842,14 +4733,6 @@ docker compose up -d --force-recreate</pre>
     this._syncRadioGroup('.pool-view-btn', b => b.dataset.view === view);
     this._poolSig = null; // view changed → force re-render past the sig guard
     this._renderPoolHealth(this._lastConnectMetrics);
-  },
-
-  setTrendRange(hours) {
-    this._trendRange = hours;
-    try { localStorage.setItem('dashboard_trend_range', String(hours)); } catch {}
-    this._syncRadioGroup('.trend-range-btn', b => Number(b.dataset.range) === hours);
-    this._overviewTrendSig = null; // force replay with the new window
-    this._renderOverviewTrend(this._lastStats);
   },
 
   // Pool-health summary: worst-first verdict + counts, from /connect-metrics
@@ -5420,337 +5303,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return `rgba(${r},${g},${b},${a})`;
   },
 
-  // Request-trend area chart (KiroStudio AreaTrendChart quality): smooth area +
-  // resolved theme colors, Y compact-number gridlines, X time labels, a faint
-  // success-rate overlay (right axis 0–100%), and a hover crosshair + tooltip.
-  // Build the trend buckets for the selected range. 24h → last 24 hourly buckets
-  // verbatim. 7d/30d → fold hourly buckets into per-day buckets (sum req/err),
-  // keeping the last N days. `hour` stays a ms timestamp so the X labels work.
-  _trendBuckets(hourly, rangeHours) {
-    if (!Array.isArray(hourly) || hourly.length === 0) return [];
-    const norm = hourly.map(b => ({ hour: typeof b.hour === 'number' ? b.hour : Date.parse(b.hour), requests: b.requests || 0, errors: b.errors || 0 }))
-      .filter(b => Number.isFinite(b.hour));
-    if (rangeHours <= 24) return norm.slice(-24);
-    const days = Math.round(rangeHours / 24);
-    const byDay = new Map();
-    for (const b of norm) {
-      const d = new Date(b.hour); d.setHours(0, 0, 0, 0);
-      const key = d.getTime();
-      const acc = byDay.get(key) || { hour: key, requests: 0, errors: 0 };
-      acc.requests += b.requests; acc.errors += b.errors;
-      byDay.set(key, acc);
-    }
-    return [...byDay.values()].sort((a, b) => a.hour - b.hour).slice(-days);
-  },
-
-  _renderOverviewTrend(s) {
-    const canvas = document.getElementById('overview-trend-canvas');
-    const emptyEl = document.getElementById('overview-trend-empty');
-    const legendEl = document.getElementById('overview-trend-legend');
-    const tip = document.getElementById('overview-trend-tooltip');
-    if (!canvas) return;
-    // Range-aware buckets: 24h → last 24 hourly buckets as-is; 7d/30d → aggregate
-    // the hourly buckets (backend keeps 720 = 30d) into per-day buckets.
-    const rangeHours = this._trendRange || 24;
-    const allHourly = s && Array.isArray(s.hourlyBuckets) ? s.hourlyBuckets : [];
-    const raw = this._trendBuckets(allHourly, rangeHours);
-    if (raw.length === 0) {
-      canvas.style.display = 'none';
-      if (legendEl) legendEl.innerHTML = '';
-      if (emptyEl) {
-        emptyEl.style.display = 'flex';
-        emptyEl.innerHTML = `<div class="panel-empty" role="img" aria-label="${I18n.t('overview.trend.empty')}">`
-          + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 4-5"/></svg>`
-          + `<div class="pe-title">${I18n.t('overview.trend.empty')}</div>`
-          + `<div class="pe-sub">${I18n.t('overview.trend.emptyHint')}</div></div>`;
-      }
-      return;
-    }
-    canvas.style.display = 'block';
-    if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
-    this._updateTrendA11y(raw);
-    const acc = this._cssColor('--chart-req', '#4c9aff');   // requests: bright sky-blue line+area
-    const err = this._cssColor('--chart-err', '#e0524a');   // errors: red
-    const suc = this._cssColor('--chart-succ', '#4a9d6a');  // success-rate overlay: green
-    const dim = this._cssColor('--text-dim', '#71717a');
-    const grid = this._cssColor('--grid', 'rgba(20,20,19,.10)');
-    if (legendEl) {
-      legendEl.innerHTML =
-        `<span class="lg"><span class="lg-dot" style="background:${acc}"></span>${I18n.t('overview.trend.requests')}</span>`
-        + `<span class="lg"><span class="lg-dot" style="background:${err}"></span>${I18n.t('overview.trend.errors')}</span>`
-        + `<span class="lg"><span class="lg-dot" style="background:${suc}"></span>${I18n.t('overview.trend.successRate')}</span>`;
-    }
-    const setup = this._setupCanvas(canvas);
-    if (!setup || !setup.ctx) return;
-    const { ctx, W, H } = setup;
-    const buckets = raw.map(b => ({
-      hour: b.hour, requests: b.requests || 0, errors: b.errors || 0,
-      success: Math.max(0, (b.requests || 0) - (b.errors || 0)),
-      rate: (b.requests || 0) > 0 ? (Math.max(0, (b.requests || 0) - (b.errors || 0)) / b.requests) * 100 : null,
-    }));
-    // Skip grow-in on background polls when the trend is unchanged — otherwise
-    // the 15s /overview refresh replays the whole entrance each tick (mirrors
-    // renderMainChart's _chartSig guard). reduced-motion is handled inside
-    // _animateTrend; the no-replay branch paints the final frame (p=1) so a
-    // theme/lang switch still repaints with fresh colors.
-    const paper = this._cssColor('--surface', '#0a0a0a');
-    const c = { acc, err, suc, dim, grid, paper };
-    const sig = buckets.length + '|' + (buckets[buckets.length - 1]?.hour || 0) + '|'
-      + buckets.reduce((a, b) => a + b.requests, 0) + '|' + buckets.reduce((a, b) => a + b.errors, 0);
-    const replay = this._overviewTrendSig !== sig;
-    this._overviewTrendSig = sig;
-    if (replay) {
-      this._animateTrend(canvas, W, H, buckets, c);
-    } else {
-      const s2 = this._setupCanvas(canvas);
-      if (s2 && s2.ctx) this._trendPaint(s2.ctx, s2.W, s2.H, buckets, c, null, 1);
-    }
-    this._trendBindHover(canvas, tip, buckets, c);
-  },
-
-  // a11y: give the trend canvas a spoken summary (aria-label) plus an sr-only
-  // data table so a screen-reader user gets the numbers a sighted user reads off
-  // the chart. Called on every (re)render so the summary tracks the live data.
-  _updateTrendA11y(raw) {
-    const canvas = document.getElementById('overview-trend-canvas');
-    if (!canvas || !Array.isArray(raw) || raw.length === 0) return;
-    const totalReq = raw.reduce((a, b) => a + (b.requests || 0), 0);
-    const totalErr = raw.reduce((a, b) => a + (b.errors || 0), 0);
-    const summary = I18n.t('overview.trend.a11ySummary', {
-      points: String(raw.length), requests: String(totalReq), errors: String(totalErr),
-    });
-    canvas.setAttribute('aria-label', `${I18n.t('aria.trendChart')} — ${summary}`);
-    const table = document.getElementById('overview-trend-sr');
-    if (!table) return;
-    const hdr = `<tr><th>${I18n.t('overview.trend.a11yColTime')}</th>`
-      + `<th>${I18n.t('overview.trend.requests')}</th><th>${I18n.t('overview.trend.errors')}</th></tr>`;
-    const rows = raw.map(b => {
-      const t = new Date(b.hour).toISOString().slice(0, 16).replace('T', ' ');
-      return `<tr><td>${t}</td><td>${b.requests || 0}</td><td>${b.errors || 0}</td></tr>`;
-    }).join('');
-    table.innerHTML = `<caption>${I18n.t('aria.trendChart')}</caption>${hdr}${rows}`;
-  },
-
-  // Entrance grow: lerp the series from baseline to target over ~480ms (ease-out
-  // cubic), mirroring renderMainChart. hover repaints call _trendPaint with p=1.
-  _animateTrend(canvas, W, H, buckets, c) {
-    const setup = this._setupCanvas(canvas);
-    if (!setup || !setup.ctx) return;
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      this._trendPaint(setup.ctx, setup.W, setup.H, buckets, c, null, 1);
-      return;
-    }
-    const start = performance.now();
-    const dur = 480;
-    const step = (now) => {
-      const t = Math.min(1, (now - start) / dur);
-      const p = 1 - Math.pow(1 - t, 3);
-      const s2 = this._setupCanvas(canvas);
-      if (s2 && s2.ctx) this._trendPaint(s2.ctx, s2.W, s2.H, buckets, c, null, p);
-      if (t < 1) requestAnimationFrame(step);
-    };
-    requestAnimationFrame(step);
-  },
-
-  _trendGeom(W, H, buckets) {
-    // Keep room above the plot for the stroke and markers. Spline controls are
-    // separately clamped to the plot bounds in _trendPaint.
-    const pad = { l: 34, r: 30, t: 18, b: 20 };
-    const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
-    const n = buckets.length;
-    const rawMax = Math.max(1, ...buckets.map(b => b.requests));
-    // Round the top of the left axis up to a "nice" number (same helper the main
-    // stats chart uses via niceY). This keeps gridline labels clean and provides
-    // headroom whenever rounding raises the ceiling. If rawMax is already nice,
-    // _trendPaint's Y bounds keep spline controls inside the plot.
-    const niceMax = (nn) => {
-      const exp = Math.pow(10, Math.floor(Math.log10(nn)));
-      const frac = nn / exp;
-      const fr = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
-      return fr * exp;
-    };
-    const maxV = niceMax(rawMax);
-    // B4 (KiroStudio AreaTrendChart parity): converged Y floor. A pure
-    // zero-baseline flattens "high base, small variation" data (e.g. every hour
-    // 900–1000 req against a 0–1000 axis → a dead-flat line). When the relative
-    // swing is small, lift the floor so the variation is actually visible; keep
-    // the zero baseline for low/spiky data where it reads fine. `minV` is the
-    // floor the plot maps from (0 by default). Only engages with enough points
-    // and a genuinely narrow band, so sparse/zeroey data is untouched.
-    const nz = buckets.map(b => b.requests).filter(v => v > 0);
-    let minV = 0;
-    if (nz.length >= 4) {
-      const lo = Math.min(...nz);
-      // swing ratio: how much of the range is "noise" near the top
-      if (lo / rawMax > 0.55) {
-        // floor to ~15% below the lowest point (visualFrac lower bound), niceness
-        // not required for the floor (only the top label needs to be clean).
-        minV = Math.max(0, lo - (rawMax - lo) * 0.6 - rawMax * 0.05);
-      }
-    }
-    const span = Math.max(1, maxV - minV);
-    const xAt = (i) => pad.l + (n <= 1 ? cW / 2 : (i / (n - 1)) * cW);
-    const yAt = (v) => pad.t + cH - ((v - minV) / span) * cH;
-    const yRate = (p) => pad.t + cH - (p / 100) * cH; // success-rate on 0..100
-    return { pad, cW, cH, n, maxV, minV, xAt, yAt, yRate };
-  },
-
-  _trendPaint(ctx, W, H, buckets, c, cursor, prog) {
-    const p = (prog == null ? 1 : prog);
-    const g = this._trendGeom(W, H, buckets);
-    const { pad, cW, cH, n, maxV, minV, xAt, yAt, yRate } = g;
-    const base = pad.t + cH;
-    const yBounds = [pad.t, base];
-    // Clamp anchor Y to the plot band. The converged Y-floor (minV>0) maps any
-    // value BELOW the floor to a coord past `base` — for the low-magnitude errors
-    // overlay (values near 0 while the requests floor is lifted) that dives the
-    // line off-canvas and silently hides real errors. Pinning to [pad.t, base]
-    // keeps a sub-floor series flat on the baseline (truthful "at/below floor")
-    // instead of vanishing. Requests stay >= minV by construction, unaffected.
-    const clampY = (y) => Math.max(pad.t, Math.min(base, y));
-    const yA = (v) => clampY(base - (base - yAt(v)) * p);   // grow from baseline
-    const yR = (pc) => clampY(base - (base - yRate(pc)) * p);
-    ctx.clearRect(0, 0, W, H);
-    // Y gridlines + compact labels (4 rows, left axis = request volume)
-    ctx.font = '10px var(--mono, monospace)'; ctx.textBaseline = 'middle';
-    for (let k = 0; k <= 4; k++) {
-      // Gridline value spans the converged floor..ceiling (minV..maxV), not a
-      // fixed zero baseline — so labels match where the line actually sits.
-      const v = minV + ((maxV - minV) / 4) * k; const y = yAt(v);
-      ctx.strokeStyle = c.grid; ctx.globalAlpha = 1; ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
-      ctx.fillStyle = c.dim; ctx.textAlign = 'right';
-      ctx.fillText(this._compactNum(v), pad.l - 6, y);
-      // right axis: success-rate 0/50/100 at matching rows (only 0,50,100)
-      if (k === 0 || k === 2 || k === 4) {
-        ctx.textAlign = 'left';
-        ctx.fillText((k / 4 * 100) + '%', W - pad.r + 5, y);
-      }
-    }
-    // X time labels (first / mid / last). Hourly range → HH:00; multi-day → MM/DD.
-    ctx.textAlign = 'center';
-    const daily = (this._trendRange || 24) > 24;
-    [0, Math.floor((n - 1) / 2), n - 1].forEach((i) => {
-      if (i < 0 || i >= n) return;
-      const d = new Date(buckets[i].hour);
-      const lbl = daily
-        ? `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
-        : String(d.getHours()).padStart(2, '0') + ':00';
-      ctx.fillText(lbl, xAt(i), H - 8);
-    });
-    const reqPts = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.requests) }));
-    // requests area + line
-    ctx.beginPath(); ctx.moveTo(reqPts[0].x, pad.t + cH); ctx.lineTo(reqPts[0].x, reqPts[0].y);
-    this._smoothPath(ctx, reqPts, false, 1/6, yBounds);
-    ctx.lineTo(reqPts[n - 1].x, pad.t + cH); ctx.closePath();
-    // Light, airy area wash (KiroStudio-style): a faint tint at the top that
-    // fades to nothing — the LINE carries the signal, not a heavy slab of fill.
-    const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + cH);
-    grad.addColorStop(0, this._hexA(c.acc, 0.14)); grad.addColorStop(0.55, this._hexA(c.acc, 0.05)); grad.addColorStop(1, this._hexA(c.acc, 0));
-    ctx.fillStyle = grad; ctx.fill();
-    // Glowing request line (KiroStudio feGaussianBlur look, done with canvas
-    // shadowBlur): a soft colored halo under the crisp 2.25px stroke.
-    ctx.save();
-    ctx.beginPath(); this._smoothPath(ctx, reqPts, true, 1/6, yBounds);
-    ctx.shadowColor = this._hexA(c.acc, 0.85); ctx.shadowBlur = 10;
-    ctx.strokeStyle = c.acc; ctx.lineWidth = 2.25; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
-    ctx.restore();
-    // Peak / valley markers (faint hollow rings) when not hovering — hints "this
-    // is a line with real ups and downs", matching AreaTrendChart's markers.
-    if (cursor == null && n > 1) {
-      let peakI = 0, valI = 0;
-      buckets.forEach((b, i) => { if (b.requests > buckets[peakI].requests) peakI = i; if (b.requests < buckets[valI].requests) valI = i; });
-      if (buckets[peakI].requests !== buckets[valI].requests) {
-        for (const i of [peakI, valI]) {
-          ctx.beginPath(); ctx.arc(reqPts[i].x, reqPts[i].y, 3, 0, Math.PI * 2);
-          ctx.fillStyle = c.paper || '#0a0a0a'; ctx.globalAlpha = 1; ctx.fill();
-          ctx.lineWidth = 1.5; ctx.strokeStyle = this._hexA(c.acc, 0.7); ctx.stroke();
-        }
-      }
-    }
-    // errors line (only if any)
-    if (buckets.some(b => b.errors > 0)) {
-      const ep = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.errors) }));
-      ctx.beginPath(); this._smoothPath(ctx, ep, true, 1/6, yBounds);
-      ctx.strokeStyle = c.err; ctx.lineWidth = 1.75; ctx.stroke();
-    }
-    // success-rate overlay (dashed, right-axis 0..100, blue)
-    const rr = buckets.map((b, i) => ({ x: xAt(i), y: b.rate == null ? null : yR(b.rate) })).filter(pt => pt.y != null);
-    if (rr.length > 1) {
-      ctx.save(); ctx.setLineDash([4, 3]); ctx.globalAlpha = 0.8;
-      ctx.beginPath(); this._smoothPath(ctx, rr, true, 1/6, yBounds);
-      ctx.strokeStyle = c.suc; ctx.lineWidth = 1.75; ctx.stroke(); ctx.restore();
-    }
-    // hover crosshair + marker — `cursor` is now a continuous pixel-x (same
-    // CSS-px space as xAt), not a bucket index. The crosshair tracks the mouse x
-    // and the marker rides the densified requests spline at that x. The numeric
-    // tooltip (in _trendBindHover) snaps to the NEAREST bucket independently —
-    // decoupling the y-slide from the value-snap is what kills the per-grid jump.
-    if (cursor != null && n > 0) {
-      const x = Math.max(xAt(0), Math.min(xAt(n - 1), cursor));
-      const sample = this._trendSample(reqPts, 1 / 6, 24, yBounds);
-      const cy = this._trendYAtX(sample, x);
-      ctx.strokeStyle = c.dim; ctx.globalAlpha = 0.5; ctx.setLineDash([2, 2]);
-      ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + cH); ctx.stroke();
-      ctx.setLineDash([]); ctx.globalAlpha = 1;
-      if (cy != null) {
-        ctx.fillStyle = c.acc;
-        ctx.beginPath(); ctx.arc(x, cy, 3.5, 0, Math.PI * 2); ctx.fill();
-      }
-    }
-  },
-
-  _trendBindHover(canvas, tip, buckets, c) {
-    // Rebind fresh each render; guard against stacking listeners and cancel any
-    // repaint frame left pending by the previous binding.
-    if (canvas._trendHandlers) {
-      canvas.removeEventListener('mousemove', canvas._trendHandlers.move);
-      canvas.removeEventListener('mouseleave', canvas._trendHandlers.leave);
-      const prev = canvas._trendHandlers.state;
-      if (prev && prev.raf) cancelAnimationFrame(prev.raf);
-    }
-    // Coalesce to one repaint per frame (each hover is a full _setupCanvas +
-    // redraw). rAF aligns repaint to the compositor = smooth slide. Tooltip DOM
-    // updates eagerly so text never lags the pointer.
-    const state = { px: null, raf: 0 };
-    const paint = () => {
-      state.raf = 0;
-      const setup = this._setupCanvas(canvas);
-      if (setup && setup.ctx) this._trendPaint(setup.ctx, setup.W, setup.H, buckets, c, state.px, 1);
-    };
-    const schedule = () => { if (!state.raf) state.raf = requestAnimationFrame(paint); };
-    const move = (ev) => {
-      const rect = canvas.getBoundingClientRect();
-      const g = this._trendGeom(rect.width, rect.height, buckets);
-      // Continuous pixel-x, clamped to the plot area — no rounding to a bucket.
-      const px = Math.max(g.xAt(0), Math.min(g.xAt(g.n - 1), ev.clientX - rect.left));
-      state.px = px;
-      schedule();
-      if (!tip) return;
-      // Tooltip value snaps to the nearest bucket (discrete); decoupled from the
-      // continuous crosshair/marker — that decoupling kills the per-grid jump.
-      let idx = Math.round((px - g.pad.l) / (g.cW / Math.max(1, g.n - 1)));
-      idx = Math.max(0, Math.min(g.n - 1, idx));
-      const b = buckets[idx];
-      const d = new Date(b.hour);
-      tip.innerHTML =
-        `<div class="tt-time">${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:00</div>`
-        + `<div class="tt-row"><span class="tt-dot" style="background:${c.acc}"></span><span class="tt-label">${I18n.t('overview.trend.requests')}</span><span class="tt-value">${b.requests}</span></div>`
-        + `<div class="tt-row"><span class="tt-dot" style="background:${c.err}"></span><span class="tt-label">${I18n.t('overview.trend.errors')}</span><span class="tt-value">${b.errors}</span></div>`
-        + `<div class="tt-row"><span class="tt-dot" style="background:${c.suc}"></span><span class="tt-label">${I18n.t('overview.trend.successRate')}</span><span class="tt-value">${b.rate == null ? '—' : b.rate.toFixed(1) + '%'}</span></div>`;
-      tip.classList.add('show'); tip.style.transform = 'none';
-      const tw = tip.offsetWidth, th = tip.offsetHeight;
-      let left = px + 14; if (left + tw > rect.width - 4) left = px - 14 - tw;
-      left = Math.max(4, Math.min(left, rect.width - tw - 4));
-      let top = (ev.clientY - rect.top) + 14; if (top + th > rect.height - 4) top = rect.height - th - 4;
-      tip.style.left = left + 'px'; tip.style.top = Math.max(4, top) + 'px';
-    };
-    const leave = () => { if (tip) tip.classList.remove('show'); state.px = null; schedule(); };
-    canvas.addEventListener('mousemove', move);
-    canvas.addEventListener('mouseleave', leave);
-    canvas._trendHandlers = { move, leave, state };
-  },
-
   async loadOverview() {
     const generation = (this._overviewLoadGeneration || 0) + 1;
     this._overviewLoadGeneration = generation;
@@ -5869,7 +5421,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._lastStats = s;
     this._renderPoolHealth(cm);
     this._renderConnectMetrics(cm);
-    this._renderOverviewTrend(s);
     this._renderOverviewRankings(s);
     // Inject the section help tips (idempotent) + reflect persisted toggle state.
     this._initOverviewControls();
@@ -7674,6 +7225,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     });
     this._updateBatchBar();
   },
+
+  // Expand/collapse a model-stats detail row (latency percentiles + share +
+  // credit). The trigger row carries data-detail=<id> and aria-expanded; the
+  // detail row is a sibling <tr hidden> toggled here.
+  toggleModelRow(id) {
+    const detail = document.getElementById(id);
+    if (!detail) return;
+    const open = detail.hasAttribute('hidden');
+    if (open) detail.removeAttribute('hidden'); else detail.setAttribute('hidden', '');
+    const trigger = document.querySelector(`.model-row[data-detail="${id}"]`);
+    if (trigger) {
+      trigger.setAttribute('aria-expanded', String(open));
+      const chev = trigger.querySelector('.row-chevron');
+      if (chev) chev.textContent = open ? '▾' : '▸';
+    }
+  },
   clearAccountSelection() {
     this._selectedAccounts?.clear();
     document.querySelectorAll('#accounts-table .acct-select, #accounts-select-all').forEach((cb) => { cb.checked = false; });
@@ -8245,21 +7812,39 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const models = d.modelCounts || {};
     const sortedModels = Object.entries(models).sort(([,a],[,b]) => b.requests - a.requests);
     const tbody = document.querySelector('#model-stats-table tbody');
-    tbody.innerHTML = sortedModels.map(([m, s]) => {
+    // creditsByModel + totalReq already declared above in this scope (credits
+    // card + stats KPI). Reuse them for the per-model share / credit detail.
+    const modelReqTotal = sortedModels.reduce((a, [, s]) => a + (s.requests || 0), 0);
+    tbody.innerHTML = sortedModels.map(([m, s], i) => {
       const rate = s.requests > 0 ? ((s.success/s.requests)*100).toFixed(1) : '0.0';
       const rateColor = Number(rate) >= 95 ? 'var(--success)' : Number(rate) >= 80 ? 'var(--warn)' : 'var(--error)';
+      const share = modelReqTotal > 0 ? ((s.requests / modelReqTotal) * 100).toFixed(1) : '0.0';
+      const credit = creditsByModel[m] || 0;
+      const rid = 'mrow-' + i;
+      // Main row is a toggle: click / Enter / Space expands the detail row below
+      // with latency percentiles + credit spend + request share (moved out of the
+      // main row to keep the overview scannable — details on demand).
       return `
-      <tr>
-        <td><code>${this.esc(m)}</code></td>
+      <tr class="model-row" role="button" tabindex="0" aria-expanded="false" data-detail="${rid}"
+          onclick="App.toggleModelRow('${rid}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.toggleModelRow('${rid}')}">
+        <td><span class="row-chevron" aria-hidden="true">▸</span> <code>${this.esc(m)}</code></td>
         <td>${s.requests}</td>
         <td style="color:var(--success)">${s.success}</td>
         <td style="color:${s.errors > 0 ? 'var(--error)' : 'inherit'}">${s.errors}</td>
         <td style="color:${rateColor};font-weight:600">${rate}%</td>
-        <td class="text-sm">${s.avgMs || 0} ms</td>
-        <td class="text-sm">${s.p50Ms || 0} ms</td>
-        <td class="text-sm">${s.p95Ms || 0} ms</td>
+      </tr>
+      <tr id="${rid}" class="model-detail-row" hidden>
+        <td colspan="5">
+          <div class="model-detail">
+            <div class="model-detail-item"><span class="mdi-label">${I18n.t('table.detail.avg')}</span><span class="mdi-val">${s.avgMs || 0} ms</span></div>
+            <div class="model-detail-item"><span class="mdi-label">${I18n.t('table.detail.p50')}</span><span class="mdi-val">${s.p50Ms || 0} ms</span></div>
+            <div class="model-detail-item"><span class="mdi-label">${I18n.t('table.detail.p95')}</span><span class="mdi-val">${s.p95Ms || 0} ms</span></div>
+            <div class="model-detail-item"><span class="mdi-label">${I18n.t('table.detail.share')}</span><span class="mdi-val">${share}%</span></div>
+            <div class="model-detail-item"><span class="mdi-label">${I18n.t('table.detail.credit')}</span><span class="mdi-val">${credit ? credit.toFixed(1) : '0'}</span></div>
+          </div>
+        </td>
       </tr>`;
-    }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noRequestData')}</td></tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.noRequestData')}</td></tr>`;
 
     const accounts = d.accountCounts || {};
     const sortedAccts = Object.entries(accounts).sort(([,a],[,b]) => b.requests - a.requests);
@@ -8278,7 +7863,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
 
     this.renderMainChart(d);
-    this.renderModelPie(d);
 
     this.poll('stats', () => this.loadStats(), 30000);
   },
@@ -8960,71 +8544,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     });
   },
 
-  _bindPieHover() {
-    const canvas = document.getElementById('model-pie-canvas');
-    const tipEl  = document.getElementById('model-pie-tooltip');
-    if (!canvas || !tipEl || canvas._pieHoverBound) return;
-    canvas._pieHoverBound = true;
-    // Repaint the donut at final state, emphasizing the hovered segment. rAF-
-    // coalesced so a fast mousemove doesn't stack redraws. _piePaint is set by
-    // renderModelPie; guard in case hover fires before the first paint.
-    const schedulePie = () => {
-      if (this._pieHoverRaf) return;
-      this._pieHoverRaf = requestAnimationFrame(() => {
-        this._pieHoverRaf = 0;
-        if (typeof this._piePaint === 'function') this._piePaint(1, this._pieHoverIdx);
-      });
-    };
-    canvas.addEventListener('mousemove', (ev) => {
-      const hm = this._pieHitMap;
-      if (!hm) { tipEl.classList.remove('show'); return; }
-      const rect = canvas.getBoundingClientRect();
-      const x = ev.clientX - rect.left;
-      const y = ev.clientY - rect.top;
-      const dx = x - hm.cx, dy = y - hm.cy;
-      const r = Math.hypot(dx, dy);
-      if (r < hm.rInner || r > hm.rOuter) {
-        tipEl.classList.remove('show');
-        if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
-        return;
-      }
-      // Pie starts at -π/2 going clockwise. Normalize cursor angle into the
-      // same 0..2π space relative to the start angle so segment boundaries
-      // align with the drawn arcs.
-      let a = Math.atan2(dy, dx) + Math.PI / 2;
-      if (a < 0) a += Math.PI * 2;
-      const startAngle0 = -Math.PI / 2;
-      const seg = hm.segments.find(s => {
-        const sNorm = s.startAngle - startAngle0;
-        const eNorm = s.endAngle - startAngle0;
-        return a >= sNorm && a < eNorm;
-      });
-      if (!seg) {
-        tipEl.classList.remove('show');
-        if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
-        return;
-      }
-      if (this._pieHoverIdx !== seg.idx) { this._pieHoverIdx = seg.idx; schedulePie(); }
-      const pct = (seg.count / hm.total * 100).toFixed(1);
-      const successRate = seg.count > 0 ? (seg.success / seg.count * 100).toFixed(1) : '—';
-      tipEl.innerHTML = `
-        <div class="tt-time">${this.esc(seg.name)}</div>
-        <div class="tt-row"><span class="tt-dot" style="background:${seg.color}"></span><span class="tt-label">${I18n.t('section.requestChart.tooltipRequests')}</span><span class="tt-value">${seg.count} (${pct}%)</span></div>
-        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipSuccess')}</span><span class="tt-value">${seg.success}</span></div>
-        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipErrors')}</span><span class="tt-value">${seg.errors}</span></div>
-        <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipRate')}</span><span class="tt-value">${successRate}%</span></div>
-      `;
-      tipEl.classList.add('show');
-      // Tooltip lives inside chart-pie-body (position:relative). Position it
-      // relative to that parent using cursor coords already in canvas space.
-      tipEl.style.left = x + 'px';
-      tipEl.style.top = Math.max(0, y - 12) + 'px';
-    });
-    canvas.addEventListener('mouseleave', () => {
-      tipEl.classList.remove('show');
-      if (this._pieHoverIdx !== -1) { this._pieHoverIdx = -1; schedulePie(); }
-    });
-  },
 
   _roundRect(ctx, x, y, w, h, r) {
     if (h <= 0 || w <= 0) return;
@@ -9106,135 +8625,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return `${days}d · ${originalPts} pts${note}`;
   },
 
-  renderModelPie(d) {
-    const canvas = document.getElementById('model-pie-canvas');
-    const legend = document.getElementById('model-pie-legend');
-    if (!canvas) return;
-
-    const entries = Object.entries(d.modelCounts || {})
-      .map(([name, s]) => ({ name, count: s.requests || 0, success: s.success || 0, errors: s.errors || 0 }))
-      .filter(e => e.count > 0)
-      .sort((a, b) => b.count - a.count);
-
-    const top = entries.slice(0, 8);
-    const others = entries.slice(8).reduce((acc, e) => ({
-      count: acc.count + e.count, success: acc.success + e.success, errors: acc.errors + e.errors,
-    }), { count: 0, success: 0, errors: 0 });
-    if (others.count > 0) top.push({ name: 'others', count: others.count, success: others.success, errors: others.errors });
-
-    const total = top.reduce((a, b) => a + b.count, 0);
-
-    const { ctx, W, H } = this._setupCanvas(canvas);
-    ctx.clearRect(0, 0, W, H);
-    const emptyEl = document.getElementById('model-pie-empty');
-
-    if (total === 0) {
-      // Centered card-wide empty state (the canvas is only 200px in the left grid
-      // column, so drawing on it looked left-offset — use a full-width overlay).
-      canvas.style.visibility = 'hidden';
-      if (emptyEl) {
-        emptyEl.style.display = 'flex';
-        emptyEl.innerHTML = `<div class="panel-empty">`
-          + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg>`
-          + `<div class="pe-title">${I18n.t('table.empty.noData')}</div></div>`;
-      }
-      if (legend) legend.innerHTML = '';
-      this._pieHitMap = null;
-      return;
-    }
-    // has data → restore the canvas, clear the empty overlay
-    canvas.style.visibility = '';
-    if (emptyEl) { emptyEl.style.display = 'none'; emptyEl.innerHTML = ''; }
-
-    const cx = W / 2, cy = H / 2;
-    const rOuter = Math.min(W, H) / 2 - 6;
-    const rInner = rOuter * 0.58;
-
-    // Compute the final segment geometry once (used for hover + each anim frame).
-    const segments = [];
-    let angle = -Math.PI / 2;
-    top.forEach((seg, i) => {
-      const frac = seg.count / total;
-      const a2 = angle + frac * Math.PI * 2;
-      segments.push({ ...seg, idx: i, color: this._pieColors[i % this._pieColors.length], startAngle: angle, endAngle: a2 });
-      angle = a2;
-    });
-
-    this._pieHitMap = { cx, cy, rOuter, rInner, total, segments, W, H };
-    this._bindPieHover();
-
-    const startAt = -Math.PI / 2;
-    const legendRequests = I18n.t('section.requestChart.legendRequests');
-    // Paint the donut swept to `p` of full rotation, mirroring the main chart's
-    // 0→1 grow-in so the stats page feels as smooth as the dashboard. Center
-    // label fades in over the last third of the sweep. Hover repaints call p=1.
-    const paint = (p, hoverIdx = -1) => {
-      ctx.clearRect(0, 0, W, H);
-      const sweepEnd = startAt + p * Math.PI * 2;
-      for (const seg of segments) {
-        const a1 = seg.startAngle;
-        const a2 = Math.min(seg.endAngle, sweepEnd);
-        if (a2 <= a1) continue;
-        // The hovered segment pops out with a slightly larger outer radius.
-        const rO = seg.idx === hoverIdx ? rOuter + 4 : rOuter;
-        ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a1) * rInner, cy + Math.sin(a1) * rInner);
-        ctx.arc(cx, cy, rO, a1, a2);
-        ctx.arc(cx, cy, rInner, a2, a1, true);
-        ctx.closePath();
-        ctx.fillStyle = seg.color;
-        ctx.fill();
-      }
-      // Center label — resolve theme vars (canvas can't read CSS var()).
-      const labelAlpha = Math.max(0, Math.min(1, (p - 0.66) / 0.34));
-      if (labelAlpha > 0) {
-        ctx.save();
-        ctx.globalAlpha = labelAlpha;
-        ctx.fillStyle = this._cssColor('--ink', '#ededed');
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.font = "600 22px 'JetBrains Mono', 'Cascadia Code', Consolas, monospace";
-        ctx.fillText(total, cx, cy - 6);
-        ctx.fillStyle = this._hexA(this._cssColor('--text-muted', '#71717a'), 0.85);
-        ctx.font = '10px sans-serif';
-        ctx.fillText(legendRequests, cx, cy + 12);
-        ctx.restore();
-      }
-    };
-    this._piePaint = paint; // hover handler repaints via this at p=1
-
-    // Animate the sweep (cubic ease-out, ~600ms), matching renderMainChart.
-    // Respect reduced-motion, and skip the sweep on unchanged background polls
-    // (signature = segment names + counts) so the 30s refresh doesn't replay it.
-    cancelAnimationFrame(this._pieAnim || 0);
-    const pieSig = segments.map(s => s.name + ':' + s.count).join('|');
-    const pieReplay = this._pieSig !== pieSig;
-    this._pieSig = pieSig;
-    if (matchMedia('(prefers-reduced-motion: reduce)').matches || !pieReplay) {
-      paint(1);
-    } else {
-      const dur = 600, t0 = performance.now();
-      const loop = (now) => {
-        const t = Math.min(1, (now - t0) / dur);
-        const p = 1 - Math.pow(1 - t, 3);
-        paint(p);
-        if (t < 1) this._pieAnim = requestAnimationFrame(loop);
-      };
-      this._pieAnim = requestAnimationFrame(loop);
-    }
-
-    if (legend) {
-      legend.innerHTML = top.map((seg, i) => {
-        const pct = (seg.count / total * 100).toFixed(1);
-        return `<div class="pie-legend-item" title="${this.esc(seg.name)}">
-          <span class="pie-legend-dot" style="background:${this._pieColors[i % this._pieColors.length]}"></span>
-          <span class="pie-legend-name">${this.esc(seg.name)}</span>
-          <span class="pie-legend-count">${seg.count}</span>
-          <span class="pie-legend-pct">${pct}%</span>
-        </div>`;
-      }).join('');
-    }
-  },
 
   async resetStats() {
     const ok = await this.confirm(I18n.t('modal.resetStats.title'), I18n.t('modal.resetStats.desc'), { danger: true, okText: I18n.t('action.reset') });
