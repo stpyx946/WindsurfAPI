@@ -7,7 +7,10 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { neutralizeClientIdentity } from '../src/handlers/messages.js';
 
-afterEach(() => { delete process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID; });
+afterEach(() => {
+  delete process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID;
+  delete process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE;
+});
 
 describe('neutralizeClientIdentity', () => {
   it('rewrites the exact Claude Code self-identification', () => {
@@ -158,5 +161,51 @@ describe('neutralizeClientIdentity', () => {
   it('does not touch an unrelated "You are X, a software engineer" line (only the boast phrasing)', () => {
     const src = 'You are Cline, a software engineer. Help with the task.';
     assert.equal(neutralizeClientIdentity(src), src, 'plain role line untouched');
+  });
+
+  // 2026-07-15 (a6): SPECULATIVE / HYPOTHESIS-ONLY, DEFAULT-OFF. The OBJECTIVE
+  // section's "Remember, you have extensive capabilities …" boast sentence is only
+  // SUSPECTED to share the a5 content-policy trigger family — NOT live-verified
+  // (Devin's policy is non-deterministic, so no reliable A/B). Gated behind an
+  // opt-in flag WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE=1 and shipped OFF. The main
+  // WINDSURFAPI_NEUTRALIZE_CLIENT_ID switch (default on) still wraps the whole
+  // function, so a6 runs only when the main switch is on AND the a6 flag === '1'.
+  const OBJECTIVE_BOAST = 'Remember, you have extensive capabilities with access to a wide range of tools that can be used in powerful and clever ways as necessary to accomplish each goal.';
+  const CAPABILITIES_BULLET = "- You have access to tools that let you execute CLI commands on the user's computer, list files, view source code definitions, and more.";
+  // A realistic OBJECTIVE snippet: a sentence before, the boast, and a numbered step after.
+  const OBJECTIVE_BLOCK =
+    'You accomplish a given task iteratively, breaking it down into clear steps.\n' +
+    OBJECTIVE_BOAST + '\n' +
+    '1. Analyze the user\'s task and set clear, achievable goals.';
+
+  it('(a6) DEFAULT-OFF: the OBJECTIVE boast sentence is byte-equivalent passthrough (regression lock)', () => {
+    // Flag unset → speculative rule must NOT fire. Critical default-off guarantee.
+    assert.equal(process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE, undefined, 'flag unset by default');
+    assert.equal(neutralizeClientIdentity(OBJECTIVE_BLOCK), OBJECTIVE_BLOCK, 'unchanged when flag off');
+  });
+
+  it('(a6) flag=1: rewrites the OBJECTIVE boast and preserves surrounding text', () => {
+    process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE = '1';
+    const out = neutralizeClientIdentity(OBJECTIVE_BLOCK);
+    assert.ok(!/extensive capabilities with access to a wide range of tools/i.test(out), 'boast removed');
+    assert.match(out, /Use the available tools as needed to accomplish each goal\./, 'rewritten line present');
+    assert.match(out, /You accomplish a given task iteratively, breaking it down into clear steps\./, 'sentence before preserved');
+    assert.match(out, /1\. Analyze the user's task and set clear, achievable goals\./, 'numbered step after preserved');
+  });
+
+  it('(a6) flag=1: does NOT touch the CAPABILITIES "execute CLI commands" bullet', () => {
+    process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE = '1';
+    const src = CAPABILITIES_BULLET + '\n' + OBJECTIVE_BOAST;
+    const out = neutralizeClientIdentity(src);
+    assert.ok(out.includes(CAPABILITIES_BULLET), 'CAPABILITIES bullet left intact');
+    assert.ok(out.includes("execute CLI commands on the user's computer"), 'functional description untouched');
+  });
+
+  it('(a6) is gated by the main off-switch too: main switch off → early return, boast unchanged even with a6 flag on', () => {
+    // The function early-returns when WINDSURFAPI_NEUTRALIZE_CLIENT_ID==='0', so a6
+    // cannot run regardless of its own flag. Assert the ACTUAL control flow.
+    process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID = '0';
+    process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE = '1';
+    assert.equal(neutralizeClientIdentity(OBJECTIVE_BLOCK), OBJECTIVE_BLOCK, 'main off-switch wins; a6 does not run');
   });
 });

@@ -14,6 +14,8 @@
  * standalone module is what lets chat.js reuse it without a circular import.
  *
  * Off-switch: WINDSURFAPI_NEUTRALIZE_CLIENT_ID=0 (default on).
+ * Opt-in (speculative): WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE=1 (default off) —
+ * enables the (a6) OBJECTIVE-boast rule; see comment at the a6 rule.
  */
 export function neutralizeClientIdentity(text, env = process.env) {
   if (!text || String(env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID || '1') === '0') return text;
@@ -96,5 +98,17 @@ export function neutralizeClientIdentity(text, env = process.env) {
     /You are ([A-Z][\w.-]*), a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns,? and best practices\./g,
     'You are $1, a software engineer.',
   );
+  // (a6) SPECULATIVE / HYPOTHESIS-ONLY (2026-07-15), DEFAULT-OFF. Unlike a1-a5
+  // which are live-bisected confirmed triggers, this OBJECTIVE boast sentence is
+  // only SUSPECTED to be in the same content-policy trigger family — NOT verified,
+  // because Devin's content policy is non-deterministic (the same prompt blocked
+  // then passed hours later) so no reliable A/B was possible. Ship OFF (opt-in via
+  // WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE=1) so the mechanism is ready to flip the
+  // instant the policy re-fires and a repetition A/B proves causation. Do NOT enable
+  // by default. CAPABILITIES bullet deliberately left untouched (functional
+  // description, redundant with tools[]).
+  if (String(env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE || '') === '1') {
+    out = out.replace(/Remember, you have extensive capabilities with access to a wide range of tools that can be used in powerful and clever ways as necessary to accomplish each goal\./g, 'Use the available tools as needed to accomplish each goal.');
+  }
   return out;
 }
