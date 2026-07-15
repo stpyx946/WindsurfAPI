@@ -59,6 +59,41 @@ describe('cacheKey', () => {
     );
   });
 
+  it('cache-01: nested reasoning.effort keys apart (different tiers must not collide)', () => {
+    // chat.js merges the effort into the model id via mergeReasoningEffortIntoModel
+    // (reasoning_effort || reasoning.effort) BEFORE routing, but does NOT mutate
+    // body.model — so cacheKey never saw the nested form. Two requests differing
+    // ONLY in nested reasoning.effort would collide and the second gets the
+    // first's wrong-tier answer.
+    const base = { model: 'gpt-5.5', messages: [{ role: 'user', content: 'hi' }] };
+    assert.notEqual(
+      cacheKey({ ...base, reasoning: { effort: 'xhigh' } }),
+      cacheKey({ ...base, reasoning: { effort: 'none' } })
+    );
+    // presence vs absence also keys apart
+    assert.notEqual(cacheKey({ ...base, reasoning: { effort: 'high' } }), cacheKey(base));
+  });
+
+  it('cache-01: flat reasoning_effort and equal nested reasoning.effort collapse to one slot', () => {
+    // The two spellings are the same generation (chat.js resolves flat-then-nested),
+    // so they must share a cache key.
+    const base = { model: 'gpt-5.5', messages: [{ role: 'user', content: 'hi' }] };
+    assert.equal(
+      cacheKey({ ...base, reasoning_effort: 'high' }),
+      cacheKey({ ...base, reasoning: { effort: 'high' } })
+    );
+  });
+
+  it('cache-01: flat reasoning_effort takes precedence over nested in the key', () => {
+    // Both present → flat wins, matching mergeReasoningEffortIntoModel
+    // (body.reasoning_effort || body.reasoning?.effort).
+    const base = { model: 'gpt-5.5', messages: [{ role: 'user', content: 'hi' }] };
+    assert.equal(
+      cacheKey({ ...base, reasoning_effort: 'high', reasoning: { effort: 'none' } }),
+      cacheKey({ ...base, reasoning_effort: 'high' })
+    );
+  });
+
   it('separates output-affecting params (stop, seed)', () => {
     const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
     assert.notEqual(cacheKey({ ...base, stop: ['END'] }), cacheKey(base));

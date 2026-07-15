@@ -120,7 +120,13 @@ function normalize(body) {
     tools: body.tools || null,
     tool_choice: body.tool_choice || null,
     response_format: body.response_format || null,
-    reasoning_effort: body.reasoning_effort ?? null,
+    // cache-01: resolve the reasoning effort the SAME way the router does
+    // (chat.js mergeReasoningEffortIntoModel: reasoning_effort || reasoning.effort).
+    // The nested `reasoning:{effort}` form (codex CLI, OpenAI Responses) merges
+    // into the model id before routing but never mutates body.model, so keying
+    // only the flat field collapsed two different reasoning tiers into one slot →
+    // the second request got the first's wrong-tier answer.
+    reasoning_effort: (body.reasoning_effort ?? body.reasoning?.effort) ?? null,
     thinking: body.thinking || null,
     stream_options: body.stream_options || null,
     temperature: body.temperature ?? null,
