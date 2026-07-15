@@ -128,4 +128,35 @@ describe('neutralizeClientIdentity', () => {
     assert.ok(!/powered by the model/i.test(out), 'powered-by line removed');
     assert.match(out, /Next line kept/, 'surrounding content preserved');
   });
+
+  // 2026-07-15 (a5): Cline's system prompt opens with a capability-boast identity
+  // sentence — "You are Cline, a highly skilled software engineer with extensive
+  // knowledge in many programming languages, frameworks, design patterns, and best
+  // practices." Live A/B bisection on the Devin upstream (homecloud, v3.4.0) proved
+  // this exact sentence trips the content policy (permission_denied / 400): dropping
+  // the "highly skilled … best practices" capability clause flips it to 200, while
+  // swapping only the name "Cline" does NOT (the boast phrasing is the trigger, not
+  // the brand). Rewrite it to a plain role line; the model keeps its "Cline" identity.
+  const CLINE_ID = 'You are Cline, a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns, and best practices.';
+
+  it('neutralizes the Cline capability-boast identity sentence', () => {
+    const out = neutralizeClientIdentity(CLINE_ID + '\n\nTOOL USE\n\nYou have access to a set of tools.');
+    assert.ok(!/highly skilled software engineer with extensive knowledge/i.test(out), 'capability boast removed');
+    assert.ok(!/design patterns, and best practices/i.test(out), 'boast tail removed');
+    // surrounding prompt preserved
+    assert.match(out, /TOOL USE/, 'rest of prompt kept');
+    assert.match(out, /You have access to a set of tools\./, 'content after kept');
+    // the rewritten line is a well-formed identity ("You are ..."), not empty
+    assert.match(out, /^You are /, 'still opens with an identity line');
+  });
+
+  it('the Cline neutralization respects the opt-out flag', () => {
+    process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID = '0';
+    assert.equal(neutralizeClientIdentity(CLINE_ID), CLINE_ID);
+  });
+
+  it('does not touch an unrelated "You are X, a software engineer" line (only the boast phrasing)', () => {
+    const src = 'You are Cline, a software engineer. Help with the task.';
+    assert.equal(neutralizeClientIdentity(src), src, 'plain role line untouched');
+  });
 });

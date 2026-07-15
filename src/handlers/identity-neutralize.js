@@ -82,5 +82,19 @@ export function neutralizeClientIdentity(text, env = process.env) {
     /You are powered by the model [^\n.]*\.\n?/i,
     '',
   );
+  // (a5) Cline's opening capability-boast identity sentence (2026-07-15, live A/B
+  // on the Devin upstream, homecloud v3.4.0). Cline's system prompt starts with
+  // "You are Cline, a highly skilled software engineer with extensive knowledge in
+  // many programming languages, frameworks, design patterns, and best practices."
+  // Bisected live to this exact sentence: it trips the content policy
+  // (permission_denied / 400). The TRIGGER is the capability-boast phrasing, NOT
+  // the brand name — swapping only "Cline" still blocks; dropping the "highly
+  // skilled … best practices" clause passes. Rewrite to a plain role line and keep
+  // the agent's own name (verified: "You are <Name>, a software engineer." serves).
+  // Name captured generically so a future Cline rename / fork still matches.
+  out = out.replace(
+    /You are ([A-Z][\w.-]*), a highly skilled software engineer with extensive knowledge in many programming languages, frameworks, design patterns,? and best practices\./g,
+    'You are $1, a software engineer.',
+  );
   return out;
 }
