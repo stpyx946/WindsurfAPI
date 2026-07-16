@@ -10,7 +10,7 @@
  *     conversation continuity (#93, #133)
  */
 
-import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomUUID, randomBytes, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
 import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable, getQuotaTunable } from './runtime-config.js';
 import { readFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
@@ -425,6 +425,14 @@ function _serializeAccounts() {
     // C5: persisted rolling-hour health window (pruned at save time so the
     // file never carries stale/out-of-window events across restarts).
     _health: Array.isArray(a._health) ? pruneHealthWindow(a, Date.now()) : [],
+    // Per-account stable device seed (opt-in stable-device mode). Persisted ONLY
+    // when set, so accounts.json for a default (random-fingerprint) deployment is
+    // byte-identical to before. The seed is the root material from which the
+    // #31 ClientMetadata fingerprint (and, later, login UA) is derived; keeping
+    // it stable per account makes the account present one consistent "device"
+    // instead of a fresh random one every request. See devin-connect
+    // deriveDeviceBytes + WINDSURFAPI_STABLE_DEVICE.
+    ...(a.deviceSeed ? { deviceSeed: a.deviceSeed } : {}),
   }));
 }
 
@@ -575,7 +583,38 @@ function _deserializeAccount(a, now = Date.now()) {
     _health: Array.isArray(a._health)
       ? a._health.filter(e => e && typeof e.t === 'number' && now - e.t < HEALTH_WINDOW_MS && HEALTH_KINDS.has(e.k))
       : [],
+    // Per-account stable device seed (opt-in). Restored as-is; undefined for
+    // accounts that never had one (default random-fingerprint deployments).
+    // Generation is lazy — ensureDeviceSeed mints one on first use only when
+    // stable-device mode is enabled, so we don't stamp a seed onto every account
+    // of a deployment that doesn't use the feature.
+    deviceSeed: typeof a.deviceSeed === 'string' && a.deviceSeed ? a.deviceSeed : undefined,
   };
+}
+
+// Per-account stable device fingerprint mode. OFF by default: the #31
+// ClientMetadata fingerprint stays per-request random (byte-identical to the
+// historical behavior). Turn on with WINDSURFAPI_STABLE_DEVICE=1 to make each
+// account present ONE stable device across requests (see the machine-id study —
+// this is the "one account = one device" shape kiro.rs uses; whether it lowers
+// ban/limit rates on the Devin upstream must be A/B'd on a real account).
+export function isStableDeviceEnabled(env = process.env) {
+  return String(env.WINDSURFAPI_STABLE_DEVICE || '') === '1';
+}
+
+// Return the account's stable device seed, minting + persisting one on first use.
+// Only mints when stable-device mode is on; otherwise returns undefined so the
+// wire layer falls back to per-request random (default byte-equivalent path).
+// The seed is opaque root material (never sent upstream directly); the wire
+// layer derives the actual 732-hex fingerprint from it. Lazy generation keeps
+// accounts.json untouched for deployments that don't use the feature.
+export function ensureDeviceSeed(account, env = process.env) {
+  if (!account || !isStableDeviceEnabled(env)) return undefined;
+  if (!account.deviceSeed) {
+    account.deviceSeed = randomBytes(32).toString('hex');
+    markDirty();
+  }
+  return account.deviceSeed;
 }
 
 function loadAccounts() {

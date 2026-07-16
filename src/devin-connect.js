@@ -28,7 +28,7 @@
 
 import https from 'https';
 import { StringDecoder } from 'string_decoder';
-import { randomUUID, randomBytes } from 'crypto';
+import { randomUUID, randomBytes, createHmac } from 'crypto';
 import * as _wireFs from 'fs';
 import * as _wirePath from 'path';
 import { log } from './config.js';
@@ -37,6 +37,10 @@ import {
   parseFields, getField, getAllFields,
 } from './proto.js';
 import { wrapRequest, wrapEnvelope, StreamingFrameParser, connectHeaders } from './connect.js';
+// Observability counter only (mirrors devin-connect-openai.js importing
+// recordArgRepair from cline-compat). cc-compat is a zero-I/O, zero-pipeline-
+// import pure module, so this cannot create a cycle or perturb the wire path.
+import { recordSchemaNormalized } from './handlers/cc-compat.js';
 
 const HOST = 'server.codeium.com';
 const PATH = '/exa.api_server_pb.ApiServerService/GetChatMessage';
@@ -124,12 +128,47 @@ export function getConnectToken(env = process.env) {
 }
 
 /**
- * Generate a fresh fingerprint for ClientMetadata #31. The server only checks
- * the length/shape (732 hex chars), not the value, so a per-request random hex
- * string is both accepted and anti-fingerprinting.
+ * Generate the fingerprint for ClientMetadata #31. The server only checks the
+ * length/shape (732 hex chars = 366 bytes), NOT the value (see file header
+ * §2 + the length-only check in this file), so both a per-request random hex
+ * string and a stable per-account one are accepted at the wire level.
+ *
+ * @param {string} [deviceSeed] — when provided (per-account stable device mode,
+ *   opt-in), the 366 bytes are DERIVED deterministically from the seed via an
+ *   HMAC-SHA256 counter (HKDF-style expand), so the same account presents the
+ *   same device fingerprint on every request. When absent (default), fall back
+ *   to the historical per-request `randomBytes(366)` — BYTE-IDENTICAL behavior,
+ *   so the default path is unchanged. The choice between the two is gated by the
+ *   caller (WINDSURFAPI_STABLE_DEVICE + a per-account deviceSeed), never here.
  */
-function generateFingerprint() {
-  return randomBytes(366).toString('hex'); // 366 bytes → 732 hex chars
+function generateFingerprint(deviceSeed) {
+  if (!deviceSeed) return randomBytes(366).toString('hex'); // default: per-request random
+  return deriveDeviceBytes(deviceSeed, 'devin-clientmeta', 366).toString('hex');
+}
+
+/**
+ * HKDF-style expand: stretch a seed into `len` bytes deterministically using
+ * HMAC-SHA256 in counter mode (RFC 5869 expand phase, no salt). Same (seed,
+ * info, len) → same bytes; different accounts (different seeds) → different
+ * bytes; the `info` label namespaces distinct fingerprints from one seed so the
+ * #31 metadata and, later, the login UA cannot be cross-correlated or reversed.
+ */
+function deriveDeviceBytes(seed, info, len) {
+  const out = [];
+  let produced = 0;
+  let counter = 0;
+  let prev = Buffer.alloc(0);
+  while (produced < len) {
+    counter++;
+    const h = createHmac('sha256', String(seed));
+    h.update(prev);
+    h.update(Buffer.from(info, 'utf8'));
+    h.update(Buffer.from([counter & 0xff]));
+    prev = h.digest();
+    out.push(prev);
+    produced += prev.length;
+  }
+  return Buffer.concat(out).subarray(0, len);
 }
 
 /**
@@ -532,6 +571,12 @@ export function normalizeToolSchema(schema) {
   const out = { ...schema };
   // $schema is a meta key some clients add; upstream schemas never carry it.
   delete out.$schema;
+  // Strip top-level oneOf/anyOf/allOf BEFORE the properties/type normalization
+  // below — a schema that is a bare top-level combinator (no properties) would
+  // otherwise be forced to `{type:'object',properties:{}}` and lose its real
+  // parameters. Recovering properties from a variant here lets the properties
+  // guard below see the recovered object instead of overwriting it with {}.
+  if (stripTopLevelCombinators(out)) recordSchemaNormalized();
   // Force an object schema (function parameters are always an object).
   if (out.type !== 'object') out.type = 'object';
   // properties must be an object (not array/null/absent).
@@ -549,6 +594,43 @@ export function normalizeToolSchema(schema) {
     }
   }
   return stripSchemaDescriptions(out);
+}
+
+// ★ Strip top-level oneOf/anyOf/allOf combinators in place (ported from kiro.rs
+// converter.rs strip_top_level_combinators). Bedrock/Anthropic reject a tool
+// parameters schema whose ROOT is a combinator instead of an object; a bare
+// top-level oneOf also collides with our "force object" normalization. We remove
+// the three combinator keys and, only when the schema had NO top-level
+// properties of its own, recover properties/required/additionalProperties/
+// description from the first `type:object` variant (never overwriting keys the
+// schema already has — matches kiro's or_insert semantics). Byte-identical for
+// any schema without a top-level combinator: the loop's `Array.isArray` guard
+// means a schema lacking these keys is left completely untouched. Mutates `out`.
+function stripTopLevelCombinators(out) {
+  const hasPropsInitially = Object.prototype.hasOwnProperty.call(out, 'properties');
+  let recovered = false;
+  let stripped = false;
+  for (const key of ['oneOf', 'anyOf', 'allOf']) {
+    if (!Array.isArray(out[key])) continue;
+    const variants = out[key];
+    delete out[key];
+    stripped = true;
+    // Recover real parameters only if the root had none and we haven't already
+    // pulled them from an earlier combinator.
+    if (hasPropsInitially || recovered) continue;
+    const objVariant = variants.find(
+      (v) => v && typeof v === 'object' && !Array.isArray(v) && v.type === 'object',
+    );
+    if (!objVariant) continue;
+    for (const field of ['properties', 'required', 'additionalProperties', 'description']) {
+      if (Object.prototype.hasOwnProperty.call(objVariant, field)
+          && !Object.prototype.hasOwnProperty.call(out, field)) {
+        out[field] = objVariant[field];
+      }
+    }
+    recovered = true;
+  }
+  return stripped;
 }
 
 // ★ Strip `description` annotations from JSON Schema recursively, but preserve
@@ -634,7 +716,7 @@ function encodeToolDef(tool, tags) {
  * Build the ClientMetadata sub-message (field #1). The token is embedded SINGLE
  * here (the doubling is only for the HTTP Authorization header).
  */
-function buildClientMetadata(token) {
+function buildClientMetadata(token, deviceSeed) {
   return Buffer.concat([
     writeStringField(1, CLIENT_NAME),
     writeStringField(2, CLIENT_VERSION),
@@ -643,7 +725,9 @@ function buildClientMetadata(token) {
     writeStringField(5, 'windows'),
     writeStringField(7, CLIENT_VERSION),
     writeStringField(12, CLIENT_NAME),
-    writeStringField(31, generateFingerprint()),
+    // #31 device fingerprint. deviceSeed (per-account stable mode, opt-in) makes
+    // it deterministic; undefined → historical per-request random (byte-equiv).
+    writeStringField(31, generateFingerprint(deviceSeed)),
   ]);
 }
 
@@ -693,7 +777,7 @@ function buildCompletionConfig({ maxTokens, temperature, topK, topP, contextWind
  * @param {object}   [params.completion]  CompletionConfig overrides
  * @returns {Buffer} raw protobuf (un-enveloped)
  */
-export function buildGetChatMessageRequest({ token, messages, model, sessionId, completion, tools, nativeToolCall = false } = {}) {
+export function buildGetChatMessageRequest({ token, messages, model, sessionId, completion, tools, nativeToolCall = false, deviceSeed } = {}) {
   if (!token) throw new Error('DEVIN_CONNECT: missing session token');
   if (!model) throw new Error('DEVIN_CONNECT: missing model selector');
 
@@ -810,7 +894,7 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   ]);
 
   const parts = [
-    writeMessageField(1, buildClientMetadata(token)),
+    writeMessageField(1, buildClientMetadata(token, deviceSeed)),
     writeStringField(2, systemPrompt),
   ];
   for (const cm of chatMessages) parts.push(writeMessageField(3, cm));
@@ -1634,6 +1718,7 @@ export function mapFinishReason(finish, env = process.env) {
 export async function* streamChat({
   messages, model, sessionId, completion, tools,
   token, signal, timeoutMs, deadlineMs, host, env = process.env, nativeToolCall = false, traceId = null,
+  deviceSeed,
 } = {}) {
   // Idle timeout: socket inactivity. Absolute deadline: total wall-clock from
   // request start — this is the one that catches a stream that keeps dribbling
@@ -1671,7 +1756,7 @@ export async function* streamChat({
     ? tools.map((t) => t?.function?.name || t?.name).filter(Boolean)
     : null;
 
-  const proto = buildGetChatMessageRequest({ token: sessionToken, messages, model, sessionId, completion, tools, nativeToolCall });
+  const proto = buildGetChatMessageRequest({ token: sessionToken, messages, model, sessionId, completion, tools, nativeToolCall, deviceSeed });
   // Request envelope is sent UNCOMPRESSED (flag 0). The live calibration showed
   // the server rejects a gzipped request frame with an opaque "internal" error;
   // it still streams gzipped frames back, which the parser handles.

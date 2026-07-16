@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend, ensureDeviceSeed } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -2500,7 +2500,15 @@ async function _handleChatCompletionsInner(body, context = {}) {
     }
     const ccAcct = await acquireConnectAccount(context.signal, callerKey, selector);
     const connectParams = { messages: connectMessages, model: selector };
-    if (ccAcct) connectParams.token = ccAcct.apiKey;
+    if (ccAcct) {
+      connectParams.token = ccAcct.apiKey;
+      // Stable per-account device fingerprint (opt-in, WINDSURFAPI_STABLE_DEVICE).
+      // undefined when the mode is off → wire layer falls back to per-request
+      // random (#31 byte-identical to before). Failover paths below re-derive the
+      // seed from the account they actually switch to.
+      const seed = ensureDeviceSeed(ccAcct);
+      if (seed) connectParams.deviceSeed = seed;
+    }
     // Thread the trace id into the connect params so the upstream wire-dump
     // (devin-connect dumpWire) names its .bin files with the same id → the raw
     // Devin request/response bytes land in this request's <traceId>/ dir.
@@ -2661,7 +2669,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
           // recovery is gated on !emitted: once bytes are on the wire a replay
           // would duplicate content, so we surface the error instead.
           const attemptStream = async (a) => {
-            const params = a ? { ...connectParams, token: a.apiKey } : connectParams;
+            const params = a ? { ...connectParams, token: a.apiKey, deviceSeed: ensureDeviceSeed(a) } : connectParams;
             try {
               const _sr = await streamChatCompletion(params, send, connectMeta);
               // Dashboard token-usage breakdown from the streaming connect path
@@ -2807,7 +2815,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // always safe. Same two-step escalation — same-account re-login, then
     // cross-account failover — wrapped in attempt() per account.
     const attempt = async (a) => {
-      const params = a ? { ...connectParams, token: a.apiKey } : connectParams;
+      const params = a ? { ...connectParams, token: a.apiKey, deviceSeed: ensureDeviceSeed(a) } : connectParams;
       try {
         const out = await toChatCompletion(params, connectMeta);
         finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });

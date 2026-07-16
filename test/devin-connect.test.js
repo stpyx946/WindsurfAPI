@@ -1786,4 +1786,71 @@ describe('normalizeToolSchema', () => {
     assert.equal(r.properties.description.description, undefined, 'annotation stripped');
     assert.deepEqual(r.required, ['description']);
   });
+
+  // ── Top-level combinator stripping (P4, ported from kiro.rs) ──────────────
+  describe('top-level oneOf/anyOf/allOf stripping', () => {
+    it('BYTE-IDENTICAL for a schema with no top-level combinator (regression baseline)', () => {
+      // The whole safety of P4 rests on this: an ordinary schema must serialize
+      // exactly as before. Compare against normalization WITHOUT any combinator.
+      const src = { type: 'object', properties: { a: { type: 'string' }, b: { type: 'integer' } }, required: ['a'] };
+      const r = normalizeToolSchema(src);
+      assert.deepEqual(r, { type: 'object', properties: { a: { type: 'string' }, b: { type: 'integer' } }, required: ['a'] });
+    });
+
+    it('does NOT touch combinators NESTED under properties (only top level)', () => {
+      // Guards the top-level-only contract: a oneOf inside properties.mode must
+      // survive (it is a legitimate per-parameter schema), unlike a ROOT oneOf.
+      const src = { type: 'object', properties: { mode: { oneOf: [{ type: 'string' }, { type: 'integer' }] } } };
+      const r = normalizeToolSchema(src);
+      assert.ok(Array.isArray(r.properties.mode.oneOf), 'nested oneOf preserved');
+      assert.equal(r.properties.mode.oneOf.length, 2);
+    });
+
+    it('strips a top-level oneOf and recovers properties from the first object variant', () => {
+      const src = {
+        oneOf: [
+          { type: 'object', properties: { city: { type: 'string' } }, required: ['city'] },
+          { type: 'object', properties: { lat: { type: 'number' }, lon: { type: 'number' } } },
+        ],
+      };
+      const r = normalizeToolSchema(src);
+      assert.equal(r.oneOf, undefined, 'top-level oneOf removed');
+      assert.equal(r.type, 'object');
+      assert.deepEqual(r.properties, { city: { type: 'string' } }, 'properties recovered from first object variant');
+      assert.deepEqual(r.required, ['city']);
+    });
+
+    it('strips top-level anyOf and allOf the same way', () => {
+      const anyR = normalizeToolSchema({ anyOf: [{ type: 'object', properties: { x: { type: 'string' } } }, { type: 'string' }] });
+      assert.equal(anyR.anyOf, undefined);
+      assert.deepEqual(anyR.properties, { x: { type: 'string' } });
+      const allR = normalizeToolSchema({ allOf: [{ type: 'object', properties: { y: { type: 'integer' } } }] });
+      assert.equal(allR.allOf, undefined);
+      assert.deepEqual(allR.properties, { y: { type: 'integer' } });
+    });
+
+    it('with EXISTING top-level properties: strips the combinator but does NOT overwrite properties', () => {
+      const src = {
+        type: 'object',
+        properties: { keep: { type: 'string' } },
+        oneOf: [{ type: 'object', properties: { other: { type: 'number' } } }],
+      };
+      const r = normalizeToolSchema(src);
+      assert.equal(r.oneOf, undefined, 'combinator removed');
+      assert.deepEqual(r.properties, { keep: { type: 'string' } }, 'existing properties untouched (or_insert semantics)');
+    });
+
+    it('top-level combinator with no object variant → forced empty object schema', () => {
+      const r = normalizeToolSchema({ oneOf: [{ type: 'string' }, { type: 'integer' }] });
+      assert.equal(r.oneOf, undefined);
+      assert.equal(r.type, 'object');
+      assert.deepEqual(r.properties, {}, 'no object variant to recover from → canonical empty');
+    });
+
+    it('does not mutate the caller schema when stripping a top-level combinator', () => {
+      const src = { oneOf: [{ type: 'object', properties: { a: { type: 'string' } } }] };
+      normalizeToolSchema(src);
+      assert.ok(Array.isArray(src.oneOf), 'caller oneOf preserved');
+    });
+  });
 });
