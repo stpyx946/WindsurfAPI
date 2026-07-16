@@ -31,6 +31,7 @@ import {
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getClineCompatStats } from '../handlers/cline-compat.js';
+import { getCcCompatStats } from '../handlers/cc-compat.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
@@ -607,6 +608,16 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // enabled:false just means a partner is hitting /v1/cline/*.
   if (subpath === '/cline-compat' && method === 'GET') {
     return json(res, 200, { enabled: !!getExperimental().clineCompat, stats: getClineCompatStats() });
+  }
+
+  // ─── Claude Code compatibility layer status ──────────────
+  // enabled = the master experimental toggle (detection path). stats counts what
+  // the CC layer has done since boot: schemaNormalized (top-level combinators
+  // stripped off tool schemas) and identityNeutralized (reserved). The dedicated
+  // /v1/cc/* namespace works regardless of the toggle, so nonzero counts with
+  // enabled:false just mean a Claude Code user is hitting /v1/cc/*.
+  if (subpath === '/cc-compat' && method === 'GET') {
+    return json(res, 200, { enabled: !!getExperimental().ccCompat, stats: getCcCompatStats() });
   }
 
   // ─── System prompts (tool reinforcement, communication) ──

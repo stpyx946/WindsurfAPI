@@ -340,6 +340,17 @@
       "repairLabel": "tool_call arguments repaired",
       "repairHint": "(running count of empty/broken JSON arguments normalized to {}, preventing @ai-sdk from silently dropping the tool call)"
     },
+    "ccCompat": {
+      "title": "Claude Code Compatibility",
+      "desc": "Native-grade compatibility for Claude Code. Once detection activates, requests identified as Claude Code get the compat layer applied automatically: top-level schema combinators (anyOf/oneOf/allOf) are stripped and competitor identity lines are neutralized to dodge upstream content-policy blocks. The dedicated /v1/cc/* namespace (e.g. /v1/cc/messages) applies the shims regardless of this toggle — the namespace itself is the explicit opt-in. Off by default; the standard endpoint stays byte-identical for every other client.",
+      "enable": "Enable Claude Code detection compatibility",
+      "hint": "Off by default. When on, requests matched to Claude Code by detection get the compat layer applied automatically; the /v1/cc/* dedicated endpoint is not gated by this toggle.",
+      "badgeOn": "On",
+      "schemaLabel": "Schemas normalized",
+      "schemaHint": "(running count of top-level combinators stripped)",
+      "identityLabel": "Identity neutralized",
+      "identityHint": "(running count of competitor identity lines neutralized)"
+    },
     "preflight": {
       "title": "Pre-flight quota probe",
       "desc": "Before each chat, probe server.codeium.com for remaining quota so requests to exhausted accounts fail fast instead of burning an upstream 429. Costs one extra round-trip per request.",

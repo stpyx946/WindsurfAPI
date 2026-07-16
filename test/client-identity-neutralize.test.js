@@ -10,6 +10,7 @@ import { neutralizeClientIdentity } from '../src/handlers/messages.js';
 afterEach(() => {
   delete process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID;
   delete process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE;
+  delete process.env.WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE;
 });
 
 describe('neutralizeClientIdentity', () => {
@@ -207,5 +208,58 @@ describe('neutralizeClientIdentity', () => {
     process.env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID = '0';
     process.env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE = '1';
     assert.equal(neutralizeClientIdentity(OBJECTIVE_BLOCK), OBJECTIVE_BLOCK, 'main off-switch wins; a6 does not run');
+  });
+});
+
+// P2 — Claude Code compat layer: the ccActive gate on the opt-in (cc) block.
+// Contract: a1-a5 stay UNCONDITIONAL (default 529 / content-policy defense for
+// ALL clients); the (cc) block is opt-in and currently EMPTY, so activating it
+// must NOT change output today. This locks both the byte-equivalence of the
+// default path and the "empty hook" state so a future rule addition is deliberate.
+describe('neutralizeClientIdentity — ccActive gate (P2)', () => {
+  const CC_ID = "You are Claude Code, Anthropic's official CLI for Claude.";
+  const PLAIN = 'You are an interactive agent that helps with software tasks.';
+
+  it('a1-a5 run regardless of ccActive (unconditional 529/content-policy defense)', () => {
+    // The Claude Code self-ID (a1) must be neutralized whether or not the CC
+    // compat layer is active — it is the default defense line, not a CC dial.
+    const off = neutralizeClientIdentity(CC_ID, process.env, { ccActive: false });
+    const on = neutralizeClientIdentity(CC_ID, process.env, { ccActive: true });
+    assert.ok(!/Claude Code/.test(off), 'a1 fires with ccActive:false');
+    assert.ok(!/Claude Code/.test(on), 'a1 fires with ccActive:true');
+    assert.equal(off, on, 'a1-a5 output identical regardless of ccActive');
+  });
+
+  it('the (cc) block is EMPTY today: ccActive true vs false is byte-identical', () => {
+    // Guards against a future accidental UNVERIFIED CC rewrite. If someone adds a
+    // rule to the (cc) block without proof, this test must be updated deliberately.
+    const src = PLAIN + '\n' + CC_ID + '\nRemember to be helpful.';
+    assert.equal(
+      neutralizeClientIdentity(src, process.env, { ccActive: true }),
+      neutralizeClientIdentity(src, process.env, { ccActive: false }),
+      'cc block empty → activation is a no-op on output',
+    );
+  });
+
+  it('default opts ({}) is byte-identical to the pre-P2 two-arg call', () => {
+    // The new third param must default such that every existing caller is
+    // unchanged. Compare explicit ccActive:false against omitting opts entirely.
+    const src = PLAIN + '\n' + CC_ID;
+    assert.equal(
+      neutralizeClientIdentity(src, process.env),
+      neutralizeClientIdentity(src, process.env, { ccActive: false }),
+      'omitting opts == ccActive:false',
+    );
+  });
+
+  it('the env opt-in WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE also reaches the (cc) block (currently no-op)', () => {
+    process.env.WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE = '1';
+    const src = PLAIN + '\n' + CC_ID;
+    // Empty block → still a no-op, but this proves the env path is wired for the
+    // day a verified rule lands.
+    const withEnv = neutralizeClientIdentity(src, process.env, { ccActive: false });
+    delete process.env.WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE;
+    const without = neutralizeClientIdentity(src, process.env, { ccActive: false });
+    assert.equal(withEnv, without, 'env opt-in is a no-op while (cc) block is empty');
   });
 });

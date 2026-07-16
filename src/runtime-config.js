@@ -63,6 +63,14 @@ const DEFAULTS = {
     // this flag (the namespace itself is the explicit opt-in). See
     // src/handlers/cline-compat.js.
     clineCompat: false,
+    // Claude Code compatibility layer. When ON, requests DETECTED as Claude Code
+    // (by User-Agent `claude-cli/…` / `x-app: cli` / `x-claude-code-session-id`)
+    // hitting the standard endpoints get the CC compat dials (a single explicit
+    // isClaudeCode signal + opt-in identity/schema shims). Default OFF so every
+    // path stays byte-identical for other clients. The dedicated /v1/cc/*
+    // namespace applies the shims regardless of this flag (the namespace itself
+    // is the explicit opt-in). See src/handlers/cc-compat.js.
+    ccCompat: false,
   },
   // v2.0.150 — operator-tunable numeric knobs. Kept out of `experimental`
   // (which coerces everything to boolean). Dashboard-settable.

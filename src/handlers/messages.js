@@ -512,7 +512,7 @@ function flattenContentBlocks(blocks) {
 export { neutralizeClientIdentity } from './identity-neutralize.js';
 import { neutralizeClientIdentity } from './identity-neutralize.js';
 
-function anthropicToOpenAI(body) {
+function anthropicToOpenAI(body, ccActive = false) {
   const cachePolicy = extractCachePolicy(body);
   const mapAnthropicToolChoice = (toolChoice) => {
     if (!toolChoice || typeof toolChoice !== 'object') return toolChoice;
@@ -541,7 +541,8 @@ function anthropicToOpenAI(body) {
         ? body.system.map(b => b.text || '').join('\n')
         : '';
     // Strip the competitor self-ID that trips Devin's upstream fingerprint gate.
-    const sysText = neutralizeClientIdentity(rawSys);
+    // ccActive gates only the opt-in (cc) aggressive block; a1-a5 stay on for all.
+    const sysText = neutralizeClientIdentity(rawSys, process.env, { ccActive });
     if (sysText) messages.push({ role: 'system', content: sysText });
   }
   for (const m of (body.messages || [])) {
@@ -1375,7 +1376,11 @@ export async function handleMessages(body, context = {}) {
   const msgId = genMsgId();
   const requestedModel = body.model || 'claude-sonnet-4.6';
   const wantStream = !!body.stream;
-  const openaiBody = anthropicToOpenAI(body);
+  // ccCompat.active (CC compat layer engaged via /v1/cc/* or detect+toggle) gates
+  // ONLY the opt-in aggressive identity block inside neutralizeClientIdentity;
+  // false → byte-identical to the pre-cc translation for every other client.
+  const ccActive = !!context.ccCompat?.active;
+  const openaiBody = anthropicToOpenAI(body, ccActive);
   // anthropicToOpenAI attaches __cachePolicy only when the request carried
   // cache_control breakpoints; reuse it for the local cache-token estimate.
   const cachePolicy = openaiBody.__cachePolicy || null;

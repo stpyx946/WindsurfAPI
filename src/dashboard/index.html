@@ -3276,6 +3276,36 @@ tbody tr:hover td { background: var(--surface-2); }
     </div>
     <div class="section" style="margin-top:24px">
       <div class="section-header">
+        <div class="section-title" data-i18n="section.ccCompat.title">Claude Code 兼容</div>
+        <span class="badge badge-success" id="cc-compat-badge" style="display:none" data-i18n="section.ccCompat.badgeOn">已启用</span>
+      </div>
+      <div class="section-body">
+        <div class="section-desc" style="margin-bottom:12px" data-i18n="section.ccCompat.desc">为 Claude Code 做原生级兼容。检测激活后，识别为 Claude Code 的请求会自动套用兼容层：剥离顶层 schema combinator（anyOf/oneOf/allOf）并把竞品身份行中和，避开上游 content-policy 拦截。专用端点 /v1/cc/*（如 /v1/cc/messages）无论此开关是否开启都始终生效——命名空间本身就是显式选择。默认关闭，标准端点对其他客户端保持字节等价。</div>
+        <div style="display:flex;align-items:center;gap:16px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <label class="switch">
+            <input type="checkbox" id="exp-cc-compat" onchange="App.toggleExperimental('ccCompat', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+          <div>
+            <div style="font-weight:500" data-i18n="section.ccCompat.enable">启用 Claude Code 特征识别兼容</div>
+            <div class="text-sm text-muted" data-i18n="section.ccCompat.hint">默认关闭。开启后按检测特征识别 Claude Code 请求自动套兼容层；/v1/cc/* 专用端点不受此开关约束。</div>
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <span class="text-sm text-muted" data-i18n="section.ccCompat.schemaLabel">Schema 规范化</span>
+          <span class="badge" id="cc-compat-schema" data-kpi>0</span>
+          <span class="text-sm text-muted" data-i18n="section.ccCompat.schemaHint">（剥离顶层 combinator 的累计次数）</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:12px;flex-wrap:wrap">
+          <span class="text-sm text-muted" data-i18n="section.ccCompat.identityLabel">身份中和</span>
+          <span class="badge" id="cc-compat-identity" data-kpi>0</span>
+          <span class="text-sm text-muted" data-i18n="section.ccCompat.identityHint">（中和竞品身份行的累计次数）</span>
+          <button class="btn btn-ghost btn-xs" onclick="App.loadCcCompat()" data-i18n="action.refresh">刷新</button>
+        </div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
         <div class="section-title" data-i18n="section.preflight.title">发送前预检配额</div>
       </div>
       <div class="section-body">
@@ -8667,6 +8697,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const cbClineCompat = document.getElementById('exp-cline-compat');
     if (cbClineCompat) cbClineCompat.checked = !!d.flags?.clineCompat;
     this.loadClineCompat();
+    const cbCcCompat = document.getElementById('exp-cc-compat');
+    if (cbCcCompat) cbCcCompat.checked = !!d.flags?.ccCompat;
+    this.loadCcCompat();
     const cbPf = document.getElementById('exp-preflight');
     if (cbPf) cbPf.checked = !!d.flags?.preflightRateLimit;
     // Reflect current skin cookie in the dropdown so reload state is visible.
@@ -8708,6 +8741,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (badge) badge.style.display = d.enabled ? '' : 'none';
     const repairs = document.getElementById('cline-compat-repairs');
     if (repairs) this._animateNumber(repairs, d.stats?.argRepairs || 0);
+  },
+
+  // Claude Code compat status: master toggle reflected in the badge, and two
+  // running counters — top-level schema combinators stripped and competitor
+  // identity lines neutralized. The /v1/cc/* namespace feeds the counters
+  // regardless of the toggle, so nonzero counts with the toggle off just mean a
+  // partner is on the dedicated endpoint.
+  async loadCcCompat() {
+    let d;
+    try { d = await this.api('GET', '/cc-compat'); } catch { return; }
+    const badge = document.getElementById('cc-compat-badge');
+    if (badge) badge.style.display = d.enabled ? '' : 'none';
+    const schema = document.getElementById('cc-compat-schema');
+    if (schema) this._animateNumber(schema, d.stats?.schemaNormalized || 0);
+    const identity = document.getElementById('cc-compat-identity');
+    if (identity) this._animateNumber(identity, d.stats?.identityNeutralized || 0);
   },
 
   // System-prompts editor. Lives on the global Settings page (moved out of the

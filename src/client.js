@@ -14,6 +14,7 @@ import { log } from './config.js';
 import { extractImages } from './image.js';
 import { closeSessionForPort, grpcFrame, grpcUnary, grpcStream } from './grpc.js';
 import { beginLsUse, endLsUse, getLsEntryByPort } from './langserver.js';
+import { CC_CONTENT_MARKERS } from './handlers/cc-compat.js';
 import {
   buildRawGetChatMessageRequest, parseRawResponse,
   buildInitializePanelStateRequest,
@@ -209,7 +210,10 @@ export function compactSystemPromptForCascade(sysText) {
   if (/Generate a concise,\s*sentence-case title/i.test(stripped) && stripped.length < 2000) {
     return neutralizeIdentityForCascade(stripped);
   }
-  const looksLikeClaudeCode = /Anthropic's official CLI for Claude|Claude Code|cc_version=|content_block|tool_use|<env>/i.test(stripped);
+  // Shared source of truth with src/handlers/cc-compat.js so the "is this Claude
+  // Code?" content heuristic can't drift into divergent copies. The length gate
+  // below stays here — it is specific to the compaction decision, not identity.
+  const looksLikeClaudeCode = CC_CONTENT_MARKERS.test(stripped);
   if (!looksLikeClaudeCode || stripped.length < 4000) {
     return neutralizeIdentityForCascade(stripped);
   }

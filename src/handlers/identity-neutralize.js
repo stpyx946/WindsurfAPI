@@ -16,8 +16,20 @@
  * Off-switch: WINDSURFAPI_NEUTRALIZE_CLIENT_ID=0 (default on).
  * Opt-in (speculative): WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE=1 (default off) —
  * enables the (a6) OBJECTIVE-boast rule; see comment at the a6 rule.
+ * Opt-in (speculative): WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE=1 or opts.ccActive
+ *   (default off) — reserved hook for Claude-Code-specific aggressive rules; see
+ *   the (cc) block at the end. Currently EMPTY on purpose (a1-a4 already cover
+ *   every live-confirmed CC trigger); the hook exists so a new CC trigger can be
+ *   flipped on the instant a repetition A/B proves it, without re-plumbing.
+ *
+ * @param {string} text  system-prompt body to neutralize
+ * @param {object} env   environment (injectable for tests)
+ * @param {object} opts  { ccActive?: boolean } — Claude Code compat layer active
+ *   for this request (via /v1/cc/* or detected + master toggle). Gates ONLY the
+ *   opt-in (cc) block; a1-a5 stay unconditional (they are the default 529 /
+ *   content-policy defense line for ALL clients and must never be gated).
  */
-export function neutralizeClientIdentity(text, env = process.env) {
+export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   if (!text || String(env.WINDSURFAPI_NEUTRALIZE_CLIENT_ID || '1') === '0') return text;
   let out = String(text);
   // (a) competitor self-identification (529 gate). Both straight (') and curly (’).
@@ -109,6 +121,21 @@ export function neutralizeClientIdentity(text, env = process.env) {
   // description, redundant with tools[]).
   if (String(env.WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE || '') === '1') {
     out = out.replace(/Remember, you have extensive capabilities with access to a wide range of tools that can be used in powerful and clever ways as necessary to accomplish each goal\./g, 'Use the available tools as needed to accomplish each goal.');
+  }
+  // (cc) SPECULATIVE / DEFAULT-OFF — Claude-Code-specific aggressive rules. Gated
+  // by the CC compat layer being active for this request (opts.ccActive, i.e.
+  // /v1/cc/* or detected + master toggle) OR the env opt-in. INTENTIONALLY EMPTY
+  // today: a1-a4 already neutralize every live-confirmed Claude Code trigger
+  // ("You are Claude Code", the Agent-SDK line, the billing header, the brand
+  // block), and adding UNVERIFIED rewrites would risk mangling prompt semantics
+  // against Devin's NON-DETERMINISTIC content policy (same prompt blocked then
+  // passed hours later — no reliable A/B, the exact reason a6 ships off). This
+  // hook exists so the moment the policy re-fires and a repetition A/B isolates a
+  // NEW CC-only trigger, the rule drops in here and flips on via ccActive with no
+  // re-plumbing. Do NOT add a rule here without live-bisected proof.
+  const ccAggressive = !!opts.ccActive || String(env.WINDSURFAPI_NEUTRALIZE_CC_AGGRESSIVE || '') === '1';
+  if (ccAggressive) {
+    // (reserved) — no CC-only rewrites are confirmed yet; see block comment.
   }
   return out;
 }

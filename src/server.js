@@ -29,6 +29,7 @@ import { handleGemini, parseGeminiPath } from './handlers/gemini.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
 import { resolveClineCompat, stripClineNamespace } from './handlers/cline-compat.js';
+import { resolveCcCompat, stripCcNamespace } from './handlers/cc-compat.js';
 import { isExperimentalEnabled } from './runtime-config.js';
 import { resolveModel, getModelInfo } from './models.js';
 import { handleDashboardApi, parseProxyUrl, validateProxyHost, verifyAdminRequest } from './dashboard/api.js';
@@ -220,6 +221,21 @@ async function route(req, res) {
     masterEnabled: isExperimentalEnabled('clineCompat'),
   });
   if (clineCompat.source === 'endpoint') path = stripClineNamespace(path);
+
+  // Claude Code compatibility layer resolution (see src/handlers/cc-compat.js).
+  // Same two-source contract as Cline: the dedicated /v1/cc/* namespace activates
+  // the CC shims regardless of the master toggle (rewritten to canonical /v1/* so
+  // every route below matches unchanged); on the standard path the shims engage
+  // only when experimental.ccCompat is on AND the request looks like Claude Code.
+  // Unlike Cline, CC defaults to the Anthropic protocol, so ccCompat is threaded
+  // into the messages/responses handlers below, not only the chat one. When
+  // inactive, ccCompat.active is false and the whole pipeline is byte-identical.
+  const ccCompat = resolveCcCompat({
+    path,
+    headers: req.headers,
+    masterEnabled: isExperimentalEnabled('ccCompat'),
+  });
+  if (ccCompat.source === 'endpoint') path = stripCcNamespace(path);
 
   if (method === 'OPTIONS' && !path.startsWith('/dashboard/api/')) {
     // Public API (/v1/*) preflight: blanket `*`, no credentials — correct for an
@@ -567,6 +583,7 @@ async function route(req, res) {
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
       signal: abortController.signal,
       clineCompat,
+      ccCompat,
     });
     const processingMs = Date.now() - reqStartedAt;
     const requestId = 'req_' + randomUUID();
@@ -629,6 +646,7 @@ async function route(req, res) {
       context: {
         callerKey,
         nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+        ccCompat,
       },
     });
     const processingMs = Date.now() - reqStartedAt;
@@ -708,6 +726,7 @@ async function route(req, res) {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
       anthropicVersion,
+      ccCompat,
     });
     const requestId = 'req_' + randomUUID();
     const anthropicHeaders = {
